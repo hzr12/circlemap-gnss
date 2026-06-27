@@ -23,6 +23,7 @@ class App {
     this._lastRelocateAttempt = 0; // 上次自动重定位时间戳
     this._lastGpsUpdate = 0;     // 上次 GPS 更新（毫秒），用于节流
     this._lastRawPos = null;     // 上次原始 WGS84 坐标，用于移动距离判断
+    this._panelCollapsed = window.innerWidth <= 480; // 移动端面板默认收起
   }
 
   /**
@@ -37,6 +38,11 @@ class App {
 
     // 初始化 UI
     this._setupUI();
+
+    // 移动端面板默认收起
+    if (this._panelCollapsed) {
+      document.getElementById('bottomPanel').classList.add('collapsed');
+    }
 
     // 读取 URL 参数
     this._checkUrlParams();
@@ -191,6 +197,13 @@ class App {
     });
     gpsBtn.addEventListener('pointerleave', () => {
       if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+    });
+
+    // —— 底部面板折叠切换 ——
+    const panel = document.getElementById('bottomPanel');
+    document.querySelector('.panel-handle').addEventListener('click', () => {
+      this._panelCollapsed = !this._panelCollapsed;
+      panel.classList.toggle('collapsed', this._panelCollapsed);
     });
 
     // —— 圆列表事件委托（选中/编辑/删除） ——

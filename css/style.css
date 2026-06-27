@@ -198,7 +198,7 @@ input[type="number"] {
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
-  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* 面板把手 */
@@ -851,6 +851,45 @@ input[type="number"] {
 @media (max-width: 480px) {
   .bottom-panel {
     max-height: 50vh;
+    /* 默认收起：只显示把手 + 状态条 */
+  }
+
+  .bottom-panel.collapsed {
+    max-height: 56px;
+    overflow: hidden;
+  }
+
+  .bottom-panel.collapsed .panel-header,
+  .bottom-panel.collapsed .panel-body {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .bottom-panel.collapsed .gps-status {
+    opacity: 0.5;
+  }
+
+  /* 把手状态指示：展开时旋转 */
+  .bottom-panel.collapsed .handle-bar::after {
+    transform: rotate(0deg);
+  }
+
+  .handle-bar {
+    position: relative;
+  }
+
+  .handle-bar::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 8px;
+    height: 8px;
+    margin: -6px 0 0 -4px;
+    border-left: 2px solid rgba(255,255,255,0.3);
+    border-bottom: 2px solid rgba(255,255,255,0.3);
+    transform: rotate(135deg);
+    transition: transform 0.3s ease;
   }
 
   .panel-body {
