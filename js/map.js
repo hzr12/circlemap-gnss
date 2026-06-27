@@ -418,27 +418,49 @@ class MapManager {
   /**
    * WGS84 → GCJ-02 坐标转换（GPS 纠偏）
    * 浏览器 Geolocation 返回的是 WGS84，腾讯地图使用 GCJ-02
+   *
+   * 使用纯 JS 算法（已被大量中国地图项目验证通过），
+   * 不依赖腾讯地图 convertor API（API 回调格式不一致且不可靠）。
    * @param {{lat:number, lng:number}} point
-   * @returns {Promise<{lat:number, lng:number}>}
+   * @returns {{lat:number, lng:number}}
    */
   wgs84ToGcj02(point) {
-    return new Promise((resolve) => {
-      try {
-        const latLng = new qq.maps.LatLng(point.lat, point.lng);
-        qq.maps.convertor.translate([latLng], 1, (results) => {
-          if (results && results[0] && results[0].geometry) {
-            const loc = results[0].geometry.location;
-            resolve({ lat: loc.lat, lng: loc.lng });
-          } else {
-            console.warn('[CoordConvert] 转换失败，返回原始坐标', results);
-            resolve(point); // 转换失败，返回原始坐标
-          }
-        });
-      } catch (err) {
-        console.warn('[CoordConvert] 转换异常，返回原始坐标', err.message);
-        resolve(point); // 异常降级
-      }
-    });
+    const PI = 3.1415926535897932384626;
+    const A = 6378245.0;
+    const EE = 0.00669342162296594323;
+
+    const outOfChina = (lat, lng) =>
+      lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271;
+
+    const transformLat = (x, y) => {
+      let ret = -100 + 2 * x + 3 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+      ret += (20 * Math.sin(6 * x * PI) + 20 * Math.sin(2 * x * PI)) * 2 / 3;
+      ret += (20 * Math.sin(y * PI) + 40 * Math.sin(y / 3 * PI)) * 2 / 3;
+      ret += (160 * Math.sin(y / 12 * PI) + 320 * Math.sin(y * PI / 30)) * 2 / 3;
+      return ret;
+    };
+
+    const transformLng = (x, y) => {
+      let ret = 300 + x + 2 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+      ret += (20 * Math.sin(6 * x * PI) + 20 * Math.sin(2 * x * PI)) * 2 / 3;
+      ret += (20 * Math.sin(x * PI) + 40 * Math.sin(x / 3 * PI)) * 2 / 3;
+      ret += (150 * Math.sin(x / 12 * PI) + 300 * Math.sin(x / 30 * PI)) * 2 / 3;
+      return ret;
+    };
+
+    const { lat, lng } = point;
+    if (outOfChina(lat, lng)) return point;
+
+    const dlat = transformLat(lng - 105, lat - 35);
+    const dlng = transformLng(lng - 105, lat - 35);
+    const radLat = lat / 180 * PI;
+    let magic = Math.sin(radLat);
+    magic = 1 - EE * magic * magic;
+    const sqrtMagic = Math.sqrt(magic);
+    const dlatFinal = (dlat * 180) / ((A * (1 - EE)) / (magic * sqrtMagic) * PI);
+    const dlngFinal = (dlng * 180) / (A / sqrtMagic * Math.cos(radLat) * PI);
+
+    return { lat: lat + dlatFinal, lng: lng + dlngFinal };
   }
 
   /**
