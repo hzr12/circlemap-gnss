@@ -68,7 +68,10 @@ class MapManager {
     });
 
     // 地图变化 → 重绘 Circle Canvas
-    qq.maps.event.addListener(this.map, 'zoom_changed', () => this._scheduleRedraw());
+    qq.maps.event.addListener(this.map, 'zoom_changed', () => {
+      this._syncCenter = this.map.getCenter() || this._syncCenter;
+      this._scheduleRedraw();
+    });
     qq.maps.event.addListener(this.map, 'drag', () => {
       this._syncCenter = this.map.getCenter() || this._syncCenter;
       this._scheduleRedraw();
