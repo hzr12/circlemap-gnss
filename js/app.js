@@ -21,6 +21,8 @@ class App {
     this._firstFix = true;       // 是否是首次定位
     this._relocating = false;    // 是否正在自动重定位
     this._lastRelocateAttempt = 0; // 上次自动重定位时间戳
+    this._lastGpsUpdate = 0;     // 上次 GPS 更新（毫秒），用于节流
+    this._lastRawPos = null;     // 上次原始 WGS84 坐标，用于移动距离判断
   }
 
   /**
@@ -191,14 +193,17 @@ class App {
       if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
     });
 
-    // —— 圆列表事件委托（选中/删除） ——
+    // —— 圆列表事件委托（选中/编辑/删除） ——
     this._circleListEl = document.getElementById('circle-list');
     this._circleListEl.addEventListener('click', (e) => {
       const item = e.target.closest('.circle-item');
+      const editBtn = e.target.closest('.circle-edit');
       const delBtn = e.target.closest('.circle-del');
       if (!item) return;
       const id = parseInt(item.dataset.id);
-      if (delBtn) {
+      if (editBtn) {
+        this._editCircle(id);
+      } else if (delBtn) {
         this._deleteCircle(id);
       } else {
         this._selectCircle(id);
@@ -463,6 +468,22 @@ class App {
    * GPS 位置更新回调（由 watchPosition 持续触发）
    */
   _onPositionUpdate(pos) {
+    // —— GPS 节流 ——
+    const now = Date.now();
+    if (!this._firstFix) {
+      if (now - this._lastGpsUpdate < 3000) return;         // 距上次不足 3s → 跳过
+      if (this._lastRawPos) {
+        const d = calcDistance(
+          {lat: pos.lat, lng: pos.lng},
+          this._lastRawPos
+        );
+        if (d < 5) return;                                   // 移动不足 5m → 跳过
+      }
+    }
+    this._lastGpsUpdate = now;
+    this._lastRawPos = {lat: pos.lat, lng: pos.lng};
+    // —— 节流结束 ——
+
     const convPos = this.mapManager.wgs84ToGcj02(pos);
 
     // 保存定位信息
@@ -766,6 +787,29 @@ class App {
   }
 
   /**
+   * 编辑圆的半径（选中 + 跳转到半径滑块）
+   */
+  _editCircle(id) {
+    this._selectCircle(id);
+    // 滚动面板到半径设置区
+    const panel = document.getElementById('bottomPanel');
+    const radiusSection = document.querySelector('.radius-section');
+    if (radiusSection && panel) {
+      panel.scrollTo({
+        top: radiusSection.offsetTop - panel.offsetTop - 10,
+        behavior: 'smooth'
+      });
+    }
+    // 高亮滑块提示可调
+    const slider = document.getElementById('radius-slider');
+    slider.classList.add('editing');
+    // 聚焦数字输入
+    document.getElementById('radius-input').focus();
+    setTimeout(() => slider.classList.remove('editing'), 2000);
+    this._showToast('✏️ 拖动滑块调整半径');
+  }
+
+  /**
    * 渲染圆列表
    */
   _updateCircleList() {
@@ -816,6 +860,12 @@ class App {
           <div class="circle-meta">${ringCount}圈 · ${coordStr}</div>
         </div>
         <span class="circle-dist ${distClass}">${distStr}</span>
+        <button class="circle-edit" aria-label="编辑半径">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+            <path d="m15 5 4 4"/>
+          </svg>
+        </button>
         <button class="circle-del" aria-label="删除此圆">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>

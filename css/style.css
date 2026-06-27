@@ -779,6 +779,7 @@ input[type="number"] {
   margin-top: 1px;
 }
 
+.circle-edit,
 .circle-del {
   width: 28px;
   height: 28px;
@@ -795,13 +796,41 @@ input[type="number"] {
   cursor: pointer;
 }
 
+.circle-item:hover .circle-edit,
 .circle-item:hover .circle-del {
   opacity: 1;
+}
+
+.circle-edit:hover {
+  background: rgba(0, 163, 255, 0.15);
+  color: var(--accent-2);
 }
 
 .circle-del:hover {
   background: rgba(255, 71, 87, 0.15);
   color: var(--danger);
+}
+
+/* 编辑中半径滑块高亮 */
+.radius-slider.editing {
+  background: rgba(0, 212, 170, 0.15);
+}
+
+.radius-slider.editing::-webkit-slider-thumb {
+  box-shadow: 0 0 0 5px rgba(0, 212, 170, 0.3), 0 2px 8px rgba(0, 212, 170, 0.3);
+}
+
+.radius-slider.editing::-moz-range-thumb {
+  box-shadow: 0 0 0 5px rgba(0, 212, 170, 0.3), 0 2px 8px rgba(0, 212, 170, 0.3);
+}
+
+/* 小屏幕缩小编辑/删除按钮 */
+@media (max-width: 480px) {
+  .circle-edit,
+  .circle-del {
+    width: 24px;
+    height: 24px;
+  }
 }
 
 /* ---------- 滚动条美化 ---------- */
