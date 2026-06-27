@@ -31,11 +31,6 @@ const CONFIG = {
   // GPS 超时时间（毫秒）
   GPS_TIMEOUT: 10000,
 
-  // 持续追踪轮询间隔：移动中（毫秒）
-  GPS_POLL_INTERVAL: 10000,
-  // 持续追踪轮询间隔：静止后（毫秒）— 省电
-  GPS_POLL_INTERVAL_IDLE: 30000,
-
   // 地图缩放级别与半径适配映射
   ZOOM_MAP: [
     { maxRadius: 50, zoom: 17 },
