@@ -440,6 +440,20 @@ class App {
   }
 
   /**
+   * 格式化解上次定位已过时间
+   */
+  _formatElapsed() {
+    if (this.myPositionTime === null) return '';
+    const diff = Date.now() - this.myPositionTime;
+    const min = Math.floor(diff / 60000);
+    if (min < 1) return '刚刚';
+    if (min < 60) return `${min}分钟前`;
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    return m > 0 ? `${h}小时${m}分钟前` : `${h}小时前`;
+  }
+
+  /**
    * 更新顶部 GPS 状态条
    */
   _updateStatusBar() {
@@ -463,9 +477,11 @@ class App {
         ? `｜最近圆 ≤ ${formatDistance(nearest.maxRadius)} ✅`
         : `｜最近圆 ${formatDistance(nearDist)}`;
     }
+    const elapsed = this._formatElapsed();
     const stale = this._isPositionStale();
     const staleIcon = stale ? ' <span class="gps-stale">⚠️ 已过期</span>' : '';
-    this._statusEl.innerHTML = `<span class="gps-online">◉ 已定位</span>${staleIcon}${nearStr}`;
+    this._statusEl.innerHTML =
+      `<span class="gps-online">◉ 已定位</span> <span class="gps-elapsed">(${elapsed})</span>${staleIcon}${nearStr}`;
   }
 
   /**

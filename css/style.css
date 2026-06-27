@@ -248,6 +248,12 @@ input[type="number"] {
   font-weight: 600;
 }
 
+.gps-elapsed {
+  color: var(--text-tertiary);
+  font-family: var(--font-sans);
+  font-weight: 400;
+}
+
 /* ---------- 圆列表距离标记 ---------- */
 .circle-dist {
   font-size: 11px;
