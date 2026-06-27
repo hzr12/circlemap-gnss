@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>圆圈地图 - 在地图上画圆</title>
+  <title>鬼抓人——地图雷达</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -31,7 +31,7 @@
     </div>
 
     <div class="panel-header">
-      <h1 class="panel-title">圆圈地图</h1>
+      <h1 class="panel-title">鬼抓人——地图雷达</h1>
       <span class="panel-subtitle">点击地图选择中心点绘制圆形</span>
     </div>
 
@@ -79,6 +79,15 @@
           <circle cx="12" cy="9" r="2.5"/>
         </svg>
         点击地图上的任意位置选择中心点
+      </div>
+
+      <!-- 智能坐标解析 -->
+      <div class="parse-section">
+        <div class="parse-row">
+          <div class="parse-input-wrap">
+            <input type="text" id="parse-input" class="parse-input" placeholder="粘贴坐标，如：23.1291, 113.2644" enterkeyhint="done">
+          </div>
+        </div>
       </div>
 
       <!-- 半径设置 -->
@@ -137,7 +146,7 @@
         <div class="info-grid">
           <div class="info-item">
             <span class="info-label">圆心坐标</span>
-            <span class="info-value" id="info-center">--</span>
+            <span class="info-value" id="info-center" style="cursor:pointer" title="点击复制坐标">--</span>
           </div>
           <div class="info-item">
             <span class="info-label">半径</span>

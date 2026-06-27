@@ -59,6 +59,51 @@ class App {
     latInput.addEventListener('input', handleCoordInput);
     lngInput.addEventListener('input', handleCoordInput);
 
+    // —— 智能粘贴：自动解析多种坐标格式 ——
+    const handlePaste = (e) => {
+      const text = (e.clipboardData || window.clipboardData).getData('text');
+      const parsed = this._parseCoordText(text);
+      if (!parsed) return;
+      e.preventDefault();
+      latInput.value = parsed.lat.toFixed(6);
+      lngInput.value = parsed.lng.toFixed(6);
+      this._onCoordInput();
+      this._showToast('✅ 已识别坐标');
+    };
+    latInput.addEventListener('paste', handlePaste);
+    lngInput.addEventListener('paste', handlePaste);
+
+    // —— 智能解析输入框：粘贴/输入自动读取 ——
+    const parseInput = document.getElementById('parse-input');
+    let parseTimer;
+    parseInput.addEventListener('input', () => {
+      clearTimeout(parseTimer);
+      parseTimer = setTimeout(() => {
+        const text = parseInput.value.trim();
+        if (!text) return;
+        const parsed = this._parseCoordText(text);
+        if (!parsed) return;
+        latInput.value = parsed.lat.toFixed(6);
+        lngInput.value = parsed.lng.toFixed(6);
+        this._onCoordInput();
+        this._showToast('✅ 已识别坐标');
+      }, 300);
+    });
+    // 回车直接解析
+    parseInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        clearTimeout(parseTimer);
+        const text = parseInput.value.trim();
+        if (!text) return;
+        const parsed = this._parseCoordText(text);
+        if (!parsed) return;
+        latInput.value = parsed.lat.toFixed(6);
+        lngInput.value = parsed.lng.toFixed(6);
+        this._onCoordInput();
+        this._showToast('✅ 已识别坐标');
+      }
+    });
+
     // —— 半径滑块 & 数字输入双向绑定 ——
     const radiusSlider = document.getElementById('radius-slider');
     const radiusInput = document.getElementById('radius-input');
@@ -114,6 +159,18 @@ class App {
         this._selectCircle(id);
       }
     });
+
+    // —— 点击坐标复制 ——
+    document.getElementById('info-center').addEventListener('click', function () {
+      const text = this.textContent;
+      if (!text || text === '--') return;
+      navigator.clipboard.writeText(text).then(() => {
+        const app = window.app;
+        if (app) app._showToast('✅ 已复制坐标');
+      }).catch(() => {
+        // clipboard API 可能被拒绝，降级
+      });
+    });
   }
 
   /* ============= 核心交互方法 ============= */
@@ -160,6 +217,61 @@ class App {
       this._updateInfo();
       this._updateCircleList();
     }
+  }
+
+  /**
+   * 智能解析粘贴文本中的经纬度
+   * 支持格式：
+   *   "23.1291, 113.2644"         → 逗号分隔
+   *   "23.1291 113.2644"           → 空格分隔
+   *   "lat 23.1291 lng 113.2644"   → 带标签
+   *   "纬度:23.1291 经度:113.2644" → 中文标签
+   *   "39.9°N 116.4°E"             → 度分秒简写
+   * @param {string} text
+   * @returns {{lat:number,lng:number}|null}
+   */
+  _parseCoordText(text) {
+    if (!text) return null;
+    // 提取所有数字（含负号和小数点）
+    const nums = text.match(/-?\d+\.?\d*/g);
+    if (!nums || nums.length < 2) return null;
+
+    // 判断是否带 N/S/E/W 方向标识
+    const hasNS = /[北北ns]/i.test(text);
+    const hasEW = /[东东ew]/i.test(text);
+
+    // 根据上下文确定 lat/lng
+    if (hasNS && hasEW) {
+      // 方向标识模式：找到含 N/S 的作为纬度，含 E/W 的作为经度
+      const parts = text.split(/[,，\s]+/).filter(Boolean);
+      let lat, lng;
+      for (const p of parts) {
+        const n = parseFloat(p);
+        if (isNaN(n)) continue;
+        if (/[北ns]/i.test(p)) lat = n;
+        if (/[东ew]/i.test(p)) lng = n;
+      }
+      if (lat != null && lng != null) return { lat, lng };
+    }
+
+    // 检测中文/英文标签
+    const hasLatLabel = /(纬度?|lat)/i.test(text);
+    const hasLngLabel = /(经度?|lng|lon|long)/i.test(text);
+
+    if (hasLatLabel || hasLngLabel) {
+      const latMatch = text.match(/(?:纬度?|lat)\s*[:：=\s]*(-?\d+\.?\d*)/i);
+      const lngMatch = text.match(/(?:经度?|lng|lon|long)\s*[:：=\s]*(-?\d+\.?\d*)/i);
+      const lat = latMatch ? parseFloat(latMatch[1]) : NaN;
+      const lng = lngMatch ? parseFloat(lngMatch[1]) : NaN;
+      if (!isNaN(lat) && !isNaN(lng)) return { lat, lng };
+    }
+
+    // 默认：取前两个数字作 lat, lng
+    const lat = parseFloat(nums[0]);
+    const lng = parseFloat(nums[1]);
+    if (!isNaN(lat) && !isNaN(lng)) return { lat, lng };
+
+    return null;
   }
 
   /**

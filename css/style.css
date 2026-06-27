@@ -344,6 +344,45 @@ input[type="number"] {
   display: none;
 }
 
+/* ---------- 智能坐标解析 ---------- */
+.parse-section {
+  margin-bottom: 14px;
+}
+
+.parse-row {
+  display: flex;
+  gap: 8px;
+}
+
+.parse-input-wrap {
+  flex: 1;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+}
+
+.parse-input-wrap:focus-within {
+  background: var(--bg-input-focus);
+  border-color: var(--border-active);
+}
+
+.parse-input {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--text-primary);
+  background: transparent;
+  outline: none;
+  border: none;
+  font-family: var(--font-mono);
+}
+
+.parse-input::placeholder {
+  color: var(--text-tertiary);
+  font-family: var(--font-sans);
+}
+
 /* ---------- 半径设置 ---------- */
 .radius-section {
   margin-bottom: 14px;
