@@ -23,8 +23,7 @@ class App {
     this._lastRelocateAttempt = 0; // 上次自动重定位时间戳
     this._lastRawPos = null;     // 上次原始 WGS84 坐标，用于移动距离判断
     this._panelCollapsed = window.innerWidth <= 480; // 移动端面板默认收起
-    this._pollTimer = null;      // 轮询定时器
-    this._stationaryCount = 0;   // 连续静止次数（用于切换轮询间隔）
+    this._watchingBeforeHide = false; // 切后台前是否在追踪
   }
 
   /**
@@ -53,6 +52,19 @@ class App {
 
     // 进入页面后自动启动持续 GPS 追踪
     this._startWatching();
+
+    // 页面可见性变化：后台停 GPS，前台恢复
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        if (this._isWatching) {
+          this._watchingBeforeHide = true;
+          this._stopWatching();
+        }
+      } else if (this._watchingBeforeHide) {
+        this._watchingBeforeHide = false;
+        this._startWatching();
+      }
+    });
 
     // 每分钟刷新状态 & 持久化 & 自动重定位
     setInterval(() => {
@@ -434,22 +446,20 @@ class App {
   }
 
   /**
-   * 启动持续 GPS 追踪（轮询模式，自动休眠）
+   * 启动持续 GPS 追踪（纯 watchPosition）
    */
   _startWatching() {
     if (this._isWatching) return;
 
     this._isWatching = true;
     this._firstFix = true;
-    this._stationaryCount = 0;
 
-    // 更新按钮状态
     const btn = document.getElementById('gps-btn');
     btn.classList.add('watching');
     btn.title = '正在持续追踪位置';
 
-    // 立即定位一次 + 启动轮询
-    this._pollGps();
+    this.gpsManager.onPositionChange = (pos) => this._processPosition(pos);
+    this.gpsManager.startWatching();
 
     this._showToast('📍 持续追踪已开启');
   }
@@ -461,9 +471,8 @@ class App {
     if (!this._isWatching) return;
     this._isWatching = false;
 
-    this._clearPoll();
+    this.gpsManager.stopWatching();
     this._prevDistances = {};
-    this._stationaryCount = 0;
 
     const btn = document.getElementById('gps-btn');
     btn.classList.remove('watching');
@@ -472,58 +481,15 @@ class App {
     this._showToast('⏹ 持续追踪已关闭');
   }
 
-  /**
-   * 轮询一次 GPS 位置
-   */
-  _pollGps() {
-    this.gpsManager.getCurrentPosition().then((pos) => {
-      this._onPositionUpdate(pos);
-      // 安排下一次轮询
-      if (this._isWatching) this._scheduleNextPoll();
-    }).catch((err) => {
-      console.warn('[GPS] 轮询失败:', err.message);
-      // 失败也继续轮询
-      if (this._isWatching) this._scheduleNextPoll();
-    });
-  }
+  /* ========== 通用位置处理 ========== */
 
   /**
-   * 安排下一次轮询（根据静止次数自适应间隔）
+   * 处理位置数据：GCJ-02 转换 + UI 刷新
    */
-  _scheduleNextPoll() {
-    this._clearPoll();
-    const ms = this._stationaryCount >= 3
-      ? CONFIG.GPS_POLL_INTERVAL_IDLE  // 静止 → 30s 一次
-      : CONFIG.GPS_POLL_INTERVAL;      // 移动中 → 10s 一次
-    this._pollTimer = setTimeout(() => this._pollGps(), ms);
-  }
-
-  /**
-   * 清除轮询定时器
-   */
-  _clearPoll() {
-    if (this._pollTimer) {
-      clearTimeout(this._pollTimer);
-      this._pollTimer = null;
-    }
-  }
-
-  /**
-   * GPS 位置更新回调（由轮询触发）
-   */
-  _onPositionUpdate(pos) {
-    // —— 移动检测：不足 5m 算静止，累计计数 ——
-    if (!this._firstFix && this._lastRawPos) {
-      const d = calcDistance(
-        {lat: pos.lat, lng: pos.lng},
-        this._lastRawPos
-      );
-      if (d < 5) {
-        this._stationaryCount = Math.min(this._stationaryCount + 1, 10);
-        return;  // 没动，不刷新 UI
-      }
-      // 动过了 → 重置静止计数
-      this._stationaryCount = 0;
+  _processPosition(pos) {
+    // 跟踪原始坐标用于下次位移判断
+    if (this._lastRawPos) {
+      this._prevDistances = {}; // 位置变了，重置趋势缓存
     }
     this._lastRawPos = {lat: pos.lat, lng: pos.lng};
 
