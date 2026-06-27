@@ -10,8 +10,9 @@ class App {
     this.mapManager = new MapManager();
     this.gpsManager = new GPSManager();
     this.circleRadius = CONFIG.DEFAULT_RADIUS;
-    this.center = null;
+    this.center = null;          // 当前标记位置
     this.mode = 'click';
+    this._circleListEl = null;   // 圆列表 DOM
   }
 
   /**
@@ -21,8 +22,8 @@ class App {
     // 初始化地图
     this.mapManager.init('map', CONFIG.DEFAULT_CENTER, CONFIG.DEFAULT_ZOOM);
 
-    // 注册中心点变化回调
-    this.mapManager.onCenterChange = (center) => this._onCenterChanged(center);
+    // 注册中心点变化回调（含选中圆圈回调）
+    this.mapManager.onCenterChange = (center, circle) => this._onCenterChanged(center, circle);
 
     // 初始化 UI
     this._setupUI();
@@ -30,7 +31,9 @@ class App {
     // 读取 URL 参数
     this._checkUrlParams();
 
-    // 显示加载完成
+    // 进入页面后自动尝试获取一次位置（静默失败）
+    this._autoLocate();
+
     console.log('[App] 初始化完成');
   }
 
@@ -64,9 +67,12 @@ class App {
       const val = parseInt(radiusSlider.value, 10);
       radiusInput.value = val;
       this.circleRadius = val;
-      if (this.center) {
-        this.mapManager.updateRadius(val);
+      // 若有选中圆，实时更新其半径
+      const sel = this.mapManager.getSelectedCircle();
+      if (sel) {
+        this.mapManager.updateCircleRadius(sel.id, val);
         this._updateInfo();
+        this._updateCircleList();
       }
     });
 
@@ -77,8 +83,11 @@ class App {
       radiusInput.value = val;
       radiusSlider.value = val;
       this.circleRadius = val;
-      if (this.center) {
-        this.mapManager.updateRadius(val);
+      // 若有选中圆，更新其半径
+      const sel = this.mapManager.getSelectedCircle();
+      if (sel) {
+        this.mapManager.updateCircleRadius(sel.id, val);
+        this._updateCircleList();
         this._updateInfo();
       }
     });
@@ -91,6 +100,20 @@ class App {
 
     // —— GPS 定位按钮 ——
     document.getElementById('gps-btn').addEventListener('click', () => this._locateMe());
+
+    // —— 圆列表事件委托（选中/删除） ——
+    this._circleListEl = document.getElementById('circle-list');
+    this._circleListEl.addEventListener('click', (e) => {
+      const item = e.target.closest('.circle-item');
+      const delBtn = e.target.closest('.circle-del');
+      if (!item) return;
+      const id = parseInt(item.dataset.id);
+      if (delBtn) {
+        this._deleteCircle(id);
+      } else {
+        this._selectCircle(id);
+      }
+    });
   }
 
   /* ============= 核心交互方法 ============= */
@@ -118,14 +141,25 @@ class App {
   }
 
   /**
-   * 中心点变更时的回调（仅更新 UI，不自动绘制）
+   * 中心点变更 / 圆圈选中的回调
+   * @param {{lat:number,lng:number}} center
+   * @param {object} [circle] - 选中的圆圈对象
    */
-  _onCenterChanged(center) {
+  _onCenterChanged(center, circle) {
     this.center = center;
 
     // 同步到输入框
     document.getElementById('lat').value = center.lat.toFixed(6);
     document.getElementById('lng').value = center.lng.toFixed(6);
+
+    if (circle) {
+      // 通过点击圆心选中 → 更新半径滑块和信息面板
+      document.getElementById('radius-slider').value = circle.maxRadius;
+      document.getElementById('radius-input').value = circle.maxRadius;
+      this.circleRadius = circle.maxRadius;
+      this._updateInfo();
+      this._updateCircleList();
+    }
   }
 
   /**
@@ -144,7 +178,7 @@ class App {
   }
 
   /**
-   * 绘制圆形
+   * 添加一个同心圆
    */
   _drawCircle() {
     if (!this.center) {
@@ -156,8 +190,14 @@ class App {
       return;
     }
 
-    this.mapManager.drawCircle(this.center, this.circleRadius);
+    this.mapManager.addCircle(this.center, this.circleRadius);
     this._updateInfo();
+    this._updateCircleList();
+    this._showToast(`已创建同心圆，半径 ${
+      this.circleRadius >= 1000
+        ? (this.circleRadius / 1000).toFixed(1) + ' km'
+        : this.circleRadius + ' m'
+    }`);
   }
 
   /**
@@ -202,52 +242,140 @@ class App {
   }
 
   /**
-   * 清除所有
+   * 页面加载后自动尝试定位一次（静默失败，不弹 Toast）
+   */
+  async _autoLocate() {
+    try {
+      const pos = await this.gpsManager.getCurrentPosition();
+      this.center = { lat: pos.lat, lng: pos.lng };
+      this.mapManager.setCenter(this.center);
+      this.mapManager.flyTo(this.center);
+      document.getElementById('lat').value = pos.lat.toFixed(6);
+      document.getElementById('lng').value = pos.lng.toFixed(6);
+      // 短暂高亮 GPS 按钮表示定位成功
+      const btn = document.getElementById('gps-btn');
+      btn.classList.add('located');
+      setTimeout(() => btn.classList.remove('located'), 3000);
+      console.log('[AutoLocate] 定位成功:', pos.lat.toFixed(4), pos.lng.toFixed(4));
+    } catch (_) {
+      // 静默失败——用户可手动点击 GPS 按钮重试
+    }
+  }
+
+  /**
+   * 清除所有同心圆（保留标记位置）
    */
   _clearAll() {
-    this.mapManager.removeCircle();
-    // 不删除标记，只清除圆
-    this.center = null;
-    document.getElementById('lat').value = '';
-    document.getElementById('lng').value = '';
+    this.mapManager.clearCircles();
     document.getElementById('infoArea').classList.add('hidden');
+    this._updateCircleList();
   }
 
   /* ============= 信息更新 ============= */
 
   /**
-   * 更新信息展示区
+   * 更新信息展示区（显示选中圆圈的信息）
    */
   _updateInfo() {
     const infoArea = document.getElementById('infoArea');
+    const sel = this.mapManager.getSelectedCircle();
 
-    if (!this.center || this.circleRadius <= 0) {
+    if (!sel) {
       infoArea.classList.add('hidden');
       return;
     }
 
     infoArea.classList.remove('hidden');
 
-    // 中心坐标
     document.getElementById('info-center').textContent =
-      `${this.center.lat.toFixed(6)}, ${this.center.lng.toFixed(6)}`;
+      `${sel.center.lat.toFixed(6)}, ${sel.center.lng.toFixed(6)}`;
 
-    // 半径
     document.getElementById('info-radius').textContent =
-      this.circleRadius >= 1000
-        ? `${(this.circleRadius / 1000).toFixed(2)} km`
-        : `${this.circleRadius} m`;
+      sel.maxRadius >= 1000
+        ? `${(sel.maxRadius / 1000).toFixed(2)} km`
+        : `${sel.maxRadius} m`;
 
-    // 面积：πr²
-    const area = Math.PI * this.circleRadius * this.circleRadius;
+    const area = Math.PI * sel.maxRadius * sel.maxRadius;
     document.getElementById('info-area').textContent =
       area >= 1e6
         ? `${(area / 1e6).toFixed(2)} km²`
         : `${area.toFixed(0)} m²`;
 
-    // 同心圆圈数
-    const ringCount = Math.ceil(this.circleRadius / CONFIG.CONCENTRIC_INTERVAL);
+    const ringCount = Math.ceil(sel.maxRadius / sel.interval);
     document.getElementById('info-rings').textContent = `${ringCount} 圈`;
+  }
+
+  /* ============= 圆列表管理 ============= */
+
+  /**
+   * 选中一个圆
+   */
+  _selectCircle(id) {
+    this.mapManager.selectCircle(id);
+    const sel = this.mapManager.getSelectedCircle();
+    if (sel) {
+      // 同步半径滑块到该圆的数值
+      document.getElementById('radius-slider').value = sel.maxRadius;
+      document.getElementById('radius-input').value = sel.maxRadius;
+      this.circleRadius = sel.maxRadius;
+      // 地图飞到圆心
+      this.mapManager.setCenter(sel.center);
+    }
+    this._updateInfo();
+    this._updateCircleList();
+  }
+
+  /**
+   * 删除一个圆
+   */
+  _deleteCircle(id) {
+    this.mapManager.removeCircle(id);
+    this._updateInfo();
+    this._updateCircleList();
+    if (this.mapManager.getCircles().length === 0) {
+      this._showToast('已清除全部');
+    }
+  }
+
+  /**
+   * 渲染圆列表
+   */
+  _updateCircleList() {
+    const circles = this.mapManager.getCircles();
+    const selId = this.mapManager.selectedCircleId;
+
+    if (!circles.length) {
+      this._circleListEl.innerHTML = `<div class="empty-state">暂无同心圆，点击「绘制圆形」添加</div>`;
+      document.getElementById('circle-count').textContent = '0';
+      return;
+    }
+
+    document.getElementById('circle-count').textContent = circles.length;
+
+    let html = '';
+    for (let i = 0; i < circles.length; i++) {
+      const c = circles[i];
+      const isSel = c.id === selId;
+      const ringCount = Math.max(1, Math.floor(c.maxRadius / c.interval));
+      const radiusStr = c.maxRadius >= 1000
+        ? (c.maxRadius / 1000).toFixed(1) + ' km'
+        : c.maxRadius + ' m';
+      const coordStr = c.center.lat.toFixed(4) + ', ' + c.center.lng.toFixed(4);
+
+      html += `<div class="circle-item${isSel ? ' active' : ''}" data-id="${c.id}">
+        <span class="circle-idx">#${i + 1}</span>
+        <div class="circle-summary">
+          <div class="circle-name">${radiusStr}</div>
+          <div class="circle-meta">${ringCount}圈 · ${coordStr}</div>
+        </div>
+        <button class="circle-del" aria-label="删除此圆">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>`;
+    }
+    this._circleListEl.innerHTML = html;
   }
 
   /* ============= URL 参数 ============= */
@@ -273,8 +401,9 @@ class App {
           this.circleRadius = radius;
           document.getElementById('radius-slider').value = radius;
           document.getElementById('radius-input').value = radius;
-          this.mapManager.drawCircle(this.center, radius);
+          this.mapManager.addCircle(this.center, radius);
           this._updateInfo();
+          this._updateCircleList();
         }
       }
     } catch (e) {

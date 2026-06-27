@@ -11,11 +11,15 @@ class MapManager {
     this.marker = null;
     this.canvas = null;
     this.ctx = null;
-    this.center = null;
-    this.currentRadius = 0;
+    this.center = null;         // 当前标记位置（用于下一个圆）
     this.mode = 'click';
+    this.circles = [];          // {id, center:{lat,lng}, maxRadius, interval}
+    this.selectedCircleId = null;
+    this._idCounter = 1;
+    this.PICK_THRESHOLD = 22;   // 像素距离阈值
 
     this._rafId = null;
+    this._syncCenter = null;    // 地图实际显示中心（我们追踪，不依赖 getCenter）
 
     // 回调钩子
     this.onCenterChange = null;
@@ -38,17 +42,39 @@ class MapManager {
       mapTypeId: qq.maps.MapTypeId.ROADMAP
     });
 
-    // 点击选点
+    // 追踪地图实际显示中心（绕过 getCenter 异步问题）
+    this._syncCenter = new qq.maps.LatLng(center.lat, center.lng);
+
+    // 点击选点 / 选取圆心
     qq.maps.event.addListener(this.map, 'click', (event) => {
       if (this.mode !== 'click') return;
       if (!event.latLng) return;
+
+      // 先判断是否点击了已有圆心
+      const clickedPt = this._latLngToContainerPoint(event.latLng);
+      if (clickedPt) {
+        const picked = this._pickCircle(clickedPt);
+        if (picked) {
+          this.selectedCircleId = picked.id;
+          this._scheduleRedraw();
+          if (this.onCenterChange) this.onCenterChange(picked.center, picked);
+          return;
+        }
+      }
+
       this.setCenter({ lat: event.latLng.getLat(), lng: event.latLng.getLng() });
     });
 
     // 地图变化 → 重绘 Circle Canvas
     qq.maps.event.addListener(this.map, 'zoom_changed', () => this._scheduleRedraw());
-    qq.maps.event.addListener(this.map, 'drag', () => this._scheduleRedraw());
-    qq.maps.event.addListener(this.map, 'dragend', () => this._scheduleRedraw());
+    qq.maps.event.addListener(this.map, 'drag', () => {
+      this._syncCenter = this.map.getCenter() || this._syncCenter;
+      this._scheduleRedraw();
+    });
+    qq.maps.event.addListener(this.map, 'dragend', () => {
+      this._syncCenter = this.map.getCenter() || this._syncCenter;
+      this._scheduleRedraw();
+    });
 
     // 窗口大小变化
     window.addEventListener('resize', () => {
@@ -73,14 +99,13 @@ class MapManager {
    */
   _latLngToContainerPoint(latLng) {
     const proj = this.map.getProjection();
-    if (!proj) return null;
+    if (!proj || !this._syncCenter) return null;
 
     const wp = proj.fromLatLngToPoint(latLng);
     if (!wp || typeof wp.x !== 'number') return null;
 
     const zoom = this.map.getZoom();
-    const ctr = this.map.getCenter();
-    const cwp = proj.fromLatLngToPoint(ctr);
+    const cwp = proj.fromLatLngToPoint(this._syncCenter);
     if (!cwp) return null;
 
     const w = this.canvas.parentElement.offsetWidth;
@@ -127,6 +152,10 @@ class MapManager {
     this._rafId = requestAnimationFrame(() => this._redraw());
   }
 
+  /* ================================================================
+   *  同心圆渲染（多圆支持）
+   * ================================================================ */
+
   _redraw() {
     const dpr = window.devicePixelRatio || 1;
     const ctx = this.ctx;
@@ -136,44 +165,55 @@ class MapManager {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, parent.offsetWidth, parent.offsetHeight);
 
-    if (!this.center || this.currentRadius <= 0) return;
+    for (const c of this.circles) {
+      this._drawOneCircle(ctx, c);
+    }
+  }
 
-    const latLng = new qq.maps.LatLng(this.center.lat, this.center.lng);
+  /**
+   * 绘制单个同心圆组
+   */
+  _drawOneCircle(ctx, circle) {
+    const isSel = circle.id === this.selectedCircleId;
+    const latLng = new qq.maps.LatLng(circle.center.lat, circle.center.lng);
     const cp = this._latLngToContainerPoint(latLng);
     if (!cp) return;
 
-    const maxR = this.currentRadius;
-    const interval = CONFIG.CONCENTRIC_INTERVAL;
-
-    const mp = this._metersToPixels(maxR, latLng);   // 外圈像素半径
-    const ip = this._metersToPixels(interval, latLng); // 间距像素
-
+    const maxR = circle.maxRadius;
+    const interval = circle.interval;
+    const mp = this._metersToPixels(maxR, latLng);
+    const ip = this._metersToPixels(interval, latLng);
     const { x: cx, y: cy } = cp;
 
-    // 太小则不绘制
     if (mp < CONFIG.MIN_DRAW_PX) return;
 
-    // 间距像素 ≥ 2px 才画内部圈
     const drawInner = ip >= 2;
     const ringCount = drawInner ? Math.max(1, Math.floor(mp / ip)) : 0;
+
+    // 选中态：选中色 vs 默认色
+    const fillBase = 'rgba(70, 140, 220, 0.08)';
+    const fillAlt  = 'rgba(70, 140, 220, 0.05)';
+    const strokeInner = 'rgba(15, 50, 120, 0.32)';
+    const strokeOuter = 'rgba(10, 35, 90, 0.55)';
+    const dotStroke = isSel ? 'rgba(0, 160, 130, 0.4)'  : 'rgba(15, 50, 120, 0.25)';
+    const dotFill   = isSel ? '#00a082'                  : 'rgba(15, 50, 120, 0.8)';
 
     // ── 1. 整体半透明底色 ──
     ctx.beginPath();
     ctx.arc(cx, cy, Math.max(1, mp), 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(70, 140, 220, 0.08)';
+    ctx.fillStyle = fillBase;
     ctx.fill();
 
     // ── 2. 间隔填充（偶数圈加深） ──
     if (drawInner) {
       for (let i = ringCount; i >= 1; i--) {
-        const ro = i * ip;
-        const ri = (i - 1) * ip;
+        const ro = i * ip, ri = (i - 1) * ip;
         if (ro > mp) continue;
         if (i % 2 === 0) {
           ctx.beginPath();
           ctx.arc(cx, cy, Math.max(1, ro), 0, Math.PI * 2);
           ctx.arc(cx, cy, Math.max(0.5, ri), 0, Math.PI * 2, true);
-          ctx.fillStyle = 'rgba(70, 140, 220, 0.05)';
+          ctx.fillStyle = fillAlt;
           ctx.fill();
         }
       }
@@ -181,7 +221,7 @@ class MapManager {
 
     // ── 3. 内部圈描边（细线） ──
     if (drawInner) {
-      ctx.strokeStyle = 'rgba(15, 50, 120, 0.32)';
+      ctx.strokeStyle = strokeInner;
       ctx.lineWidth = 1.2;
       for (let j = 1; j <= ringCount; j++) {
         const r = j * ip;
@@ -195,20 +235,49 @@ class MapManager {
     // ── 4. 最外圈描边（粗线） ──
     ctx.beginPath();
     ctx.arc(cx, cy, Math.max(1, mp), 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(10, 35, 90, 0.55)';
+    ctx.strokeStyle = strokeOuter;
     ctx.lineWidth = 2.2;
     ctx.stroke();
 
+    // ── 4.5 选中态：虚线外框 ──
+    if (isSel) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, Math.max(1, mp + 5), 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(0, 160, 130, 0.5)';
+      ctx.lineWidth = 1.8;
+      ctx.setLineDash([7, 5]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
     // ── 5. 圆心标记 ──
+    const dotR = isSel ? 9 : 6;
     ctx.beginPath();
-    ctx.arc(cx, cy, 6, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(15, 50, 120, 0.25)';
+    ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
+    ctx.strokeStyle = dotStroke;
     ctx.lineWidth = 1.5;
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(15, 50, 120, 0.8)';
+    ctx.arc(cx, cy, isSel ? 5 : 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = dotFill;
     ctx.fill();
+  }
+
+  /**
+   * 检测容器坐标附近是否有圆心
+   */
+  _pickCircle(pt) {
+    for (const c of this.circles) {
+      const center = new qq.maps.LatLng(c.center.lat, c.center.lng);
+      const cp = this._latLngToContainerPoint(center);
+      if (!cp) continue;
+      const dx = pt.x - cp.x;
+      const dy = pt.y - cp.y;
+      if (Math.sqrt(dx * dx + dy * dy) < this.PICK_THRESHOLD) {
+        return c;
+      }
+    }
+    return null;
   }
 
   /* ================================================================
@@ -216,7 +285,7 @@ class MapManager {
    * ================================================================ */
 
   /**
-   * 设置/移动中心点（仅移动标记 + 面板，不触发画圆）
+   * 设置/移动中心点标记（仅设标记，不创建圆）
    */
   setCenter(center) {
     this.center = center;
@@ -231,18 +300,21 @@ class MapManager {
         draggable: true,
         icon: this._createMarkerIcon()
       });
-      // 标记拖拽 → 同步更新已绘制的圆形
+      // 标记拖拽 → 更新待添加圆的预览位置
       qq.maps.event.addListener(this.marker, 'dragend', (event) => {
         const pos = event.latLng;
         this.center = { lat: pos.lat, lng: pos.lng };
-        this._scheduleRedraw();
         if (this.onCenterChange) {
           this.onCenterChange(this.center);
         }
       });
     }
 
-    this.map.panTo(latLng);
+    // 同步追踪中心 + 强制重绘（不依赖 getCenter 异步结果）
+    this._syncCenter = latLng;
+    this.map.setCenter(latLng);
+    if (this._rafId) cancelAnimationFrame(this._rafId);
+    this._redraw();
 
     if (this.onCenterChange) {
       this.onCenterChange(this.center);
@@ -250,31 +322,76 @@ class MapManager {
   }
 
   /**
-   * 绘制同心圆（总是以最新参数重绘）
+   * 添加一个同心圆到列表
+   * @param {{lat:number,lng:number}} center 中心坐标
+   * @param {number} maxRadius 最大半径（米）
+   * @param {number} [interval] 间距（默认 CONFIG.CONCENTRIC_INTERVAL）
+   * @returns {number} 新圆的 id
    */
-  drawCircle(center, radius) {
-    this.center = center;
-    this.currentRadius = radius;
+  addCircle(center, maxRadius, interval) {
+    const id = Date.now();
+    this.circles.push({
+      id,
+      center: { lat: center.lat, lng: center.lng },
+      maxRadius,
+      interval: interval || CONFIG.CONCENTRIC_INTERVAL
+    });
+    this.selectedCircleId = id;
     this._scheduleRedraw();
-    this._zoomToRadius(radius);
+    this._zoomToRadius(maxRadius);
+    return id;
   }
 
   /**
-   * 更新半径
+   * 删除指定 id 的圆
    */
-  updateRadius(radius) {
-    if (!this.center) return;
-    this.currentRadius = radius;
+  removeCircle(id) {
+    this.circles = this.circles.filter(c => c.id !== id);
+    if (this.selectedCircleId === id) this.selectedCircleId = null;
     this._scheduleRedraw();
-    this._zoomToRadius(radius);
   }
 
   /**
-   * 清除同心圆
+   * 删除所有圆
    */
-  removeCircle() {
-    this.currentRadius = 0;
+  clearCircles() {
+    this.circles = [];
+    this.selectedCircleId = null;
     this._scheduleRedraw();
+  }
+
+  /**
+   * 选中一个圆
+   */
+  selectCircle(id) {
+    this.selectedCircleId = id;
+    this._scheduleRedraw();
+  }
+
+  /**
+   * 获取所有圆
+   */
+  getCircles() {
+    return this.circles;
+  }
+
+  /**
+   * 获取选中的圆
+   */
+  getSelectedCircle() {
+    if (this.selectedCircleId === null) return null;
+    return this.circles.find(c => c.id === this.selectedCircleId) || null;
+  }
+
+  /**
+   * 更新圆的半径
+   */
+  updateCircleRadius(id, radius) {
+    const c = this.circles.find(c => c.id === id);
+    if (c) {
+      c.maxRadius = radius;
+      this._scheduleRedraw();
+    }
   }
 
   /**
