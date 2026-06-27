@@ -144,6 +144,22 @@ input[type="number"] {
   color: var(--accent-1);
 }
 
+/* 持续追踪中按钮样式 */
+.fab-btn.watching {
+  background: rgba(0, 212, 170, 0.2);
+  border-color: rgba(0, 212, 170, 0.5);
+  animation: watchPulse 2s ease-in-out infinite;
+}
+
+.fab-btn.watching svg {
+  color: var(--accent-1);
+}
+
+@keyframes watchPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 212, 170, 0.3); }
+  50% { box-shadow: 0 0 0 8px rgba(0, 212, 170, 0); }
+}
+
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
@@ -182,7 +198,7 @@ input[type="number"] {
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
-  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* 面板把手 */
@@ -254,6 +270,16 @@ input[type="number"] {
   font-weight: 400;
 }
 
+.gps-tracking {
+  color: var(--accent-1);
+  animation: trackingBlink 1.5s ease-in-out infinite;
+}
+
+@keyframes trackingBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
 /* ---------- 圆列表距离标记 ---------- */
 .circle-dist {
   font-size: 11px;
@@ -270,6 +296,17 @@ input[type="number"] {
 .circle-dist.dist-within {
   color: var(--accent-1);
   background: rgba(0, 212, 170, 0.12);
+}
+
+/* 趋势箭头样式 */
+.trend-up {
+  color: var(--accent-1);
+  font-weight: 700;
+}
+
+.trend-down {
+  color: var(--danger);
+  font-weight: 700;
 }
 
 /* ---------- 距离信息 + 圈内标签 ---------- */
@@ -742,6 +779,7 @@ input[type="number"] {
   margin-top: 1px;
 }
 
+.circle-edit,
 .circle-del {
   width: 28px;
   height: 28px;
@@ -758,13 +796,41 @@ input[type="number"] {
   cursor: pointer;
 }
 
+.circle-item:hover .circle-edit,
 .circle-item:hover .circle-del {
   opacity: 1;
+}
+
+.circle-edit:hover {
+  background: rgba(0, 163, 255, 0.15);
+  color: var(--accent-2);
 }
 
 .circle-del:hover {
   background: rgba(255, 71, 87, 0.15);
   color: var(--danger);
+}
+
+/* 编辑中半径滑块高亮 */
+.radius-slider.editing {
+  background: rgba(0, 212, 170, 0.15);
+}
+
+.radius-slider.editing::-webkit-slider-thumb {
+  box-shadow: 0 0 0 5px rgba(0, 212, 170, 0.3), 0 2px 8px rgba(0, 212, 170, 0.3);
+}
+
+.radius-slider.editing::-moz-range-thumb {
+  box-shadow: 0 0 0 5px rgba(0, 212, 170, 0.3), 0 2px 8px rgba(0, 212, 170, 0.3);
+}
+
+/* 小屏幕缩小编辑/删除按钮 */
+@media (max-width: 480px) {
+  .circle-edit,
+  .circle-del {
+    width: 24px;
+    height: 24px;
+  }
 }
 
 /* ---------- 滚动条美化 ---------- */
@@ -785,6 +851,45 @@ input[type="number"] {
 @media (max-width: 480px) {
   .bottom-panel {
     max-height: 50vh;
+    /* 默认收起：只显示把手 + 状态条 */
+  }
+
+  .bottom-panel.collapsed {
+    max-height: 56px;
+    overflow: hidden;
+  }
+
+  .bottom-panel.collapsed .panel-header,
+  .bottom-panel.collapsed .panel-body {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .bottom-panel.collapsed .gps-status {
+    opacity: 0.5;
+  }
+
+  /* 把手状态指示：展开时旋转 */
+  .bottom-panel.collapsed .handle-bar::after {
+    transform: rotate(0deg);
+  }
+
+  .handle-bar {
+    position: relative;
+  }
+
+  .handle-bar::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 8px;
+    height: 8px;
+    margin: -6px 0 0 -4px;
+    border-left: 2px solid rgba(255,255,255,0.3);
+    border-bottom: 2px solid rgba(255,255,255,0.3);
+    transform: rotate(135deg);
+    transition: transform 0.3s ease;
   }
 
   .panel-body {

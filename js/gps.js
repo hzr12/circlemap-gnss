@@ -77,17 +77,29 @@ class GPSManager {
 
   /**
    * 持续监听位置变化
+   * @param {object} [options] - 可选，覆盖默认 watchPosition 选项
    */
-  startWatching() {
+  startWatching(options) {
+    // 已在监听中，且传了新选项 → 重启用新参数
     if (this.isWatching) {
-      console.warn('GPS 已在监听中');
-      return;
+      if (options) {
+        this.stopWatching();
+      } else {
+        console.warn('GPS 已在监听中');
+        return;
+      }
     }
 
     if (!navigator.geolocation) {
       if (this.onError) this.onError(new Error('设备不支持地理定位'));
       return;
     }
+
+    const opts = Object.assign({
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 5000
+    }, options || {});
 
     this.isWatching = true;
 
@@ -97,6 +109,8 @@ class GPSManager {
           lat: position.coords.latitude,
           lng: position.coords.longitude,
           accuracy: position.coords.accuracy,
+          speed: position.coords.speed,
+          heading: position.coords.heading,
           timestamp: position.timestamp
         };
         this.currentPosition = pos;
@@ -105,11 +119,7 @@ class GPSManager {
       (error) => {
         if (this.onError) this.onError(error);
       },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 5000 // 5秒内缓存可用
-      }
+      opts
     );
 
     if (this.onWatchStart) this.onWatchStart();

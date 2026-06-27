@@ -46,7 +46,10 @@ const CONFIG = {
   ],
 
   // 地球半径（米）
-  EARTH_RADIUS: 6371000
+  EARTH_RADIUS: 6371000,
+
+  // localStorage 存储键名
+  STORAGE_KEY: 'circlemap_data'
 };
 
 /**
