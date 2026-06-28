@@ -12,7 +12,8 @@ class App {
     this.circleRadius = CONFIG.DEFAULT_RADIUS;
     this.center = null;          // 当前标记位置
     this.myPosition = null;      // 我的位置（GCJ-02，由 GPS 定位设置）
-    this.myPositionTime = null;  // 上次定位成功时间戳（毫秒）
+    this.myPositionTime = null;  // 上次定位成功时间戳（毫秒，用于过期检测）
+    this._displayTime = null;    // 上次有意义定位的时间戳（用于状态条显示，不被 GPS 回调重置）
     this.mode = 'click';
     this._circleListEl = null;   // 圆列表 DOM
     this._statusEl = null;       // GPS 状态条
@@ -22,6 +23,7 @@ class App {
     this._relocating = false;    // 是否正在自动重定位
     this._lastRelocateAttempt = 0; // 上次自动重定位时间戳
     this._lastRawPos = null;     // 上次原始 WGS84 坐标，用于移动距离判断
+    this._lastDistPos = null;    // 上次刷新距离的位置，用于 5m 位移节流
     this._panelCollapsed = window.innerWidth <= 480; // 移动端面板默认收起
     this._watchingBeforeHide = false; // 切后台前是否在追踪
     this._restoringView = false;      // 从后台恢复时不飞地图
@@ -114,7 +116,7 @@ class App {
     if (this._intervalId) return;
     this._intervalId = setInterval(() => {
       if (this.myPosition) {
-        this._updateStatusBar();
+        this._updateStatusBar(true); // force=true 绕开 2s 节流，确保状态条按分钟刷新
         this._updateInfo();
         this._updateCircleList();
         if (this._isPositionStale() && !this._isWatching) {
@@ -476,6 +478,7 @@ class App {
   _setManualPosition(pos) {
     this.myPosition = pos;
     this.myPositionTime = Date.now();
+    this._displayTime = Date.now(); // 手动定位重置显示时间
     this._isManualPosition = true;
     this._prevDistances = {};
     this.mapManager.setLocation(pos, 10); // 手动定位默认精度 10m
@@ -540,6 +543,7 @@ class App {
       this.center = convPos;
       this.myPosition = convPos;
       this.myPositionTime = Date.now();
+      this._displayTime = pos.timestamp || Date.now(); // 单次定位记录显示用时间戳
       this._isManualPosition = false; // #13 GPS 定位覆盖手动
       this._recordFix(pos, convPos);
 
@@ -763,6 +767,7 @@ class App {
 
     if (this._firstFix) {
       this._firstFix = false;
+      this._displayTime = pos.timestamp || Date.now(); // 首次定位：记录显示用时间戳
 
       if (this._restoringView) {
         // 从后台恢复：更新位置但不飞地图，不弹 toast
@@ -809,10 +814,9 @@ class App {
       }
     }
 
-    // 刷新所有显示（位移 >5m 才重算距离和重建列表，否则靠 60s 定时器兜底）
+    // 位移 >5m 才重建圆列表（省性能），状态条已在 line 756 刷新过
     if (!this._lastDistPos || calcDistance(convPos, this._lastDistPos) > 5) {
       this._lastDistPos = convPos;
-      this._updateStatusBar();
       this._updateCircleList();
     }
     this._updateInfo();
@@ -836,6 +840,7 @@ class App {
 
       this.myPosition = convPos;
       this.myPositionTime = Date.now();
+      this._displayTime = pos.timestamp || Date.now(); // 自动重定位重置显示时间
       this._isManualPosition = false; // #13 GPS 定位覆盖手动
       this._recordFix(pos, convPos);
       this.mapManager.setLocation(convPos, pos.accuracy); // #17 精度环
@@ -866,7 +871,7 @@ class App {
     this._saveState();
   }
 
-  /* ============= 状态 & 信息更新 ============= */
+  /* ============= 状态计算（过期检测 + Elapsed） ============= */
 
   /** 定位过期阈值（毫秒） */
   get POSITION_STALE_MS() { return 10 * 60 * 1000; } // 10 分钟
@@ -879,11 +884,11 @@ class App {
   }
 
   /**
-   * 格式化解上次定位已过时间
+   * 格式化解上次定位已过时间（使用 _displayTime，不被 GPS 回调重置）
    */
   _formatElapsed() {
-    if (this.myPositionTime === null) return '';
-    const diff = Date.now() - this.myPositionTime;
+    if (this._displayTime === null) return '';
+    const diff = Date.now() - this._displayTime;
     const min = Math.floor(diff / 60000);
     if (min < 1) return '刚刚';
     if (min < 60) return `${min}分钟前`;
