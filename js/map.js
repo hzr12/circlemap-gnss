@@ -22,6 +22,7 @@ class MapManager {
     this._syncCenter = null;    // 地图实际显示中心（我们追踪，不依赖 getCenter）
 
     this.locationMarker = null; // 我的位置标记（区别于圆心标识）
+    this.trailPolyline = null;  // 历史轨迹线
 
     // 回调钩子
     this.onCenterChange = null;
@@ -551,7 +552,44 @@ class MapManager {
     }
   }
 
+  /**
+   * 更新历史轨迹线
+   * @param {Array<{lat:number,lng:number}>} positions GCJ-02 坐标数组
+   */
+  setTrail(positions) {
+    if (!this.map) return;
+    if (positions.length < 2) {
+      this.clearTrail();
+      return;
+    }
+
+    // 重建 Polyline（每次全量更新）
+    if (this.trailPolyline) {
+      this.trailPolyline.setMap(null);
+    }
+
+    const path = positions.map(p => new qq.maps.LatLng(p.lat, p.lng));
+    this.trailPolyline = new qq.maps.Polyline({
+      path,
+      strokeColor: new qq.maps.Color(0, 212, 170, 0.45),
+      strokeWeight: 3.5,
+      strokeStyle: qq.maps.PolylineStrokeStyle.SOLID,
+      map: this.map
+    });
+  }
+
+  /**
+   * 清除历史轨迹线
+   */
+  clearTrail() {
+    if (this.trailPolyline) {
+      this.trailPolyline.setMap(null);
+      this.trailPolyline = null;
+    }
+  }
+
   destroy() {
+    this.clearTrail();
     if (this.marker) {
       this.marker.setMap(null);
       this.marker = null;

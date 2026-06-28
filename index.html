@@ -32,6 +32,7 @@
 
     <!-- GPS 状态条 -->
     <div class="gps-status" id="gps-status">
+      <span class="gps-dot"></span>
       <span class="gps-offline">⊙ 未定位，点击 GPS 按钮定位</span>
     </div>
 
@@ -134,6 +135,21 @@
         </button>
       </div>
 
+      <!-- 轨迹记录 -->
+      <div class="trail-section">
+        <div class="trail-header">
+          <span class="field-label">轨迹记录</span>
+          <span class="trail-distance" id="trail-distance">0m</span>
+        </div>
+        <div class="trail-controls">
+          <button id="trail-record-btn" class="btn btn-trail">
+            <span class="trail-dot"></span> 开始记录
+          </button>
+          <button id="trail-clear-btn" class="btn btn-secondary btn-sm" disabled>清除</button>
+          <button id="trail-export-btn" class="btn btn-secondary btn-sm" disabled>导出 GPX</button>
+        </div>
+      </div>
+
       <!-- 圆列表 -->
       <div class="circle-list-section">
         <div class="circle-list-header">
@@ -141,6 +157,16 @@
         </div>
         <div class="circle-list" id="circle-list">
           <div class="empty-state">暂无同心圆，点击「绘制圆形」添加</div>
+        </div>
+      </div>
+
+      <!-- 最近定位 -->
+      <div class="fix-list-section">
+        <div class="fix-list-header">
+          <span class="field-label">最近定位 (<span id="fix-count">0</span>)</span>
+        </div>
+        <div class="fix-list" id="fix-list">
+          <div class="empty-state">暂无定位数据</div>
         </div>
       </div>
 
@@ -177,9 +203,9 @@
   <script charset="utf-8" src="https://map.qq.com/api/js?v=2.exp&key=OB4BZ-D4W3U-B7VVO-4PJWW-6TKDJ-WPB77"></script>
 
   <!-- 应用脚本 -->
-  <script src="js/config.js?t=20260627v3"></script>
-  <script src="js/map.js?t=20260627v3"></script>
-  <script src="js/gps.js?t=20260627v3"></script>
-  <script src="js/app.js?t=20260627v3"></script>
+  <script src="js/config.js?t=20260628v8"></script>
+  <script src="js/map.js?t=20260628v8"></script>
+  <script src="js/gps.js?t=20260628v8"></script>
+  <script src="js/app.js?t=20260628v8"></script>
 </body>
 </html>

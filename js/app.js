@@ -25,6 +25,11 @@ class App {
     this._panelCollapsed = window.innerWidth <= 480; // 移动端面板默认收起
     this._watchingBeforeHide = false; // 切后台前是否在追踪
     this._restoringView = false;      // 从后台恢复时不飞地图
+    this._trailPositions = [];        // 历史轨迹点（GCJ-02）
+    this._lastTrailPos = null;        // 上次记录的轨迹位置
+    this._recentFixes = [];           // 最近定位记录（最多 10 条）
+    this._lastRecordedFix = null;     // 上次记录的定位
+    this._isTrailRecording = false;   // 轨迹记录开关
   }
 
   /**
@@ -50,6 +55,9 @@ class App {
 
     // 从 localStorage 恢复数据
     this._loadState();
+
+    // 初始化轨迹 UI 状态
+    this._updateTrailUI();
 
     // 进入页面后自动启动持续 GPS 追踪
     this._startWatching();
@@ -190,6 +198,11 @@ class App {
 
     // —— 清除按钮 ——
     document.getElementById('clear-btn').addEventListener('click', () => this._clearAll());
+
+    // —— 轨迹记录按钮 ——
+    document.getElementById('trail-record-btn').addEventListener('click', () => this._toggleTrailRecording());
+    document.getElementById('trail-clear-btn').addEventListener('click', () => this._clearTrail());
+    document.getElementById('trail-export-btn').addEventListener('click', () => this._exportGpx());
 
     // —— GPS 状态条缓存 ——
     this._statusEl = document.getElementById('gps-status');
@@ -422,6 +435,7 @@ class App {
       this.center = convPos;
       this.myPosition = convPos;
       this.myPositionTime = Date.now();
+      this._recordFix(pos, convPos);
 
       this.mapManager.setCenter(convPos);
       this.mapManager.setLocation(convPos);
@@ -487,7 +501,201 @@ class App {
     this._showToast('⏹ 持续追踪已关闭');
   }
 
+  /**
+   * 清除历史轨迹
+   */
+  _clearTrail() {
+    this._trailPositions = [];
+    this._lastTrailPos = null;
+    this.mapManager.clearTrail();
+    this._updateTrailUI();
+    this._showToast('🗑 轨迹已清除');
+  }
+
+  /**
+   * 切换轨迹记录状态
+   */
+  _toggleTrailRecording() {
+    if (this._isTrailRecording) {
+      this._isTrailRecording = false;
+      this._showToast('⏹ 轨迹记录已停止');
+    } else {
+      // 开始新记录前清空旧轨迹
+      this._trailPositions = [];
+      this._lastTrailPos = null;
+      this.mapManager.clearTrail();
+      this._isTrailRecording = true;
+      this._showToast('⏺ 轨迹记录已开始');
+    }
+    this._updateTrailUI();
+  }
+
+  /**
+   * 导出 GPX 文件
+   */
+  _exportGpx() {
+    if (this._trailPositions.length < 2) {
+      this._showToast('⚠️ 轨迹点太少，无法导出（至少需要 2 个点）');
+      return;
+    }
+
+    const pts = this._trailPositions;
+    let trkptXml = '';
+    for (let i = 0; i < pts.length; i++) {
+      const pt = pts[i];
+      const lat = typeof pt.wgsLat === 'number' ? pt.wgsLat.toFixed(6) : pt.lat.toFixed(6);
+      const lng = typeof pt.wgsLng === 'number' ? pt.wgsLng.toFixed(6) : pt.lng.toFixed(6);
+      const ts = pt.time ? new Date(pt.time).toISOString() : new Date().toISOString();
+
+      // Accuracy mapped to hdop
+      let extra = '';
+      if (pt.accuracy) {
+        const hdop = Math.max(0.5, pt.accuracy / 5);
+        extra += `      <hdop>${hdop.toFixed(1)}</hdop>\n`;
+      }
+      if (pt.speed != null || pt.heading != null) {
+        let extXml = '';
+        if (pt.speed != null) extXml += `          <gpxtpx:speed>${pt.speed.toFixed(2)}</gpxtpx:speed>\n`;
+        if (pt.heading != null) extXml += `          <gpxtpx:course>${pt.heading.toFixed(1)}</gpxtpx:course>\n`;
+        extra += `      <extensions>\n        <gpxtpx:TrackPointExtension>\n${extXml}        </gpxtpx:TrackPointExtension>\n      </extensions>\n`;
+      }
+
+      trkptXml += `      <trkpt lat="${lat}" lon="${lng}">
+        <time>${ts}</time>
+${extra}      </trkpt>\n`;
+    }
+
+    const now = new Date().toISOString();
+    const gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx
+  version="1.1"
+  creator="Circlemap"
+  xmlns="http://www.topografix.com/GPX/1/1"
+  xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v2"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd
+                      http://www.garmin.com/xmlschemas/TrackPointExtension/v2 https://www8.garmin.com/xmlschemas/TrackPointExtensionv2.xsd">
+  <metadata>
+    <name>Circlemap GPS Trail</name>
+    <time>${now}</time>
+  </metadata>
+  <trk>
+    <name>Circlemap Trail</name>
+    <type>track</type>
+    <trkseg>
+${trkptXml}    </trkseg>
+  </trk>
+</gpx>`;
+
+    const blob = new Blob([gpx], { type: 'application/gpx+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `circlemap-trail-${now.slice(0, 10)}.gpx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    this._showToast(`✅ 已导出 GPX（${pts.length} 个点，${this._getTrailDistance()}）`);
+  }
+
+  /**
+   * 计算轨迹总移动距离
+   */
+  _getTrailDistance() {
+    const pts = this._trailPositions;
+    if (pts.length < 2) return 0;
+    let total = 0;
+    for (let i = 1; i < pts.length; i++) {
+      total += calcDistance(
+        {lat: pts[i-1].lat, lng: pts[i-1].lng},
+        {lat: pts[i].lat, lng: pts[i].lng}
+      );
+    }
+    return total;
+  }
+
+  /**
+   * 更新轨迹 UI（按钮状态 + 距离显示）
+   */
+  _updateTrailUI() {
+    const btn = document.getElementById('trail-record-btn');
+    const clearBtn = document.getElementById('trail-clear-btn');
+    const exportBtn = document.getElementById('trail-export-btn');
+    const distEl = document.getElementById('trail-distance');
+
+    // 记录按钮
+    if (btn) {
+      btn.classList.toggle('recording', this._isTrailRecording);
+      btn.innerHTML = this._isTrailRecording
+        ? '<span class="trail-dot"></span> 记录中...'
+        : '<span class="trail-dot"></span> 开始记录';
+    }
+
+    // 距离
+    const dist = this._getTrailDistance();
+    if (distEl) {
+      distEl.textContent = dist > 0 ? formatDistance(dist) : '0m';
+    }
+
+    // 操作按钮状态
+    const hasPoints = this._trailPositions.length > 0;
+    if (clearBtn) clearBtn.disabled = !hasPoints;
+    if (exportBtn) exportBtn.disabled = this._trailPositions.length < 2;
+  }
+
   /* ========== 通用位置处理 ========== */
+
+  /**
+   * 记录一次定位到最近列表（最多 10 条）
+   */
+  _recordFix(pos, convPos) {
+    this._recentFixes.push({
+      time: Date.now(),
+      lat: convPos.lat,
+      lng: convPos.lng,
+      accuracy: pos.accuracy || 0,
+      speed: pos.speed,
+      heading: pos.heading
+    });
+    if (this._recentFixes.length > 10) {
+      this._recentFixes = this._recentFixes.slice(-10);
+    }
+    this._updateRecentFixes();
+  }
+
+  /**
+   * 渲染最近定位列表
+   */
+  _updateRecentFixes() {
+    const listEl = document.getElementById('fix-list');
+    if (!listEl) return;
+    const countEl = document.getElementById('fix-count');
+    if (!this._recentFixes.length) {
+      listEl.innerHTML = '<div class="empty-state">暂无定位数据</div>';
+      if (countEl) countEl.textContent = '0';
+      return;
+    }
+    if (countEl) countEl.textContent = this._recentFixes.length;
+    let html = '';
+    for (let i = this._recentFixes.length - 1; i >= 0; i--) {
+      const f = this._recentFixes[i];
+      const d = new Date(f.time);
+      const pad = (n) => String(n).padStart(2, '0');
+      const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      const accStr = f.accuracy ? `±${f.accuracy.toFixed(0)}m` : '--';
+      let accClass = 'acc-poor';
+      if (f.accuracy < 15) accClass = 'acc-good';
+      else if (f.accuracy < 50) accClass = 'acc-ok';
+      const coordStr = `${f.lat.toFixed(4)}, ${f.lng.toFixed(4)}`;
+      html += `<div class="fix-item">
+        <span class="fix-time">${timeStr}</span>
+        <span class="fix-accuracy ${accClass}">${accStr}</span>
+        <span class="fix-coord">${coordStr}</span>
+      </div>`;
+    }
+    listEl.innerHTML = html;
+  }
 
   /**
    * 处理位置数据：GCJ-02 转换 + UI 刷新
@@ -505,6 +713,9 @@ class App {
     this.myPosition = convPos;
     this.myPositionTime = Date.now();
 
+    // 记录到最近列表
+    this._recordFix(pos, convPos);
+
     // 更新位置标记
     this.mapManager.setLocation(convPos);
 
@@ -517,7 +728,7 @@ class App {
       } else {
         // 首次定位或手动开启追踪：飞到我的位置
         this.center = convPos;
-        this.mapManager.setCenter(convPos);
+        this.mapManager.flyTo(convPos);
 
         // 同步到输入框
         document.getElementById('lat').value = convPos.lat.toFixed(6);
@@ -530,6 +741,30 @@ class App {
         this._showToast(`✅ 定位成功（精度 ±${pos.accuracy.toFixed(0)} 米）`);
         console.log('[GPS] 首次定位:', pos.lat.toFixed(4), pos.lng.toFixed(4));
       }
+    } else if (this._isWatching) {
+      // 持续追踪中：每次位置更新都平滑飞到当前位置
+      this.center = convPos;
+      this.mapManager.flyTo(convPos);
+    }
+
+    // —— 记录历史轨迹（每 10m 采一个点，可开关） ——
+    if (this._isTrailRecording && (!this._lastTrailPos || calcDistance(convPos, this._lastTrailPos) > 10)) {
+      this._trailPositions.push({
+        lat: convPos.lat,
+        lng: convPos.lng,
+        wgsLat: pos.lat,
+        wgsLng: pos.lng,
+        time: pos.timestamp || Date.now(),
+        accuracy: pos.accuracy || 0,
+        speed: pos.speed,
+        heading: pos.heading
+      });
+      this._lastTrailPos = convPos;
+      if (this._trailPositions.length > 500) {
+        this._trailPositions = this._trailPositions.slice(-500);
+      }
+      this.mapManager.setTrail(this._trailPositions);
+      this._updateTrailUI();
     }
 
     // 刷新所有显示
@@ -556,6 +791,7 @@ class App {
 
       this.myPosition = convPos;
       this.myPositionTime = Date.now();
+      this._recordFix(pos, convPos);
       this.mapManager.setLocation(convPos);
       this._prevDistances = {}; // 重置趋势缓存
 
@@ -690,7 +926,7 @@ class App {
   _updateStatusBar() {
     if (!this._statusEl) return;
     if (!this.myPosition) {
-      this._statusEl.innerHTML = '<span class="gps-offline">⊙ 未定位，点击 GPS 按钮定位</span>';
+      this._statusEl.innerHTML = '<span class="gps-dot"></span><span class="gps-offline">⊙ 未定位，点击 GPS 按钮定位</span>';
       return;
     }
     // 找最近圆
@@ -709,11 +945,21 @@ class App {
         : `｜最近圆 ${formatDistance(nearDist)}`;
     }
     const elapsed = this._formatElapsed();
-    const watchingIcon = this._isWatching ? ' <span class="gps-tracking">◉</span>' : '';
     const stale = this._isPositionStale();
+    const isTracking = this._isWatching;
+    // gps-dot 状态
+    let dotClass = '';
+    if (stale) {
+      dotClass = 'gps-dot stale';
+    } else if (isTracking) {
+      dotClass = 'gps-dot tracking';
+    } else {
+      dotClass = 'gps-dot online';
+    }
+    const watchingIcon = isTracking ? ' <span class="gps-tracking">◉</span>' : '';
     const staleIcon = stale ? ' <span class="gps-stale">⚠️ 已过期</span>' : '';
     this._statusEl.innerHTML =
-      `<span class="gps-online">◉ 已定位</span>${watchingIcon} <span class="gps-elapsed">(${elapsed})</span>${staleIcon}${nearStr}`;
+      `<span class="${dotClass}"></span><span class="gps-online">◉ 已定位</span>${watchingIcon} <span class="gps-elapsed">(${elapsed})</span>${staleIcon}${nearStr}`;
   }
 
   /**
