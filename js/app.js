@@ -754,7 +754,6 @@ class App {
     this.myPosition = convPos;
     this.myPositionTime = Date.now();
     this._isManualPosition = false; // #13 GPS 定位覆盖手动
-    this._updateStatusBar(true);    // #13 GPS 定位后立即刷新状态条，清除"手动定位"标签
 
     // 记录到最近列表
     this._recordFix(pos, convPos);
@@ -810,11 +809,12 @@ class App {
       }
     }
 
-    // 位移 >5m 才重建圆列表（省性能），状态条已在 line 756 刷新过
+    // 位移 >5m 才重建圆列表（省性能）
     if (!this._lastDistPos || calcDistance(convPos, this._lastDistPos) > 5) {
       this._lastDistPos = convPos;
-      this._updateCircleList();
+      this._updateCircleList(true);
     }
+    this._updateStatusBar(true); // 刷新状态条（含 elapsed 时间）
     this._updateInfo();
   }
 
