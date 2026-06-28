@@ -13,7 +13,6 @@ class App {
     this.center = null;          // 当前标记位置
     this.myPosition = null;      // 我的位置（GCJ-02，由 GPS 定位设置）
     this.myPositionTime = null;  // 上次定位成功时间戳（毫秒，用于过期检测）
-    this._displayTime = null;    // 上次有意义定位的时间戳（用于状态条显示，不被 GPS 回调重置）
     this.mode = 'click';
     this._circleListEl = null;   // 圆列表 DOM
     this._statusEl = null;       // GPS 状态条
@@ -478,7 +477,6 @@ class App {
   _setManualPosition(pos) {
     this.myPosition = pos;
     this.myPositionTime = Date.now();
-    this._displayTime = Date.now(); // 手动定位重置显示时间
     this._isManualPosition = true;
     this._prevDistances = {};
     this.mapManager.setLocation(pos, 10); // 手动定位默认精度 10m
@@ -543,7 +541,6 @@ class App {
       this.center = convPos;
       this.myPosition = convPos;
       this.myPositionTime = Date.now();
-      this._displayTime = pos.timestamp || Date.now(); // 单次定位记录显示用时间戳
       this._isManualPosition = false; // #13 GPS 定位覆盖手动
       this._recordFix(pos, convPos);
 
@@ -767,7 +764,6 @@ class App {
 
     if (this._firstFix) {
       this._firstFix = false;
-      this._displayTime = pos.timestamp || Date.now(); // 首次定位：记录显示用时间戳
 
       if (this._restoringView) {
         // 从后台恢复：更新位置但不飞地图，不弹 toast
@@ -840,7 +836,6 @@ class App {
 
       this.myPosition = convPos;
       this.myPositionTime = Date.now();
-      this._displayTime = pos.timestamp || Date.now(); // 自动重定位重置显示时间
       this._isManualPosition = false; // #13 GPS 定位覆盖手动
       this._recordFix(pos, convPos);
       this.mapManager.setLocation(convPos, pos.accuracy); // #17 精度环
@@ -871,7 +866,7 @@ class App {
     this._saveState();
   }
 
-  /* ============= 状态计算（过期检测 + Elapsed） ============= */
+  /* ============= 状态 & 信息更新 ============= */
 
   /** 定位过期阈值（毫秒） */
   get POSITION_STALE_MS() { return 10 * 60 * 1000; } // 10 分钟
@@ -884,11 +879,11 @@ class App {
   }
 
   /**
-   * 格式化解上次定位已过时间（使用 _displayTime，不被 GPS 回调重置）
+   * 格式化解上次定位已过时间
    */
   _formatElapsed() {
-    if (this._displayTime === null) return '';
-    const diff = Date.now() - this._displayTime;
+    if (this.myPositionTime === null) return '';
+    const diff = Date.now() - this.myPositionTime;
     const min = Math.floor(diff / 60000);
     if (min < 1) return '刚刚';
     if (min < 60) return `${min}分钟前`;
