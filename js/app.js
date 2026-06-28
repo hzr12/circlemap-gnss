@@ -96,26 +96,10 @@ class App {
     window.addEventListener('pagehide', handlePageHide);
     window.addEventListener('pageshow', handlePageShow);
 
-    // 每分钟刷新状态 & 持久化 & 自动重定位（#5 — visibility 感知）
-    this._startInterval();
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) {
-        this._stopInterval();
-      } else {
-        this._startInterval();
-      }
-    });
-
-    console.log('[App] 初始化完成');
-  }
-
-  /* ============= 定时器管理 (#5) ============= */
-
-  _startInterval() {
-    if (this._intervalId) return;
-    this._intervalId = setInterval(() => {
+    // 每分钟刷新状态 & 持久化 & 自动重定位
+    setInterval(() => {
       if (this.myPosition) {
-        this._updateStatusBar(true); // force=true 绕开 2s 节流，确保状态条按分钟刷新
+        this._updateStatusBar(true);
         this._updateInfo();
         this._updateCircleList();
         if (this._isPositionStale() && !this._isWatching) {
@@ -124,13 +108,8 @@ class App {
       }
       this._saveState();
     }, 60 * 1000);
-  }
 
-  _stopInterval() {
-    if (this._intervalId) {
-      clearInterval(this._intervalId);
-      this._intervalId = null;
-    }
+    console.log('[App] 初始化完成');
   }
 
   /* ============= UI 事件绑定 ============= */
