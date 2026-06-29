@@ -42,6 +42,7 @@ class App {
     this._lastAltitude = null;        // 上次海拔（米）
     this._lastCalcPos = null;         // 上一个连续定位位置（用于自行计算速度）
     this._lastCalcTime = null;        // 上一个连续定位时间戳
+    this._lastAccuracy = null;        // 最近一次定位精度（米），用于精度圈范围判断
     this._theme = 'dark';             // 主题：dark | light
   }
 
@@ -488,8 +489,9 @@ class App {
     this.myPositionTime = Date.now();
     this._isManualPosition = true;
     this._prevDistances = {};
-    this.mapManager.setLocation(pos, 10); // 手动定位默认精度 10m
-    this._recordFix({ ...pos, accuracy: 10 }, pos, true); // 手动定位加入最近列表
+    this._lastAccuracy = 50;
+    this.mapManager.setLocation(pos, 50); // 手动定位默认精度 50m
+    this._recordFix({ ...pos, accuracy: 50 }, pos, true); // 手动定位加入最近列表
     this._updateStatusBar(true);
     this._updateCircleList(true);
     this._updateInfo();
@@ -565,6 +567,7 @@ class App {
       this._lastAltitude = pos.altitude;
       this._lastCalcPos = { lat: convPos.lat, lng: convPos.lng };
       this._lastCalcTime = pos.timestamp || Date.now();
+      this._lastAccuracy = pos.accuracy;
       this._recordFix(pos, convPos);
 
       this.mapManager.setCenter(convPos);
@@ -788,6 +791,7 @@ class App {
     this._lastAltitude = pos.altitude;
     this._lastCalcPos = { lat: convPos.lat, lng: convPos.lng };
     this._lastCalcTime = pos.timestamp || Date.now();
+    this._lastAccuracy = pos.accuracy;
 
     // 保存定位信息
     this.myPosition = convPos;
@@ -881,6 +885,7 @@ class App {
       this._isManualPosition = false; // #13 GPS 定位覆盖手动
       this._lastSpeed = pos.speed;
       this._lastAltitude = pos.altitude;
+      this._lastAccuracy = pos.accuracy;
       this._recordFix(pos, convPos);
       this.mapManager.setLocation(convPos, pos.accuracy); // #17 精度环
       this._prevDistances = {}; // 重置趋势缓存
@@ -943,7 +948,14 @@ class App {
    */
   _calcCircleTrend(circle) {
     const dist = calcDistance(this.myPosition, circle.center);
-    const within = dist <= circle.maxRadius;
+    const accuracy = this._lastAccuracy || 0;
+    // 三态范围：'inrange' 确定在圆内 / 'maybe' 精度圈与圆重叠 / false 在圆外
+    let within = false;
+    if (dist <= circle.maxRadius) {
+      within = 'inrange';
+    } else if (accuracy > 0 && (dist - accuracy) <= circle.maxRadius) {
+      within = 'maybe';
+    }
     const stale = this._isPositionStale();
     let trend = '';
     let trendHtml = '';
@@ -1085,10 +1097,12 @@ class App {
     }
     let nearStr = '';
     if (nearest) {
-      const within = nearDist <= nearest.maxRadius;
-      nearStr = within
+      const { within } = this._calcCircleTrend(nearest);
+      nearStr = within === 'inrange'
         ? `最近圆 ≤ ${formatDistance(nearest.maxRadius)} ✅`
-        : `最近圆 ${formatDistance(nearDist)}`;
+        : within === 'maybe'
+          ? `最近圆 ${formatDistance(nearDist)} ⚠️`
+          : `最近圆 ${formatDistance(nearDist)}`;
     }
     const elapsed = this._formatElapsed();
     const stale = this._isPositionStale();
@@ -1181,7 +1195,10 @@ class App {
     if (this.myPosition && distEl) {
       const { dist, within, stale, trendHtml } = this._calcCircleTrend(sel);
       const manualTag = this._isManualPosition ? ' <span class="tag-manual">手动</span>' : ''; // #15
-      distEl.innerHTML = `${formatDistance(dist)}${trendHtml}${within ? ' <span class="tag-inrange">范围内</span>' : ''}${stale ? ' <span class="tag-stale">可能过期</span>' : ''}${manualTag}`;
+      let rangeTag = '';
+      if (within === 'inrange') rangeTag = ' <span class="tag-inrange">范围内</span>';
+      else if (within === 'maybe') rangeTag = ' <span class="tag-maybe">可能范围内</span>';
+      distEl.innerHTML = `${formatDistance(dist)}${trendHtml}${rangeTag}${stale ? ' <span class="tag-stale">可能过期</span>' : ''}${manualTag}`;
     } else if (distEl) {
       distEl.textContent = '--';
     }
@@ -1287,7 +1304,7 @@ class App {
       if (this.myPosition) {
         const { dist, within, stale, trend } = this._calcCircleTrend(c);
         distStr = formatDistance(dist) + trend + (stale ? ' ⚠' : '') + (this._isManualPosition ? ' 📍' : ''); // #15 手动标记
-        distClass = within ? 'dist-within' : '';
+        distClass = within === 'inrange' ? 'dist-within' : within === 'maybe' ? 'dist-maybe' : '';
       }
 
       html += `<div class="circle-item${isSel ? ' active' : ''}" data-id="${c.id}">
