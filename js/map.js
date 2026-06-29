@@ -191,6 +191,19 @@ class MapManager {
    *  同心圆渲染（多圆支持）
    * ================================================================ */
 
+  /**
+   * 离屏 Canvas（多圆重叠染色用，懒创建）
+   */
+  _getOffscreen(w, h) {
+    const dpr = window.devicePixelRatio || 1;
+    if (!this._offCanvas || this._offCanvas.width !== Math.round(w * dpr) || this._offCanvas.height !== Math.round(h * dpr)) {
+      this._offCanvas = document.createElement('canvas');
+      this._offCanvas.width = Math.round(w * dpr);
+      this._offCanvas.height = Math.round(h * dpr);
+    }
+    return this._offCanvas;
+  }
+
   _redraw() {
     const dpr = window.devicePixelRatio || 1;
     const ctx = this.ctx;
@@ -201,15 +214,73 @@ class MapManager {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
+    if (!this.circles.length) return;
+
+    // ── Pass 1: 离屏 Canvas 只画填充（重叠区域自然叠色加深） ──
+    const offCanvas = this._getOffscreen(w, h);
+    const offCtx = offCanvas.getContext('2d');
+    offCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    offCtx.clearRect(0, 0, w, h);
+
     for (const c of this.circles) {
-      this._drawOneCircle(ctx, c);
+      this._drawCircleFill(offCtx, c);
+    }
+
+    // ── 合成离屏结果到主 Canvas（整体控制透明度） ──
+    ctx.drawImage(offCanvas, 0, 0, offCanvas.width, offCanvas.height, 0, 0, w, h);
+
+    // ── Pass 2: 主 Canvas 画描边 + 圆心 ──
+    for (const c of this.circles) {
+      this._drawCircleStrokes(ctx, c);
     }
   }
 
   /**
-   * 绘制单个同心圆组
+   * 只画圆的填充区域（离屏 Canvas 用）
+   * 重叠区域因为多次 fill 叠加，颜色自然比单个圆深
    */
-  _drawOneCircle(ctx, circle) {
+  _drawCircleFill(ctx, circle) {
+    const latLng = new qq.maps.LatLng(circle.center.lat, circle.center.lng);
+    const cp = this._latLngToContainerPoint(latLng);
+    if (!cp) return;
+
+    const maxR = circle.maxRadius;
+    const interval = circle.interval;
+    const mp = this._metersToPixels(maxR, latLng);
+    const ip = this._metersToPixels(interval, latLng);
+    const { x: cx, y: cy } = cp;
+
+    if (mp < CONFIG.MIN_DRAW_PX) return;
+
+    const drawInner = ip >= 2;
+    const ringCount = drawInner ? Math.max(1, Math.floor(mp / ip)) : 0;
+
+    // ── 整体底色 ──
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(1, mp), 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(70, 140, 220, 0.12)'; // 单次略深，叠加后更明显
+    ctx.fill();
+
+    // ── 间隔填充（偶数圈加深） ──
+    if (drawInner) {
+      for (let i = ringCount; i >= 1; i--) {
+        const ro = i * ip, ri = (i - 1) * ip;
+        if (ro > mp) continue;
+        if (i % 2 === 0) {
+          ctx.beginPath();
+          ctx.arc(cx, cy, Math.max(1, ro), 0, Math.PI * 2);
+          ctx.arc(cx, cy, Math.max(0.5, ri), 0, Math.PI * 2, true);
+          ctx.fillStyle = 'rgba(70, 140, 220, 0.06)';
+          ctx.fill();
+        }
+      }
+    }
+  }
+
+  /**
+   * 画圆的描边 + 圆心标记（主 Canvas 用）
+   */
+  _drawCircleStrokes(ctx, circle) {
     const isSel = circle.id === this.selectedCircleId;
     const latLng = new qq.maps.LatLng(circle.center.lat, circle.center.lng);
     const cp = this._latLngToContainerPoint(latLng);
@@ -226,36 +297,12 @@ class MapManager {
     const drawInner = ip >= 2;
     const ringCount = drawInner ? Math.max(1, Math.floor(mp / ip)) : 0;
 
-    // 选中态：选中色 vs 默认色
-    const fillBase = 'rgba(70, 140, 220, 0.08)';
-    const fillAlt  = 'rgba(70, 140, 220, 0.05)';
     const strokeInner = 'rgba(15, 50, 120, 0.32)';
     const strokeOuter = 'rgba(10, 35, 90, 0.55)';
     const dotStroke = isSel ? 'rgba(0, 160, 130, 0.4)'  : 'rgba(15, 50, 120, 0.25)';
     const dotFill   = isSel ? '#00a082'                  : 'rgba(15, 50, 120, 0.8)';
 
-    // ── 1. 整体半透明底色 ──
-    ctx.beginPath();
-    ctx.arc(cx, cy, Math.max(1, mp), 0, Math.PI * 2);
-    ctx.fillStyle = fillBase;
-    ctx.fill();
-
-    // ── 2. 间隔填充（偶数圈加深） ──
-    if (drawInner) {
-      for (let i = ringCount; i >= 1; i--) {
-        const ro = i * ip, ri = (i - 1) * ip;
-        if (ro > mp) continue;
-        if (i % 2 === 0) {
-          ctx.beginPath();
-          ctx.arc(cx, cy, Math.max(1, ro), 0, Math.PI * 2);
-          ctx.arc(cx, cy, Math.max(0.5, ri), 0, Math.PI * 2, true);
-          ctx.fillStyle = fillAlt;
-          ctx.fill();
-        }
-      }
-    }
-
-    // ── 3. 内部圈描边（细线） ──
+    // ── 内部圈描边 ──
     if (drawInner) {
       ctx.strokeStyle = strokeInner;
       ctx.lineWidth = 1.2;
@@ -268,14 +315,14 @@ class MapManager {
       }
     }
 
-    // ── 4. 最外圈描边（粗线） ──
+    // ── 最外圈描边（粗线） ──
     ctx.beginPath();
     ctx.arc(cx, cy, Math.max(1, mp), 0, Math.PI * 2);
     ctx.strokeStyle = strokeOuter;
     ctx.lineWidth = 2.2;
     ctx.stroke();
 
-    // ── 4.5 选中态：虚线外框 ──
+    // ── 选中态：虚线外框 ──
     if (isSel) {
       ctx.beginPath();
       ctx.arc(cx, cy, Math.max(1, mp + 5), 0, Math.PI * 2);
@@ -286,7 +333,7 @@ class MapManager {
       ctx.setLineDash([]);
     }
 
-    // ── 5. 圆心标记 ──
+    // ── 圆心标记 ──
     const dotR = isSel ? 9 : 6;
     ctx.beginPath();
     ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
@@ -669,6 +716,7 @@ class MapManager {
       this.locationMarker.setMap(null);
       this.locationMarker = null;
     }
+    this._offCanvas = null;
     this.map = null;
     this.center = null;
   }
