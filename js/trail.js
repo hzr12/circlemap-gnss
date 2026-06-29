@@ -45,13 +45,13 @@ class Trail {
     if (this.lastPos && calcDistance(
       { lat: pt.lat, lng: pt.lng },
       { lat: this.lastPos.lat, lng: this.lastPos.lng }
-    ) <= 10) {
+    ) <= CONFIG.TRAIL_SAMPLE_MIN_DIST) {
       return false;
     }
     this.positions.push(pt);
     this.lastPos = pt;
-    if (this.positions.length > 500) {
-      this.positions = this.positions.slice(-500);
+    if (this.positions.length > CONFIG.TRAIL_MAX_POINTS) {
+      this.positions = this.positions.slice(-CONFIG.TRAIL_MAX_POINTS);
     }
     return true;
   }

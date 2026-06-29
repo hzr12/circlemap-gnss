@@ -49,7 +49,34 @@ const CONFIG = {
   EARTH_RADIUS: 6371000,
 
   // localStorage 存储键名
-  STORAGE_KEY: 'circlemap_data'
+  STORAGE_KEY: 'circlemap_data',
+
+  // ----- 交互参数 -----
+  INPUT_DEBOUNCE_MS: 400,           // 坐标输入防抖（毫秒）
+  PARSE_DELAY_MS: 300,              // 智能解析防抖（毫秒）
+  LONGPRESS_THRESHOLD_MS: 600,      // GPS 按钮长按判定（毫秒）
+  LOCATED_ANIM_MS: 3000,            // 定位成功按钮高亮（毫秒）
+  EDIT_HIGHLIGHT_MS: 2000,          // 编辑滑块高亮（毫秒）
+
+  // ----- GPS 相关 -----
+  POSITION_STALE_MS: 10 * 60 * 1000,    // 位置过期阈值（10 分钟）
+  RELOCATE_INTERVAL_MS: 5 * 60 * 1000,  // 自动重定位最小间隔（5 分钟）
+
+  // ----- 显示参数 -----
+  STATUS_THROTTLE_MS: 2000,             // 状态条更新节流（毫秒）
+  LIST_THROTTLE_MS: 2000,               // 圆列表更新节流（毫秒）
+  MAX_RECENT_FIXES: 10,                 // 最近定位最大条数
+  MIN_DISPLACEMENT_M: 5,                // 位移重建阈值（米）
+
+  // ----- 轨迹 -----
+  TRAIL_SAMPLE_MIN_DIST: 10,            // 轨迹采样最小间隔（米）
+  TRAIL_MAX_POINTS: 500,                // 轨迹最大点数
+
+  // ----- UI -----
+  MOBILE_BREAKPOINT: 480,               // 移动端断点（像素）
+  DEFAULT_TOAST_DURATION: 3000,         // Toast 默认显示时长（毫秒）
+  TOAST_FADE_MS: 300,                   // Toast 消失动画（毫秒）
+  GPX_URL_REVOKE_DELAY: 5000            // GPX 导出 URL 释放延迟（毫秒）
 };
 
 /**
@@ -97,8 +124,9 @@ function radiusToSlider(radius) {
  * @returns {string}
  */
 function formatDistance(meters) {
-  if (meters < 10) return `${Math.round(meters)}m`;
-  if (meters < 1000) return `${Math.round(meters)}m`;
-  if (meters < 10000) return `${(meters / 1000).toFixed(2)}km`;
-  return `${(meters / 1000).toFixed(1)}km`;
+  const val = Math.round(meters);
+  if (val < 10) return `${val}m`;
+  if (val < 1000) return `${val}m`;
+  if (val < 10000) return `${(val / 1000).toFixed(2)}km`;
+  return `${(val / 1000).toFixed(1)}km`;
 }

@@ -65,7 +65,7 @@ ${trkptXml}    </trkseg>
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    setTimeout(() => URL.revokeObjectURL(url), CONFIG.GPX_URL_REVOKE_DELAY);
     return true;
   }
 }

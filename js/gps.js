@@ -26,7 +26,7 @@ class GPSManager {
   getCurrentPosition(timeout) {
     const t = timeout || CONFIG.GPS_TIMEOUT;
 
-    // 15 秒总超时兜底（比 geolocation timeout 多 5s，防止 GPS 信号弱卡死）
+    // 总超时兜底（比 geolocation timeout 多 5s，防止 GPS 信号弱卡死）
     const fallbackMs = Math.max(t + 5000, 15000);
 
     return new Promise((resolve, reject) => {

@@ -19,6 +19,10 @@
   --accent-2: #00A3FF;
   --accent-gradient: linear-gradient(135deg, #00D4AA, #00A3FF);
   --danger: #FF4757;
+  --warning: #FFA502;
+  --bg-accent-subtle: rgba(0, 212, 170, 0.12);
+  --bg-danger-subtle: rgba(255, 71, 87, 0.12);
+  --bg-warning-subtle: rgba(255, 165, 2, 0.12);
   --shadow-panel: 0 -8px 40px rgba(0, 0, 0, 0.5);
   --shadow-fab: 0 4px 16px rgba(0, 0, 0, 0.4);
   --radius-sm: 8px;
@@ -344,7 +348,7 @@ input[type="number"] {
 
 .circle-dist.dist-within {
   color: var(--accent-1);
-  background: rgba(0, 212, 170, 0.12);
+  background: var(--bg-accent-subtle);
 }
 
 /* 趋势箭头样式 */
@@ -380,13 +384,15 @@ input[type="number"] {
   vertical-align: middle;
 }
 
+
+
 .tag-stale {
   display: inline-block;
   font-size: 10px;
   font-weight: 600;
   font-family: var(--font-sans);
   color: var(--danger);
-  background: rgba(255, 71, 87, 0.12);
+  background: var(--bg-danger-subtle);
   padding: 1px 6px;
   border-radius: 10px;
   margin-left: 4px;
@@ -399,8 +405,8 @@ input[type="number"] {
   font-size: 10px;
   font-weight: 600;
   font-family: var(--font-sans);
-  color: #FFA502;
-  background: rgba(255, 165, 2, 0.12);
+  color: var(--warning);
+  background: var(--bg-warning-subtle);
   padding: 1px 6px;
   border-radius: 10px;
   margin-left: 4px;
@@ -416,7 +422,7 @@ input[type="number"] {
 
 /* #15 — 状态条手动定位标签 */
 .gps-manual {
-  color: #FFA502;
+  color: var(--warning);
   font-weight: 600;
   font-size: 10px;
 }
@@ -858,7 +864,7 @@ input[type="number"] {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: rgba(0, 212, 170, 0.12);
+  background: var(--bg-accent-subtle);
   color: var(--accent-1);
   font-size: 10px;
   font-weight: 700;
@@ -891,6 +897,13 @@ input[type="number"] {
   font-size: 11px;
   color: var(--text-tertiary);
   margin-top: 1px;
+}
+
+.circle-created {
+  font-size: 10px;
+  font-weight: 400;
+  opacity: 0.5;
+  margin-left: 6px;
 }
 
 .circle-edit,
@@ -1013,17 +1026,17 @@ input[type="number"] {
 
 .fix-accuracy.acc-good {
   color: var(--accent-1);
-  background: rgba(0, 212, 170, 0.12);
+  background: var(--bg-accent-subtle);
 }
 
 .fix-accuracy.acc-ok {
-  color: #FFA502;
-  background: rgba(255, 165, 2, 0.12);
+  color: var(--warning);
+  background: var(--bg-warning-subtle);
 }
 
 .fix-accuracy.acc-poor {
   color: var(--danger);
-  background: rgba(255, 71, 87, 0.12);
+  background: var(--bg-danger-subtle);
 }
 
 .fix-coord {
@@ -1040,7 +1053,7 @@ input[type="number"] {
 .fix-manual {
   font-size: 10px;
   font-weight: 600;
-  color: #FFA502;
+  color: var(--warning);
   font-family: var(--font-sans);
 }
 
@@ -1496,8 +1509,4 @@ input[type="number"] {
   }
 }
 
-/* ---------- 暗色地图控件覆盖 ---------- */
-/* 腾讯地图自身控件适配 */
-.qq-map .map-controls {
-  filter: none;
-}
+/* 腾讯地图自身控件已通过上方 .qq-map .map-controls 适配深色背景 */

@@ -18,7 +18,8 @@ class Storage {
           id: c.id,
           center: c.center,
           maxRadius: c.maxRadius,
-          interval: c.interval
+          interval: c.interval,
+          createdAt: c.createdAt
         })),
         selectedCircleId: mapManager.selectedCircleId,
         circleRadius: circleRadius,

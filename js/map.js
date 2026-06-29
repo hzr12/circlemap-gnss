@@ -79,24 +79,26 @@ class MapManager {
     });
 
     // 地图变化 → 重绘 Circle Canvas
+    qq.maps.event.addListener(this.map, 'center_changed', () => {
+      const c = this.map.getCenter();
+      if (c) this._syncCenter = c;
+    });
     qq.maps.event.addListener(this.map, 'zoom_changed', () => {
-      this._syncCenter = this.map.getCenter() || this._syncCenter;
       this._scheduleRedraw();
     });
     qq.maps.event.addListener(this.map, 'drag', () => {
-      this._syncCenter = this.map.getCenter() || this._syncCenter;
       this._scheduleRedraw();
     });
     qq.maps.event.addListener(this.map, 'dragend', () => {
-      this._syncCenter = this.map.getCenter() || this._syncCenter;
       this._scheduleRedraw();
     });
 
     // 窗口大小变化
-    window.addEventListener('resize', () => {
+    this._resizeHandler = () => {
       this._resizeCanvas();
       this._scheduleRedraw();
-    });
+    };
+    window.addEventListener('resize', this._resizeHandler);
 
     // 初始化尺寸
     this._resizeCanvas();
@@ -368,7 +370,8 @@ class MapManager {
       id,
       center: { lat: center.lat, lng: center.lng },
       maxRadius,
-      interval: interval || CONFIG.CONCENTRIC_INTERVAL
+      interval: interval || CONFIG.CONCENTRIC_INTERVAL,
+      createdAt: Date.now()
     });
     this.selectedCircleId = id;
     this._scheduleRedraw();
@@ -654,6 +657,10 @@ class MapManager {
 
   destroy() {
     this.clearTrail();
+    if (this._resizeHandler) {
+      window.removeEventListener('resize', this._resizeHandler);
+      this._resizeHandler = null;
+    }
     if (this.marker) {
       this.marker.setMap(null);
       this.marker = null;

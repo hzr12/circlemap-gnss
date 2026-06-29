@@ -23,10 +23,10 @@ class Toast {
       toast.classList.add('show');
     });
 
-    const ms = duration || 3000;
+    const ms = duration || CONFIG.DEFAULT_TOAST_DURATION;
     setTimeout(() => {
       toast.classList.remove('show');
-      setTimeout(() => toast.remove(), 300);
+      setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
     }, ms);
   }
 }
