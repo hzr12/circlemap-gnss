@@ -1037,6 +1037,13 @@ input[type="number"] {
   min-width: 0;
 }
 
+.fix-manual {
+  font-size: 10px;
+  font-weight: 600;
+  color: #FFA502;
+  font-family: var(--font-sans);
+}
+
 /* ---------- 轨迹记录区 ---------- */
 .trail-section {
   margin-bottom: 14px;
