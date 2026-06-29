@@ -458,6 +458,7 @@ class App {
     this._isManualPosition = true;
     this._prevDistances = {};
     this.mapManager.setLocation(pos, 10); // 手动定位默认精度 10m
+    this._recordFix({ ...pos, accuracy: 10 }, pos, true); // 手动定位加入最近列表
     this._updateStatusBar(true);
     this._updateCircleList(true);
     this._updateInfo();
@@ -668,14 +669,15 @@ class App {
   /**
    * 记录一次定位到最近列表（最多 10 条）
    */
-  _recordFix(pos, convPos) {
+  _recordFix(pos, convPos, isManual) {
     this._recentFixes.push({
       time: Date.now(),
       lat: convPos.lat,
       lng: convPos.lng,
       accuracy: pos.accuracy || 0,
       speed: pos.speed,
-      heading: pos.heading
+      heading: pos.heading,
+      isManual: !!isManual
     });
     if (this._recentFixes.length > 10) {
       this._recentFixes = this._recentFixes.slice(-10);
@@ -706,11 +708,12 @@ class App {
       let accClass = 'acc-poor';
       if (f.accuracy < 15) accClass = 'acc-good';
       else if (f.accuracy < 50) accClass = 'acc-ok';
+      const manualTag = f.isManual ? ' <span class="fix-manual">📍 手动</span>' : '';
       const coordStr = `${f.lat.toFixed(4)}, ${f.lng.toFixed(4)}`;
       html += `<div class="fix-item">
         <span class="fix-time">${timeStr}</span>
         <span class="fix-accuracy ${accClass}">${accStr}</span>
-        <span class="fix-coord">${coordStr}</span>
+        <span class="fix-coord">${coordStr}${manualTag}</span>
       </div>`;
     }
     listEl.innerHTML = html;
