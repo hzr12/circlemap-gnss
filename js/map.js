@@ -832,7 +832,6 @@ class MapManager {
       path,
       strokeColor: new qq.maps.Color(clr.r, clr.g, clr.b, clr.a),
       strokeWeight: 3.5,
-      strokeStyle: (qq.maps.PolylineStrokeStyle && qq.maps.PolylineStrokeStyle.SOLID) || 'solid',
       map: this.map
     });
     this.trailPolylines.push(poly);
