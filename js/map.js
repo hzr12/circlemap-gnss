@@ -556,7 +556,8 @@ class MapManager {
           const timer = setTimeout(() => {
             reject(new Error('convertor API timeout'));
           }, 5000);
-          qq.maps.convertor.translate([point], 1, (res) => {
+          const latLng = new qq.maps.LatLng(point.lat, point.lng);
+          qq.maps.convertor.translate([latLng], 1, (res) => {
             clearTimeout(timer);
             if (res && res[0] && typeof res[0].lat === 'number' && typeof res[0].lng === 'number') {
               resolve({ lat: res[0].lat, lng: res[0].lng });
@@ -831,7 +832,7 @@ class MapManager {
       path,
       strokeColor: new qq.maps.Color(clr.r, clr.g, clr.b, clr.a),
       strokeWeight: 3.5,
-      strokeStyle: qq.maps.PolylineStrokeStyle.SOLID,
+      strokeStyle: (qq.maps.PolylineStrokeStyle && qq.maps.PolylineStrokeStyle.SOLID) || 'solid',
       map: this.map
     });
     this.trailPolylines.push(poly);
