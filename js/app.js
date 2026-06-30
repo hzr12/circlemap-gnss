@@ -44,6 +44,7 @@ class App {
     this._lastCalcTime = null;        // 上一个连续定位时间戳
     this._lastAccuracy = null;        // 最近一次定位精度（米），用于精度圈范围判断
     this._theme = 'dark';             // 主题：dark | light
+    this._trailSmoothing = true;      // 轨迹平滑开关
   }
 
   /**
@@ -77,6 +78,12 @@ class App {
 
     // 恢复主题偏好
     this._restoreTheme();
+
+    // 恢复轨迹平滑偏好
+    try {
+      const pref = localStorage.getItem('circlemap_trail_smooth');
+      if (pref !== null) this._trailSmoothing = pref === '1';
+    } catch (e) { /* 静默 */ }
 
     // 从 localStorage 恢复数据
     this._loadState();
@@ -276,6 +283,8 @@ class App {
     document.getElementById('trail-record-btn').addEventListener('click', () => this._toggleTrailRecording());
     document.getElementById('trail-clear-btn').addEventListener('click', () => this._clearTrail());
     document.getElementById('trail-export-btn').addEventListener('click', () => this._exportGpx());
+    document.getElementById('trail-stats-btn').addEventListener('click', () => this._showTrailStats());
+    document.getElementById('trail-smooth-btn').addEventListener('click', () => this._toggleTrailSmoothing());
 
     // —— GPS 状态条缓存 + #12 点击切换跟随模式 ——
     this._statusEl = document.getElementById('gps-status');
@@ -654,6 +663,16 @@ class App {
   }
 
   /**
+   * 获取渲染用的轨迹坐标数组（根据平滑开关决定是否平滑）
+   * @returns {Array}
+   */
+  _getTrailPositions() {
+    return this._trailSmoothing
+      ? this.trail.getSmoothedPositions()
+      : this.trail.positions;
+  }
+
+  /**
    * 清除历史轨迹
    */
   _clearTrail() {
@@ -669,7 +688,7 @@ class App {
       this.trail.positions = savedPositions;
       this.trail.lastPos = savedLastPos;
       if (savedPositions.length >= 2) {
-        this.mapManager.setTrail(savedPositions);
+        this.mapManager.setTrail(this._getTrailPositions());
       }
       this._updateTrailUI();
       Storage.saveTrail(this.trail);
@@ -708,6 +727,138 @@ class App {
   }
 
   /**
+   * 切换轨迹平滑开关
+   */
+  _toggleTrailSmoothing() {
+    this._trailSmoothing = !this._trailSmoothing;
+    // 保存偏好
+    try {
+      localStorage.setItem('circlemap_trail_smooth', this._trailSmoothing ? '1' : '0');
+    } catch (e) { /* 静默 */ }
+    // 刷新轨迹渲染
+    if (this.trail.positions.length >= 2) {
+      this.mapManager.setTrail(this._getTrailPositions());
+    }
+    this._updateTrailUI();
+    Toast.show(this._trailSmoothing ? '✨ 轨迹平滑已开启' : '⬜ 轨迹平滑已关闭');
+  }
+
+  /**
+   * 显示轨迹统计面板
+   */
+  _showTrailStats() {
+    const pos = this.trail.positions;
+    if (pos.length < 2) {
+      Toast.show('⚠️ 轨迹点数不足（至少 2 个点）');
+      return;
+    }
+
+    const totalDist = this.trail.getDistance();
+
+    // 总时长（用首尾点的时间戳）
+    const firstTime = pos[0].time || null;
+    const lastTime = pos[pos.length - 1].time || null;
+    let durationMs = 0;
+    if (firstTime && lastTime && lastTime > firstTime) {
+      durationMs = lastTime - firstTime;
+    }
+
+    // 最高速度
+    let maxSpeed = 0;
+    let hasSpeed = false;
+    for (const p of pos) {
+      if (p.speed != null && p.speed > maxSpeed) {
+        maxSpeed = p.speed;
+        hasSpeed = true;
+      }
+    }
+
+    // 平均速度（总距离 / 总时长）
+    const avgSpeed = durationMs > 0 ? totalDist / (durationMs / 1000) : 0;
+
+    // 格式化时间
+    const fmtTime = (ts) => {
+      if (!ts) return '--';
+      const d = new Date(ts);
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    };
+    const fmtDate = (ts) => {
+      if (!ts) return '--';
+      const d = new Date(ts);
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const datePart = (d.getMonth() + 1) + '/' + d.getDate();
+      return datePart + ' ' + fmtTime(ts);
+    };
+
+    // 格式化时长（秒 → HH:MM:SS）
+    const fmtDuration = (ms) => {
+      if (ms <= 0) return '--';
+      const totalSec = Math.round(ms / 1000);
+      const h = Math.floor(totalSec / 3600);
+      const m = Math.floor((totalSec % 3600) / 60);
+      const s = totalSec % 60;
+      if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+      if (m > 0) return `${m}:${String(s).padStart(2, '0')}`;
+      return `${s}秒`;
+    };
+
+    // 填充或创建 modal
+    const overlay = document.getElementById('stats-modal');
+    if (overlay) {
+      // 填充数据
+      document.getElementById('stat-distance').textContent = formatDistance(totalDist);
+      document.getElementById('stat-duration').textContent = fmtDuration(durationMs);
+      document.getElementById('stat-avg-speed').textContent = avgSpeed > 0
+        ? (avgSpeed * 3.6).toFixed(1) + ' km/h'
+        : (hasSpeed ? '--' : '--');
+      document.getElementById('stat-max-speed').textContent = hasSpeed
+        ? (maxSpeed * 3.6).toFixed(1) + ' km/h'
+        : '--';
+      document.getElementById('stat-points').textContent = pos.length;
+      document.getElementById('stat-start-time').textContent = fmtDate(firstTime);
+      document.getElementById('stat-end-time').textContent = fmtDate(lastTime);
+      overlay.classList.add('show');
+      return;
+    }
+
+    // 首次创建 modal
+    const html = `<div id="stats-modal" class="modal-overlay show">
+      <div class="modal-box">
+        <div class="modal-header">
+          <span class="modal-title">📊 轨迹统计</span>
+          <button class="modal-close" id="stats-close-btn">✕</button>
+        </div>
+        <div class="stat-grid">
+          <div class="stat-card"><span class="stat-label">总距离</span><span class="stat-value" id="stat-distance">${formatDistance(totalDist)}</span></div>
+          <div class="stat-card"><span class="stat-label">总时长</span><span class="stat-value" id="stat-duration">${fmtDuration(durationMs)}</span></div>
+          <div class="stat-card"><span class="stat-label">平均速度</span><span class="stat-value" id="stat-avg-speed">${avgSpeed > 0 ? (avgSpeed * 3.6).toFixed(1) + ' km/h' : '--'}</span></div>
+          <div class="stat-card"><span class="stat-label">最高速度</span><span class="stat-value warning" id="stat-max-speed">${hasSpeed ? (maxSpeed * 3.6).toFixed(1) + ' km/h' : '--'}</span></div>
+          <div class="stat-card"><span class="stat-label">轨迹点数</span><span class="stat-value accent2" id="stat-points">${pos.length}</span></div>
+          <div class="stat-card"><span class="stat-label">开始时间</span><span class="stat-value" id="stat-start-time">${fmtDate(firstTime)}</span></div>
+          <div class="stat-card full"><span class="stat-label">结束时间</span><span class="stat-value" id="stat-end-time">${fmtDate(lastTime)}</span></div>
+        </div>
+      </div>
+    </div>`;
+    document.body.insertAdjacentHTML('beforeend', html);
+
+    // 点击 overlay 外部区域关闭
+    const mo = document.getElementById('stats-modal');
+    const box = mo.querySelector('.modal-box');
+    mo.addEventListener('click', (e) => {
+      if (!box.contains(e.target)) {
+        mo.classList.remove('show');
+        setTimeout(() => mo.remove(), 300);
+      }
+    });
+    document.getElementById('stats-close-btn').addEventListener('click', () => {
+      mo.classList.remove('show');
+      setTimeout(() => mo.remove(), 300);
+    });
+  }
+
+  /**
    * 计算轨迹总移动距离
    */
   _getTrailDistance() {
@@ -722,6 +873,8 @@ class App {
     const btn = document.getElementById('trail-record-btn');
     const clearBtn = document.getElementById('trail-clear-btn');
     const exportBtn = document.getElementById('trail-export-btn');
+    const statsBtn = document.getElementById('trail-stats-btn');
+    const smoothBtn = document.getElementById('trail-smooth-btn');
     const distEl = document.getElementById('trail-distance');
 
     // 记录按钮
@@ -742,6 +895,15 @@ class App {
     const hasPoints = this.trail.positions.length > 0;
     if (clearBtn) clearBtn.disabled = !hasPoints;
     if (exportBtn) exportBtn.disabled = this.trail.positions.length < 2;
+    if (statsBtn) statsBtn.disabled = this.trail.positions.length < 2;
+
+    // 平滑按钮状态
+    if (smoothBtn) {
+      smoothBtn.classList.toggle('active', this._trailSmoothing);
+      smoothBtn.innerHTML = this._trailSmoothing
+        ? '<span class="smooth-icon">✨</span> 平滑'
+        : '<span class="smooth-icon">⬜</span> 平滑';
+    }
   }
 
   /* ========== 通用位置处理 ========== */
@@ -883,7 +1045,7 @@ class App {
         heading: pos.heading
       });
       if (added) {
-        this.mapManager.setTrail(this.trail.positions);
+        this.mapManager.setTrail(this._getTrailPositions());
         this._updateTrailUI();
       }
     }
@@ -1141,7 +1303,7 @@ class App {
       }
       this._updateTrailUI();
       if (trailData.positions.length >= 2) {
-        this.mapManager.setTrail(this.trail.positions);
+        this.mapManager.setTrail(this._getTrailPositions());
       }
     }
   }

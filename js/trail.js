@@ -78,4 +78,33 @@ class Trail {
   getPointCount() {
     return this.positions.length;
   }
+
+  /**
+   * 滑动窗口平均平滑，返回新的坐标数组（不修改原始数据）
+   * @param {number} [windowSize=5] 窗口大小（奇数效果最佳）
+   * @returns {Array<{lat:number,lng:number,speed?:number,time?:number,…>}
+   */
+  getSmoothedPositions(windowSize = 5) {
+    const n = this.positions.length;
+    if (n < 4) return this.positions.slice();
+    const half = Math.floor(windowSize / 2);
+    const result = [];
+    for (let i = 0; i < n; i++) {
+      const start = Math.max(0, i - half);
+      const end = Math.min(n - 1, i + half);
+      let sumLat = 0, sumLng = 0;
+      for (let j = start; j <= end; j++) {
+        sumLat += this.positions[j].lat;
+        sumLng += this.positions[j].lng;
+      }
+      const count = end - start + 1;
+      // 保留原始所有字段，只覆盖 lat/lng
+      result.push(Object.assign({}, this.positions[i], {
+        lat: sumLat / count,
+        lng: sumLng / count,
+        _smoothed: true
+      }));
+    }
+    return result;
+  }
 }
