@@ -628,8 +628,12 @@ class MapManager {
 
   /**
    * 创建我的位置标记图标（蓝色实心圆点，与圆心标识区分）
+   * @param {number} [heading] 可选朝向角度（正北顺时针），传入则叠加方向箭头
    */
-  _createLocationIcon() {
+  _createLocationIcon(heading) {
+    const arrow = (heading != null && !isNaN(heading))
+      ? `<polygon points="20,2 23,10 17,10" fill="#00A3FF" transform="rotate(${heading}, 20, 20)"/>`
+      : '';
     const svg = [
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">',
       '  <defs>',
@@ -641,6 +645,7 @@ class MapManager {
       '  <circle cx="20" cy="20" r="13" fill="none" stroke="#0088FF" stroke-width="2" opacity="0.28"/>',
       '  <circle cx="20" cy="20" r="7" fill="#0088FF" stroke="#fff" stroke-width="2.5" filter="url(#s)"/>',
       '  <circle cx="20" cy="20" r="2.5" fill="#fff" opacity="0.95"/>',
+      arrow,
       '</svg>'
     ].join('\n');
 
@@ -659,18 +664,23 @@ class MapManager {
    * 在地图上显示我的位置标记
    * @param {{lat:number, lng:number}} center
    * @param {number} [accuracy] 定位精度（米），传入则同时绘制精度环 (#17)
+   * @param {number} [heading] 朝向角度（正北顺时针），传入则更新方向箭头
    */
-  setLocation(center, accuracy) {
+  setLocation(center, accuracy, heading) {
     const latLng = new qq.maps.LatLng(center.lat, center.lng);
 
     if (this.locationMarker) {
       this.locationMarker.setPosition(latLng);
+      // 当 heading 有效时刷新图标显示方向
+      if (heading != null && !isNaN(heading)) {
+        this.locationMarker.setIcon(this._createLocationIcon(heading));
+      }
     } else {
       this.locationMarker = new qq.maps.Marker({
         position: latLng,
         map: this.map,
         draggable: false,
-        icon: this._createLocationIcon()
+        icon: this._createLocationIcon(heading)
       });
     }
 

@@ -657,11 +657,23 @@ class App {
    * 清除历史轨迹
    */
   _clearTrail() {
+    const savedPositions = this.trail.positions.slice();
+    const savedLastPos = this.trail.lastPos;
+
     this.trail.clear();
     this.mapManager.clearTrail();
     this._updateTrailUI();
     Storage.saveTrail(this.trail); // 清除持久化
-    Toast.show('🗑 轨迹已清除');
+
+    this._showUndoToast('轨迹已清除', () => {
+      this.trail.positions = savedPositions;
+      this.trail.lastPos = savedLastPos;
+      if (savedPositions.length >= 2) {
+        this.mapManager.setTrail(savedPositions);
+      }
+      this._updateTrailUI();
+      Storage.saveTrail(this.trail);
+    });
   }
 
   /**
@@ -822,7 +834,7 @@ class App {
     this._recordFix(pos, convPos);
 
     // 更新位置标记 + 精度环（#17）
-    this.mapManager.setLocation(convPos, pos.accuracy);
+    this.mapManager.setLocation(convPos, pos.accuracy, pos.heading);
 
     if (this._firstFix) {
       this._firstFix = false;
@@ -925,15 +937,34 @@ class App {
   }
 
   /**
-   * 清除所有同心圆（保留标记位置）
+   * 清除所有同心圆（支持撤销）
    */
   _clearAll() {
+    const savedCircles = this.mapManager.circles.slice();
+    const savedSelectedId = this.mapManager.selectedCircleId;
+
     this.mapManager.clearCircles();
     document.getElementById('infoArea').classList.add('hidden');
     this._updateCircleList(true);
     this._updateStatusBar(true);
     this._dirty = true;
     this._saveState();
+
+    this._showUndoToast('已清除全部', () => {
+      this.mapManager.circles = savedCircles;
+      this.mapManager.selectedCircleId = savedSelectedId;
+      if (savedSelectedId != null) {
+        this._setRadiusSliderValue(
+          this.mapManager.circles.find(c => c.id === savedSelectedId)?.maxRadius || CONFIG.DEFAULT_RADIUS
+        );
+      }
+      this.mapManager._scheduleRedraw();
+      this._updateInfo();
+      this._updateCircleList(true);
+      this._updateStatusBar(true);
+      this._dirty = true;
+      this._saveState();
+    });
   }
 
   /* ============= 状态 & 信息更新 ============= */
@@ -963,12 +994,14 @@ class App {
   }
 
   /**
-   * 计算距圆心的距离、范围内外、趋势
+   * 计算距圆心的距离、方位角、范围内外、趋势
    * @param {{id:number,center:{lat:number,lng:number},maxRadius:number}} circle
-   * @returns {{dist:number, within:boolean, stale:boolean, trend:string, trendHtml:string}}
+   * @returns {{dist:number, bearing:number, bearingStr:string, within:boolean, stale:boolean, trend:string, trendHtml:string}}
    */
   _calcCircleTrend(circle) {
     const dist = calcDistance(this.myPosition, circle.center);
+    const bearing = calcBearing(this.myPosition, circle.center);
+    const bearingStr = `${Math.round(bearing)}° ${bearingToDir(bearing)}`;
     const accuracy = this._lastAccuracy || 0;
     // 三态范围：'inrange' 确定在圆内 / 'maybe' 精度圈与圆重叠 / false 在圆外
     let within = false;
@@ -993,7 +1026,7 @@ class App {
       }
     }
     this._prevDistances[circle.id] = dist;
-    return { dist, within, stale, trend, trendHtml };
+    return { dist, bearing, bearingStr, within, stale, trend, trendHtml };
   }
 
   /* ============= 主题切换 ============= */
@@ -1234,15 +1267,49 @@ class App {
     // —— 距我距离 ——
     const distEl = document.getElementById('info-distance');
     if (this.myPosition && distEl) {
-      const { dist, within, stale, trendHtml } = this._calcCircleTrend(sel);
+      const { dist, bearingStr, within, stale, trendHtml } = this._calcCircleTrend(sel);
       const manualTag = this._isManualPosition ? ' <span class="tag-manual">手动</span>' : ''; // #15
       let rangeTag = '';
       if (within === 'inrange') rangeTag = ' <span class="tag-inrange">范围内</span>';
       else if (within === 'maybe') rangeTag = ' <span class="tag-maybe">可能范围内</span>';
-      distEl.innerHTML = `${formatDistance(dist)}${trendHtml}${rangeTag}${stale ? ' <span class="tag-stale">可能过期</span>' : ''}${manualTag}`;
+      distEl.innerHTML = `${formatDistance(dist)} ${trendHtml} · 方位${bearingStr}${rangeTag}${stale ? ' <span class="tag-stale">可能过期</span>' : ''}${manualTag}`;
     } else if (distEl) {
       distEl.textContent = '--';
     }
+  }
+
+  /* ============= 删除恢复（撤销 toast） ============= */
+
+  /**
+   * 显示可撤销操作的 toast
+   * @param {string} message 操作提示
+   * @param {Function} onUndo 撤销回调
+   * @param {number} [duration=5000] 超时自动关闭（毫秒）
+   */
+  _showUndoToast(message, onUndo, duration) {
+    const existing = document.querySelector('.toast-msg');
+    if (existing) existing.remove();
+
+    const ms = duration || 5000;
+    const toast = document.createElement('div');
+    toast.className = 'toast-msg toast-action';
+    toast.innerHTML = `${message} <button class="toast-undo-btn">撤销</button>`;
+    document.body.appendChild(toast);
+
+    requestAnimationFrame(() => toast.classList.add('show'));
+
+    const undoBtn = toast.querySelector('.toast-undo-btn');
+    undoBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onUndo();
+      toast.classList.remove('show');
+      setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
+    });
+
+    setTimeout(() => {
+      toast.classList.remove('show');
+      setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
+    }, ms);
   }
 
   /* ============= 圆列表管理 ============= */
@@ -1265,9 +1332,14 @@ class App {
   }
 
   /**
-   * 删除一个圆
+   * 删除一个圆（支持撤销）
    */
   _deleteCircle(id) {
+    // 保存用于恢复
+    const circle = this.mapManager.circles.find(c => c.id === id);
+    if (!circle) return;
+    const wasSelected = this.mapManager.selectedCircleId === id;
+
     this.mapManager.removeCircle(id);
     this._updateInfo();
     this._updateCircleList(true);
@@ -1276,9 +1348,19 @@ class App {
     this._saveState();
     // 清除已删除圆的趋势缓存
     delete this._prevDistances[id];
-    if (this.mapManager.getCircles().length === 0) {
-      Toast.show('已清除全部');
-    }
+
+    this._showUndoToast('已删除', () => {
+      this.mapManager.circles.push(circle);
+      if (wasSelected) {
+        this.mapManager.selectedCircleId = circle.id;
+      }
+      this.mapManager._scheduleRedraw();
+      this._updateInfo();
+      this._updateCircleList(true);
+      this._updateStatusBar(true);
+      this._dirty = true;
+      this._saveState();
+    });
   }
 
   /**
@@ -1343,8 +1425,8 @@ class App {
       let distStr = '';
       let distClass = '';
       if (this.myPosition) {
-        const { dist, within, stale, trend } = this._calcCircleTrend(c);
-        distStr = formatDistance(dist) + trend + (stale ? ' ⚠' : '') + (this._isManualPosition ? ' 📍' : ''); // #15 手动标记
+        const { dist, bearingStr, within, stale, trend } = this._calcCircleTrend(c);
+        distStr = formatDistance(dist) + trend + (stale ? ' ⚠' : '') + (this._isManualPosition ? ' 📍' : '') + ` 方位${bearingStr}`; // #15 手动标记
         distClass = within === 'inrange' ? 'dist-within' : within === 'maybe' ? 'dist-maybe' : '';
       }
 
