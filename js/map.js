@@ -552,7 +552,12 @@ class MapManager {
     if (typeof qq !== 'undefined' && qq.maps && qq.maps.convertor) {
       try {
         const result = await new Promise((resolve, reject) => {
+          // 5秒超时兜底——防止 API 不回调导致 Promise 挂起阻塞串行队列
+          const timer = setTimeout(() => {
+            reject(new Error('convertor API timeout'));
+          }, 5000);
           qq.maps.convertor.translate([point], 1, (res) => {
+            clearTimeout(timer);
             if (res && res[0] && typeof res[0].lat === 'number' && typeof res[0].lng === 'number') {
               resolve({ lat: res[0].lat, lng: res[0].lng });
             } else {
