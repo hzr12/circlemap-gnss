@@ -93,6 +93,9 @@ class App {
         this._watchingBeforeHide = true;
         this._stopWatching();
       }
+      if (this.trail.positions.length > 0) {
+        Storage.saveTrail(this.trail); // 切后台时保存轨迹
+      }
     };
     this._pageShowHandler = () => {
       if (this._watchingBeforeHide) {
@@ -229,6 +232,22 @@ class App {
       const sel = this.mapManager.getSelectedCircle();
       if (sel) {
         this.mapManager.updateCircleRadius(sel.id, val);
+        this._dirty = true;
+        this._updateCircleList(true);
+        this._updateInfo();
+      }
+    });
+
+    // —— 半径预设快捷按钮 ——
+    document.querySelector('.radius-presets').addEventListener('click', (e) => {
+      const btn = e.target.closest('.preset-btn');
+      if (!btn) return;
+      const radius = parseInt(btn.dataset.radius, 10);
+      if (isNaN(radius) || radius < CONFIG.MIN_RADIUS || radius > CONFIG.MAX_RADIUS) return;
+      this._setRadiusSliderValue(radius);
+      const sel = this.mapManager.getSelectedCircle();
+      if (sel) {
+        this.mapManager.updateCircleRadius(sel.id, radius);
         this._dirty = true;
         this._updateCircleList(true);
         this._updateInfo();
@@ -641,6 +660,7 @@ class App {
     this.trail.clear();
     this.mapManager.clearTrail();
     this._updateTrailUI();
+    Storage.saveTrail(this.trail); // 清除持久化
     Toast.show('🗑 轨迹已清除');
   }
 
@@ -650,6 +670,7 @@ class App {
   _toggleTrailRecording() {
     if (this.trail.isRecording) {
       this.trail.stop();
+      Storage.saveTrail(this.trail); // 停止时保存最终轨迹
       Toast.show('⏹ 轨迹记录已停止');
     } else {
       this.trail.start();
@@ -988,6 +1009,7 @@ class App {
       }
     } catch (e) { /* 静默 */ }
     document.documentElement.setAttribute('data-theme', this._theme);
+    this.mapManager.setTheme(this._theme);
     // 等 DOM 就绪后更新按钮图标
     if (document.readyState !== 'loading') {
       this._updateThemeBtn();
@@ -1002,6 +1024,7 @@ class App {
   _toggleTheme() {
     this._theme = this._theme === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', this._theme);
+    this.mapManager.setTheme(this._theme);
     try {
       localStorage.setItem('circlemap_theme', this._theme);
     } catch (e) { /* 静默 */ }
@@ -1028,6 +1051,10 @@ class App {
    * 保存状态到 localStorage（circles + 设置）（#18 委托给 Storage 模块）
    */
   _saveState() {
+    // 轨迹定期保存（分离于 dirty 门控，确保录制中的轨迹不会丢）
+    if (this.trail.positions.length > 0) {
+      Storage.saveTrail(this.trail);
+    }
     if (!this._dirty) return;
     this._dirty = false;
     Storage.saveCircles(this.mapManager, this.circleRadius, this.center);
@@ -1069,6 +1096,20 @@ class App {
       this._updateCircleList(true);
       this._updateStatusBar(true);
       this.mapManager._scheduleRedraw();
+    }
+
+    // 恢复轨迹数据（不恢复录制状态）
+    const trailData = Storage.loadTrail();
+    if (trailData && Array.isArray(trailData.positions) && trailData.positions.length > 0) {
+      this.trail.positions = trailData.positions;
+      // 恢复 lastPos（最后一个点）
+      if (trailData.positions.length > 0) {
+        this.trail.lastPos = trailData.positions[trailData.positions.length - 1];
+      }
+      this._updateTrailUI();
+      if (trailData.positions.length >= 2) {
+        this.mapManager.setTrail(this.trail.positions);
+      }
     }
   }
 

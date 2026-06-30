@@ -28,6 +28,8 @@ class MapManager {
     // 回调钩子
     this.onCenterChange = null;
     this.onLongPress = null; // #13 长按回调
+
+    this._theme = 'dark';    // 当前主题（影响 Canvas 颜色）
   }
 
   /**
@@ -192,6 +194,15 @@ class MapManager {
    * ================================================================ */
 
   /**
+   * 设置主题（影响 Canvas 颜色适配）
+   * @param {'dark'|'light'} theme
+   */
+  setTheme(theme) {
+    this._theme = theme;
+    this._scheduleRedraw();
+  }
+
+  /**
    * 离屏 Canvas（多圆重叠染色用，懒创建）
    */
   _getOffscreen(w, h) {
@@ -236,6 +247,37 @@ class MapManager {
   }
 
   /**
+   * 根据当前主题返回 Canvas 绘制颜色方案
+   */
+  _getColors() {
+    if (this._theme === 'light') {
+      return {
+        fillBase:  'rgba(0, 80, 200, 0.08)',
+        fillAlt:   'rgba(0, 80, 200, 0.04)',
+        strokeInner: 'rgba(0, 60, 150, 0.28)',
+        strokeOuter: 'rgba(0, 40, 120, 0.45)',
+        dotStroke:   'rgba(0, 60, 150, 0.25)',
+        dotFill:     'rgba(0, 50, 140, 0.8)',
+        selDotStroke: 'rgba(0, 160, 130, 0.5)',
+        selDotFill:   '#00a082',
+        selDashStroke: 'rgba(0, 160, 130, 0.55)'
+      };
+    }
+    // dark (default)
+    return {
+      fillBase:  'rgba(70, 140, 220, 0.12)',
+      fillAlt:   'rgba(70, 140, 220, 0.06)',
+      strokeInner: 'rgba(15, 50, 120, 0.32)',
+      strokeOuter: 'rgba(10, 35, 90, 0.55)',
+      dotStroke:   'rgba(15, 50, 120, 0.25)',
+      dotFill:     'rgba(15, 50, 120, 0.8)',
+      selDotStroke: 'rgba(0, 160, 130, 0.4)',
+      selDotFill:   '#00a082',
+      selDashStroke: 'rgba(0, 160, 130, 0.5)'
+    };
+  }
+
+  /**
    * 只画圆的填充区域（离屏 Canvas 用）
    * 重叠区域因为多次 fill 叠加，颜色自然比单个圆深
    */
@@ -254,11 +296,12 @@ class MapManager {
 
     const drawInner = ip >= 2;
     const ringCount = drawInner ? Math.max(1, Math.floor(mp / ip)) : 0;
+    const clr = this._getColors();
 
     // ── 整体底色 ──
     ctx.beginPath();
     ctx.arc(cx, cy, Math.max(1, mp), 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(70, 140, 220, 0.12)'; // 单次略深，叠加后更明显
+    ctx.fillStyle = clr.fillBase;
     ctx.fill();
 
     // ── 间隔填充（偶数圈加深） ──
@@ -270,7 +313,7 @@ class MapManager {
           ctx.beginPath();
           ctx.arc(cx, cy, Math.max(1, ro), 0, Math.PI * 2);
           ctx.arc(cx, cy, Math.max(0.5, ri), 0, Math.PI * 2, true);
-          ctx.fillStyle = 'rgba(70, 140, 220, 0.06)';
+          ctx.fillStyle = clr.fillAlt;
           ctx.fill();
         }
       }
@@ -296,11 +339,12 @@ class MapManager {
 
     const drawInner = ip >= 2;
     const ringCount = drawInner ? Math.max(1, Math.floor(mp / ip)) : 0;
+    const clr = this._getColors();
 
-    const strokeInner = 'rgba(15, 50, 120, 0.32)';
-    const strokeOuter = 'rgba(10, 35, 90, 0.55)';
-    const dotStroke = isSel ? 'rgba(0, 160, 130, 0.4)'  : 'rgba(15, 50, 120, 0.25)';
-    const dotFill   = isSel ? '#00a082'                  : 'rgba(15, 50, 120, 0.8)';
+    const strokeInner = isSel ? clr.selDotStroke : clr.strokeInner;
+    const strokeOuter = isSel ? clr.selDashStroke : clr.strokeOuter;
+    const dotStroke = isSel ? clr.selDotStroke : clr.dotStroke;
+    const dotFill   = isSel ? clr.selDotFill   : clr.dotFill;
 
     // ── 内部圈描边 ──
     if (drawInner) {
