@@ -86,6 +86,15 @@ const CONFIG = {
  * @returns {number} 距离（米）
  */
 function calcDistance(p1, p2) {
+  try {
+    if (typeof qq !== 'undefined' && qq.maps && qq.maps.spherical) {
+      return qq.maps.spherical.computeDistanceBetween(
+        new qq.maps.LatLng(p1.lat, p1.lng),
+        new qq.maps.LatLng(p2.lat, p2.lng)
+      );
+    }
+  } catch (_) {}
+  // Fallback: 手写 Haversine 公式
   const dLat = (p2.lat - p1.lat) * Math.PI / 180;
   const dLng = (p2.lng - p1.lng) * Math.PI / 180;
   const a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
@@ -101,6 +110,15 @@ function calcDistance(p1, p2) {
  * @returns {number} 角度 0-360（0=正北）
  */
 function calcBearing(p1, p2) {
+  try {
+    if (typeof qq !== 'undefined' && qq.maps && qq.maps.spherical) {
+      return qq.maps.spherical.computeHeading(
+        new qq.maps.LatLng(p1.lat, p1.lng),
+        new qq.maps.LatLng(p2.lat, p2.lng)
+      );
+    }
+  } catch (_) {}
+  // Fallback: 手写方位角公式
   const φ1 = p1.lat * Math.PI / 180;
   const φ2 = p2.lat * Math.PI / 180;
   const Δλ = (p2.lng - p1.lng) * Math.PI / 180;

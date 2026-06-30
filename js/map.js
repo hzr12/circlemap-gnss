@@ -542,12 +542,39 @@ class MapManager {
    * WGS84 → GCJ-02 坐标转换（GPS 纠偏）
    * 浏览器 Geolocation 返回的是 WGS84，腾讯地图使用 GCJ-02
    *
-   * 使用纯 JS 算法（已被大量中国地图项目验证通过），
-   * 不依赖腾讯地图 convertor API（API 回调格式不一致且不可靠）。
+   * 优先使用腾讯地图官方 convertor 库（同步回调），
+   * 不可用时降级到手写纠偏算法。
+   * @param {{lat:number, lng:number}} point
+   * @returns {Promise<{lat:number, lng:number}>}
+   */
+  async wgs84ToGcj02(point) {
+    // 尝试官方 convertor 库
+    if (typeof qq !== 'undefined' && qq.maps && qq.maps.convertor) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          qq.maps.convertor.translate([point], 1, (res) => {
+            if (res && res[0] && typeof res[0].lat === 'number' && typeof res[0].lng === 'number') {
+              resolve({ lat: res[0].lat, lng: res[0].lng });
+            } else {
+              reject(new Error('unexpected convertor response'));
+            }
+          });
+        });
+        return result;
+      } catch (e) {
+        console.warn('wgs84ToGcj02: convertor API 失败，降级到手写算法', e.message);
+      }
+    }
+    // 降级：手写纠偏算法
+    return this._wgs84Gcj02(point);
+  }
+
+  /**
+   * 手写 WGS84 → GCJ-02 纠偏算法（降级备用）
    * @param {{lat:number, lng:number}} point
    * @returns {{lat:number, lng:number}}
    */
-  wgs84ToGcj02(point) {
+  _wgs84Gcj02(point) {
     const A = 6378245.0;
     const EE = 0.00669342162296594323;
 

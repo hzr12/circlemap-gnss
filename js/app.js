@@ -585,7 +585,7 @@ class App {
 
     try {
       const pos = await this.gpsManager.getCurrentPosition();
-      const convPos = this.mapManager.wgs84ToGcj02(pos);
+      const convPos = await this.mapManager.wgs84ToGcj02(pos);
 
       this.center = convPos;
       this.myPosition = convPos;
@@ -964,11 +964,12 @@ class App {
   /**
    * 处理位置数据：GCJ-02 转换 + UI 刷新
    */
-  _processPosition(pos) {
+  async _processPosition(pos) {
+    try {
     // 跟踪原始坐标用于下次位移判断
     this._lastRawPos = {lat: pos.lat, lng: pos.lng};
 
-    const convPos = this.mapManager.wgs84ToGcj02(pos);
+    const convPos = await this.mapManager.wgs84ToGcj02(pos);
 
     // 保存速度/海拔
     // 浏览器 speed 常为 null（尤其桌面/首次定位），用连续定位的距离/时间自行计算
@@ -1057,6 +1058,9 @@ class App {
     }
     this._updateStatusBar(true); // 刷新状态条（含 elapsed 时间）
     this._updateInfo();
+    } catch (e) {
+      console.error('_processPosition error:', e.message);
+    }
   }
 
   /**
@@ -1073,7 +1077,7 @@ class App {
 
     try {
       const pos = await this.gpsManager.getCurrentPosition();
-      const convPos = this.mapManager.wgs84ToGcj02(pos);
+      const convPos = await this.mapManager.wgs84ToGcj02(pos);
 
       this.myPosition = convPos;
       this.myPositionTime = Date.now();
