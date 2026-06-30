@@ -1255,10 +1255,8 @@ class App {
    * 保存状态到 localStorage（circles + 设置）（#18 委托给 Storage 模块）
    */
   _saveState() {
-    // 轨迹定期保存（分离于 dirty 门控，确保录制中的轨迹不会丢）
-    if (this.trail.positions.length > 0) {
-      Storage.saveTrail(this.trail);
-    }
+    // 轨迹定期保存（始终写入，空数组可清除 localStorage 旧数据）
+    Storage.saveTrail(this.trail);
     if (!this._dirty) return;
     this._dirty = false;
     Storage.saveCircles(this.mapManager, this.circleRadius, this.center);
@@ -1268,48 +1266,46 @@ class App {
    * 从 localStorage 恢复状态（页面启动时调用）（#18 委托给 Storage 模块）
    */
   _loadState() {
+    // 恢复圆圈（没有数据就跳过）
     const data = Storage.loadCircles();
-    if (!data) return;
-
-    // 恢复设置（#11 对数映射）
-    if (data.circleRadius && !isNaN(data.circleRadius)) {
-      this._setRadiusSliderValue(data.circleRadius);
-    }
-
-    if (data.center) {
-      this.center = data.center;
-      this.mapManager.setCenter(data.center);
-    }
-
-    // 恢复圆圈
-    if (data.circles && Array.isArray(data.circles) && data.circles.length > 0) {
-      for (const c of data.circles) {
-        this.mapManager.circles.push({
-          id: c.id,
-          center: c.center,
-          maxRadius: c.maxRadius,
-          interval: c.interval || CONFIG.CONCENTRIC_INTERVAL,
-          createdAt: c.createdAt || Date.now()
-        });
+    if (data) {
+      // 恢复设置（#11 对数映射）
+      if (data.circleRadius && !isNaN(data.circleRadius)) {
+        this._setRadiusSliderValue(data.circleRadius);
       }
-      // 恢复选中状态
-      if (data.selectedCircleId && this.mapManager.circles.some(c => c.id === data.selectedCircleId)) {
-        this.mapManager.selectedCircleId = data.selectedCircleId;
+
+      if (data.center) {
+        this.center = data.center;
+        this.mapManager.setCenter(data.center);
       }
-      this._updateInfo();
-      this._updateCircleList(true);
-      this._updateStatusBar(true);
-      this.mapManager._scheduleRedraw();
+
+      // 恢复圆圈
+      if (data.circles && Array.isArray(data.circles) && data.circles.length > 0) {
+        for (const c of data.circles) {
+          this.mapManager.circles.push({
+            id: c.id,
+            center: c.center,
+            maxRadius: c.maxRadius,
+            interval: c.interval || CONFIG.CONCENTRIC_INTERVAL,
+            createdAt: c.createdAt || Date.now()
+          });
+        }
+        // 恢复选中状态
+        if (data.selectedCircleId && this.mapManager.circles.some(c => c.id === data.selectedCircleId)) {
+          this.mapManager.selectedCircleId = data.selectedCircleId;
+        }
+        this._updateInfo();
+        this._updateCircleList(true);
+        this._updateStatusBar(true);
+        this.mapManager._scheduleRedraw();
+      }
     }
 
-    // 恢复轨迹数据（不恢复录制状态）
+    // 恢复轨迹数据（独立于 circles，保证有轨迹时总能恢复）
     const trailData = Storage.loadTrail();
     if (trailData && Array.isArray(trailData.positions) && trailData.positions.length > 0) {
       this.trail.positions = trailData.positions;
-      // 恢复 lastPos（最后一个点）
-      if (trailData.positions.length > 0) {
-        this.trail.lastPos = trailData.positions[trailData.positions.length - 1];
-      }
+      this.trail.lastPos = trailData.positions[trailData.positions.length - 1];
       this._updateTrailUI();
       if (trailData.positions.length >= 2) {
         this.mapManager.setTrail(this._getTrailPositions());
@@ -1649,6 +1645,8 @@ class App {
           this.mapManager.addCircle(this.center, radius);
           this._updateInfo();
           this._updateCircleList(true);
+          this._dirty = true;
+          this._saveState();
         }
       }
     } catch (e) {
