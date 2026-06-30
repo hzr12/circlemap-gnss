@@ -45,4 +45,38 @@ class Storage {
       return null;
     }
   }
+
+  // ----- 轨迹持久化 -----
+
+  static TRAIL_KEY = 'circlemap_trail';
+
+  /**
+   * 保存轨迹数据
+   * @param {Trail} trail
+   */
+  static saveTrail(trail) {
+    try {
+      const data = {
+        positions: trail.positions
+      };
+      localStorage.setItem(this.TRAIL_KEY, JSON.stringify(data));
+    } catch (e) {
+      console.warn('[Storage] 轨迹保存失败:', e.message);
+    }
+  }
+
+  /**
+   * 恢复轨迹数据
+   * @returns {{positions:Array}|null}
+   */
+  static loadTrail() {
+    try {
+      const raw = localStorage.getItem(this.TRAIL_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) {
+      console.warn('[Storage] 轨迹恢复失败:', e.message);
+      return null;
+    }
+  }
 }

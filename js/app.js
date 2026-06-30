@@ -42,6 +42,7 @@ class App {
     this._lastAltitude = null;        // 上次海拔（米）
     this._lastCalcPos = null;         // 上一个连续定位位置（用于自行计算速度）
     this._lastCalcTime = null;        // 上一个连续定位时间戳
+    this._lastAccuracy = null;        // 最近一次定位精度（米），用于精度圈范围判断
     this._theme = 'dark';             // 主题：dark | light
   }
 
@@ -91,6 +92,9 @@ class App {
       if (this._isWatching) {
         this._watchingBeforeHide = true;
         this._stopWatching();
+      }
+      if (this.trail.positions.length > 0) {
+        Storage.saveTrail(this.trail); // 切后台时保存轨迹
       }
     };
     this._pageShowHandler = () => {
@@ -228,6 +232,22 @@ class App {
       const sel = this.mapManager.getSelectedCircle();
       if (sel) {
         this.mapManager.updateCircleRadius(sel.id, val);
+        this._dirty = true;
+        this._updateCircleList(true);
+        this._updateInfo();
+      }
+    });
+
+    // —— 半径预设快捷按钮 ——
+    document.querySelector('.radius-presets').addEventListener('click', (e) => {
+      const btn = e.target.closest('.preset-btn');
+      if (!btn) return;
+      const radius = parseInt(btn.dataset.radius, 10);
+      if (isNaN(radius) || radius < CONFIG.MIN_RADIUS || radius > CONFIG.MAX_RADIUS) return;
+      this._setRadiusSliderValue(radius);
+      const sel = this.mapManager.getSelectedCircle();
+      if (sel) {
+        this.mapManager.updateCircleRadius(sel.id, radius);
         this._dirty = true;
         this._updateCircleList(true);
         this._updateInfo();
@@ -488,8 +508,9 @@ class App {
     this.myPositionTime = Date.now();
     this._isManualPosition = true;
     this._prevDistances = {};
-    this.mapManager.setLocation(pos, 10); // 手动定位默认精度 10m
-    this._recordFix({ ...pos, accuracy: 10 }, pos, true); // 手动定位加入最近列表
+    this._lastAccuracy = 50;
+    this.mapManager.setLocation(pos, 50); // 手动定位默认精度 50m
+    this._recordFix({ ...pos, accuracy: 50 }, pos, true); // 手动定位加入最近列表
     this._updateStatusBar(true);
     this._updateCircleList(true);
     this._updateInfo();
@@ -565,10 +586,11 @@ class App {
       this._lastAltitude = pos.altitude;
       this._lastCalcPos = { lat: convPos.lat, lng: convPos.lng };
       this._lastCalcTime = pos.timestamp || Date.now();
+      this._lastAccuracy = pos.accuracy;
       this._recordFix(pos, convPos);
 
       this.mapManager.setCenter(convPos);
-      this.mapManager.setLocation(convPos, pos.accuracy); // #17 精度环
+      this.mapManager.setLocation(convPos, pos.accuracy, pos.heading); // #17 精度环
       this.mapManager.flyTo(convPos);
 
       this._latInput.value = convPos.lat.toFixed(6);
@@ -635,10 +657,23 @@ class App {
    * 清除历史轨迹
    */
   _clearTrail() {
+    const savedPositions = this.trail.positions.slice();
+    const savedLastPos = this.trail.lastPos;
+
     this.trail.clear();
     this.mapManager.clearTrail();
     this._updateTrailUI();
-    Toast.show('🗑 轨迹已清除');
+    Storage.saveTrail(this.trail); // 清除持久化
+
+    this._showUndoToast('轨迹已清除', () => {
+      this.trail.positions = savedPositions;
+      this.trail.lastPos = savedLastPos;
+      if (savedPositions.length >= 2) {
+        this.mapManager.setTrail(savedPositions);
+      }
+      this._updateTrailUI();
+      Storage.saveTrail(this.trail);
+    });
   }
 
   /**
@@ -647,6 +682,7 @@ class App {
   _toggleTrailRecording() {
     if (this.trail.isRecording) {
       this.trail.stop();
+      Storage.saveTrail(this.trail); // 停止时保存最终轨迹
       Toast.show('⏹ 轨迹记录已停止');
     } else {
       this.trail.start();
@@ -788,6 +824,7 @@ class App {
     this._lastAltitude = pos.altitude;
     this._lastCalcPos = { lat: convPos.lat, lng: convPos.lng };
     this._lastCalcTime = pos.timestamp || Date.now();
+    this._lastAccuracy = pos.accuracy;
 
     // 保存定位信息
     this.myPosition = convPos;
@@ -797,7 +834,7 @@ class App {
     this._recordFix(pos, convPos);
 
     // 更新位置标记 + 精度环（#17）
-    this.mapManager.setLocation(convPos, pos.accuracy);
+    this.mapManager.setLocation(convPos, pos.accuracy, pos.heading);
 
     if (this._firstFix) {
       this._firstFix = false;
@@ -881,8 +918,9 @@ class App {
       this._isManualPosition = false; // #13 GPS 定位覆盖手动
       this._lastSpeed = pos.speed;
       this._lastAltitude = pos.altitude;
+      this._lastAccuracy = pos.accuracy;
       this._recordFix(pos, convPos);
-      this.mapManager.setLocation(convPos, pos.accuracy); // #17 精度环
+      this.mapManager.setLocation(convPos, pos.accuracy, pos.heading); // #17 精度环
       this._prevDistances = {}; // 重置趋势缓存
 
       this._updateStatusBar(true);
@@ -899,15 +937,34 @@ class App {
   }
 
   /**
-   * 清除所有同心圆（保留标记位置）
+   * 清除所有同心圆（支持撤销）
    */
   _clearAll() {
+    const savedCircles = this.mapManager.circles.slice();
+    const savedSelectedId = this.mapManager.selectedCircleId;
+
     this.mapManager.clearCircles();
     document.getElementById('infoArea').classList.add('hidden');
     this._updateCircleList(true);
     this._updateStatusBar(true);
     this._dirty = true;
     this._saveState();
+
+    this._showUndoToast('已清除全部', () => {
+      this.mapManager.circles = savedCircles;
+      this.mapManager.selectedCircleId = savedSelectedId;
+      if (savedSelectedId != null) {
+        this._setRadiusSliderValue(
+          this.mapManager.circles.find(c => c.id === savedSelectedId)?.maxRadius || CONFIG.DEFAULT_RADIUS
+        );
+      }
+      this.mapManager._scheduleRedraw();
+      this._updateInfo();
+      this._updateCircleList(true);
+      this._updateStatusBar(true);
+      this._dirty = true;
+      this._saveState();
+    });
   }
 
   /* ============= 状态 & 信息更新 ============= */
@@ -937,13 +994,22 @@ class App {
   }
 
   /**
-   * 计算距圆心的距离、范围内外、趋势
+   * 计算距圆心的距离、方位角、范围内外、趋势
    * @param {{id:number,center:{lat:number,lng:number},maxRadius:number}} circle
-   * @returns {{dist:number, within:boolean, stale:boolean, trend:string, trendHtml:string}}
+   * @returns {{dist:number, bearing:number, bearingStr:string, within:boolean, stale:boolean, trend:string, trendHtml:string}}
    */
   _calcCircleTrend(circle) {
     const dist = calcDistance(this.myPosition, circle.center);
-    const within = dist <= circle.maxRadius;
+    const bearing = calcBearing(this.myPosition, circle.center);
+    const bearingStr = `${Math.round(bearing)}° ${bearingToDir(bearing)}`;
+    const accuracy = this._lastAccuracy || 0;
+    // 三态范围：'inrange' 确定在圆内 / 'maybe' 精度圈与圆重叠 / false 在圆外
+    let within = false;
+    if (dist <= circle.maxRadius) {
+      within = 'inrange';
+    } else if (accuracy > 0 && (dist - accuracy) <= circle.maxRadius) {
+      within = 'maybe';
+    }
     const stale = this._isPositionStale();
     let trend = '';
     let trendHtml = '';
@@ -960,7 +1026,7 @@ class App {
       }
     }
     this._prevDistances[circle.id] = dist;
-    return { dist, within, stale, trend, trendHtml };
+    return { dist, bearing, bearingStr, within, stale, trend, trendHtml };
   }
 
   /* ============= 主题切换 ============= */
@@ -976,6 +1042,7 @@ class App {
       }
     } catch (e) { /* 静默 */ }
     document.documentElement.setAttribute('data-theme', this._theme);
+    this.mapManager.setTheme(this._theme);
     // 等 DOM 就绪后更新按钮图标
     if (document.readyState !== 'loading') {
       this._updateThemeBtn();
@@ -990,6 +1057,7 @@ class App {
   _toggleTheme() {
     this._theme = this._theme === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', this._theme);
+    this.mapManager.setTheme(this._theme);
     try {
       localStorage.setItem('circlemap_theme', this._theme);
     } catch (e) { /* 静默 */ }
@@ -1016,6 +1084,10 @@ class App {
    * 保存状态到 localStorage（circles + 设置）（#18 委托给 Storage 模块）
    */
   _saveState() {
+    // 轨迹定期保存（分离于 dirty 门控，确保录制中的轨迹不会丢）
+    if (this.trail.positions.length > 0) {
+      Storage.saveTrail(this.trail);
+    }
     if (!this._dirty) return;
     this._dirty = false;
     Storage.saveCircles(this.mapManager, this.circleRadius, this.center);
@@ -1058,6 +1130,20 @@ class App {
       this._updateStatusBar(true);
       this.mapManager._scheduleRedraw();
     }
+
+    // 恢复轨迹数据（不恢复录制状态）
+    const trailData = Storage.loadTrail();
+    if (trailData && Array.isArray(trailData.positions) && trailData.positions.length > 0) {
+      this.trail.positions = trailData.positions;
+      // 恢复 lastPos（最后一个点）
+      if (trailData.positions.length > 0) {
+        this.trail.lastPos = trailData.positions[trailData.positions.length - 1];
+      }
+      this._updateTrailUI();
+      if (trailData.positions.length >= 2) {
+        this.mapManager.setTrail(this.trail.positions);
+      }
+    }
   }
 
   /* ============= 状态 & 信息更新 ============= */
@@ -1085,10 +1171,12 @@ class App {
     }
     let nearStr = '';
     if (nearest) {
-      const within = nearDist <= nearest.maxRadius;
-      nearStr = within
+      const { within } = this._calcCircleTrend(nearest);
+      nearStr = within === 'inrange'
         ? `最近圆 ≤ ${formatDistance(nearest.maxRadius)} ✅`
-        : `最近圆 ${formatDistance(nearDist)}`;
+        : within === 'maybe'
+          ? `最近圆 ${formatDistance(nearDist)} ⚠️`
+          : `最近圆 ${formatDistance(nearDist)}`;
     }
     const elapsed = this._formatElapsed();
     const stale = this._isPositionStale();
@@ -1179,12 +1267,50 @@ class App {
     // —— 距我距离 ——
     const distEl = document.getElementById('info-distance');
     if (this.myPosition && distEl) {
-      const { dist, within, stale, trendHtml } = this._calcCircleTrend(sel);
+      const { dist, bearingStr, within, stale, trendHtml } = this._calcCircleTrend(sel);
       const manualTag = this._isManualPosition ? ' <span class="tag-manual">手动</span>' : ''; // #15
-      distEl.innerHTML = `${formatDistance(dist)}${trendHtml}${within ? ' <span class="tag-inrange">范围内</span>' : ''}${stale ? ' <span class="tag-stale">可能过期</span>' : ''}${manualTag}`;
+      let rangeTag = '';
+      if (within === 'inrange') rangeTag = ' <span class="tag-inrange">范围内</span>';
+      else if (within === 'maybe') rangeTag = ' <span class="tag-maybe">可能范围内</span>';
+      distEl.innerHTML = `${formatDistance(dist)} ${trendHtml} · 方位${bearingStr}${rangeTag}${stale ? ' <span class="tag-stale">可能过期</span>' : ''}${manualTag}`;
     } else if (distEl) {
       distEl.textContent = '--';
     }
+  }
+
+  /* ============= 删除恢复（撤销 toast） ============= */
+
+  /**
+   * 显示可撤销操作的 toast
+   * @param {string} message 操作提示
+   * @param {Function} onUndo 撤销回调
+   * @param {number} [duration=5000] 超时自动关闭（毫秒）
+   */
+  _showUndoToast(message, onUndo, duration) {
+    const existing = document.querySelector('.toast-msg');
+    if (existing) existing.remove();
+
+    const ms = duration || 5000;
+    const toast = document.createElement('div');
+    toast.className = 'toast-msg toast-action';
+    toast.innerHTML = `${message} <button class="toast-undo-btn">撤销</button>`;
+    document.body.appendChild(toast);
+
+    requestAnimationFrame(() => toast.classList.add('show'));
+
+    const undoBtn = toast.querySelector('.toast-undo-btn');
+    undoBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      undoBtn.disabled = true;
+      onUndo();
+      toast.classList.remove('show');
+      setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
+    });
+
+    setTimeout(() => {
+      toast.classList.remove('show');
+      setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
+    }, ms);
   }
 
   /* ============= 圆列表管理 ============= */
@@ -1207,9 +1333,14 @@ class App {
   }
 
   /**
-   * 删除一个圆
+   * 删除一个圆（支持撤销）
    */
   _deleteCircle(id) {
+    // 保存用于恢复
+    const circle = this.mapManager.circles.find(c => c.id === id);
+    if (!circle) return;
+    const wasSelected = this.mapManager.selectedCircleId === id;
+
     this.mapManager.removeCircle(id);
     this._updateInfo();
     this._updateCircleList(true);
@@ -1218,9 +1349,19 @@ class App {
     this._saveState();
     // 清除已删除圆的趋势缓存
     delete this._prevDistances[id];
-    if (this.mapManager.getCircles().length === 0) {
-      Toast.show('已清除全部');
-    }
+
+    this._showUndoToast('已删除', () => {
+      this.mapManager.circles.push(circle);
+      if (wasSelected) {
+        this.mapManager.selectedCircleId = circle.id;
+      }
+      this.mapManager._scheduleRedraw();
+      this._updateInfo();
+      this._updateCircleList(true);
+      this._updateStatusBar(true);
+      this._dirty = true;
+      this._saveState();
+    });
   }
 
   /**
@@ -1285,9 +1426,9 @@ class App {
       let distStr = '';
       let distClass = '';
       if (this.myPosition) {
-        const { dist, within, stale, trend } = this._calcCircleTrend(c);
-        distStr = formatDistance(dist) + trend + (stale ? ' ⚠' : '') + (this._isManualPosition ? ' 📍' : ''); // #15 手动标记
-        distClass = within ? 'dist-within' : '';
+        const { dist, bearingStr, within, stale, trend } = this._calcCircleTrend(c);
+        distStr = formatDistance(dist) + trend + (stale ? ' ⚠' : '') + (this._isManualPosition ? ' 📍' : '') + ` 方位${bearingStr}`; // #15 手动标记
+        distClass = within === 'inrange' ? 'dist-within' : within === 'maybe' ? 'dist-maybe' : '';
       }
 
       html += `<div class="circle-item${isSel ? ' active' : ''}" data-id="${c.id}">

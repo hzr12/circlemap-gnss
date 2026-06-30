@@ -95,6 +95,31 @@ function calcDistance(p1, p2) {
 }
 
 /**
+ * 计算从 p1 到 p2 的方位角（正北顺时针）
+ * @param {{lat:number,lng:number}} p1
+ * @param {{lat:number,lng:number}} p2
+ * @returns {number} 角度 0-360（0=正北）
+ */
+function calcBearing(p1, p2) {
+  const φ1 = p1.lat * Math.PI / 180;
+  const φ2 = p2.lat * Math.PI / 180;
+  const Δλ = (p2.lng - p1.lng) * Math.PI / 180;
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+/**
+ * 方位角转文字方向
+ * @param {number} deg 角度 0-360
+ * @returns {string} 如 "N" / "NE" / "SW"
+ */
+function bearingToDir(deg) {
+  const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  return dirs[Math.round(deg / 45) % 8];
+}
+
+/**
  * 对数半径映射 — 滑块值 → 实际半径（#11）
  * 让常用小半径区间占据更多滑块行程
  * @param {number} sliderVal 0-1 归一化滑块位置

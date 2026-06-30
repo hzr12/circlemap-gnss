@@ -443,6 +443,11 @@ input[type="number"] {
   background: var(--bg-accent-subtle);
 }
 
+.circle-dist.dist-maybe {
+  color: var(--warning);
+  background: var(--bg-warning-subtle);
+}
+
 /* 趋势箭头样式 */
 .trend-up {
   color: var(--accent-1);
@@ -470,6 +475,19 @@ input[type="number"] {
   font-family: var(--font-sans);
   color: #fff;
   background: var(--accent-gradient);
+  padding: 1px 8px;
+  border-radius: 10px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.tag-maybe {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  color: #fff;
+  background: var(--warning);
   padding: 1px 8px;
   border-radius: 10px;
   margin-left: 4px;
@@ -790,6 +808,40 @@ input[type="number"] {
   font-size: 10px;
   color: var(--text-tertiary);
   font-weight: 500;
+}
+
+/* ---------- 半径预设快捷按钮 ---------- */
+.radius-presets {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.preset-btn {
+  flex: 1;
+  min-width: 44px;
+  padding: 5px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: center;
+}
+
+.preset-btn:active {
+  transform: scale(0.95);
+  background: var(--bg-hover);
+}
+
+.preset-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 /* ---------- 操作按钮 ---------- */
@@ -1597,6 +1649,29 @@ input[type="number"] {
 .toast-msg.show {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+
+/* 可操作 toast（撤销按钮） */
+.toast-msg.toast-action {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.toast-undo-btn {
+  background: var(--accent-1);
+  color: #fff;
+  border: none;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.2s;
+}
+.toast-undo-btn:hover {
+  opacity: 0.85;
 }
 
 @media (min-width: 768px) {
