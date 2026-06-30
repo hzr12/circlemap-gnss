@@ -92,6 +92,9 @@ class App {
     // 初始化轨迹 UI 状态
     this._updateTrailUI();
 
+    // 暴露到全局，方便控制台模拟轨迹
+    window._app = this;
+
     // 进入页面后自动启动持续 GPS 追踪
     this._startWatching();
 
