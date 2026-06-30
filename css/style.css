@@ -118,7 +118,7 @@ input[type="number"] {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: rgba(18, 28, 50, 0.85);
+  background: var(--bg-panel);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--border-color);
