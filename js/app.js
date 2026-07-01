@@ -1479,16 +1479,69 @@ class App {
   }
 
   /**
-   * 获取当前天气（wttr.in，原生支持 CORS，无需代理）
-   * 支持经纬度查询，GPS 定位后使用精确坐标
+   * Open-Meteo 天气代码 → 中文描述
+   */
+  static _weatherCodeToZh(code) {
+    const map = {
+      0: '晴', 1: '大部晴', 2: '多云', 3: '阴',
+      45: '雾', 48: '雾凇',
+      51: '小毛毛雨', 53: '毛毛雨', 55: '大毛毛雨',
+      56: '冻毛毛雨', 57: '大冻毛毛雨',
+      61: '小雨', 63: '中雨', 65: '大雨',
+      66: '冻雨', 67: '大冻雨',
+      71: '小雪', 73: '中雪', 75: '大雪',
+      77: '雪粒',
+      80: '小阵雨', 81: '阵雨', 82: '大阵雨',
+      85: '小阵雪', 86: '大阵雪',
+      95: '雷阵雨', 96: '雷阵雨伴冰雹', 99: '大雷阵雨伴冰雹'
+    };
+    return map[code] || '';
+  }
+
+  /**
+   * 获取当前天气（主用 Open-Meteo，备用 wttr.in）
+   * 两个 API 均原生支持 CORS，无需代理
    */
   _fetchWeather() {
     if (!navigator.onLine) return;
     const pos = this.myPosition;
-    const url = pos
-      ? `https://wttr.in/${pos.lat},${pos.lng}?format=j1`
+    const lat = pos?.lat ?? 39.9;
+    const lng = pos?.lng ?? 116.4;
+    // 主用 Open-Meteo（免费、快速、无需注册）
+    this._fetchWeatherOpenMeteo(lat, lng)
+      .catch(() => this._fetchWeatherWttr(lat, lng));
+  }
+
+  /**
+   * Open-Meteo 天气 API（主用）
+   * 免费、无需 API key、原生 CORS
+   */
+  _fetchWeatherOpenMeteo(lat, lng) {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&timezone=auto`;
+    return fetch(url, { signal: AbortSignal.timeout(5000) })
+      .then(r => r.json())
+      .then(data => {
+        const cur = data.current;
+        if (!cur) throw new Error('no data');
+        const temp = cur.temperature_2m;
+        const humidity = cur.relative_humidity_2m;
+        const wind = cur.wind_speed_10m;
+        const code = cur.weather_code;
+        const desc = App._weatherCodeToZh(code);
+        const humidityText = humidity != null ? ` 湿度${humidity}%` : '';
+        this._weatherHtml = `<span class="gps-weather" title="湿度 ${humidity}%">🌡${temp}°C 💨${wind}km/h${humidityText}${desc ? ' ' + desc : ''}</span>`;
+        this._updateStatusBar(true);
+      });
+  }
+
+  /**
+   * wttr.in 备用天气
+   */
+  _fetchWeatherWttr(lat, lng) {
+    const url = (lat && lng)
+      ? `https://wttr.in/${lat},${lng}?format=j1`
       : 'https://wttr.in/?format=j1';
-    fetch(url, { signal: AbortSignal.timeout(8000) })
+    return fetch(url, { signal: AbortSignal.timeout(8000) })
       .then(r => r.json())
       .then(data => {
         const cur = data.current_condition?.[0];
