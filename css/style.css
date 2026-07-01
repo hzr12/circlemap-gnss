@@ -409,10 +409,19 @@ input[type="number"] {
   font-weight: 400;
 }
 
-.gps-speed, .gps-altitude, .gps-weather {
+.gps-speed, .gps-altitude {
   color: var(--text-tertiary);
   font-family: var(--font-sans);
   font-weight: 400;
+}
+
+.gps-weather {
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-weight: 400;
+  background: var(--bg-hover);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
 }
 
 /* 信号强度条 */
