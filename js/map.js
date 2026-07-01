@@ -388,6 +388,27 @@ class MapManager {
     ctx.arc(cx, cy, isSel ? 5 : 3.5, 0, Math.PI * 2);
     ctx.fillStyle = dotFill;
     ctx.fill();
+
+    // ── 圆圈距离标注 ──
+    if (mp >= 30) {
+      const labelR = mp;
+      const labelAngle = -Math.PI / 4; // 右上角 45°
+      const lx = cx + labelR * Math.cos(labelAngle);
+      const ly = cy + labelR * Math.sin(labelAngle);
+      const label = formatDistance(maxR);
+      ctx.font = '600 10px -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      // 文字底色
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = isSel ? 'rgba(0, 160, 130, 0.85)' : 'rgba(15, 50, 120, 0.75)';
+      ctx.beginPath();
+      ctx.roundRect(lx - tw / 2 - 3, ly - 7, tw + 6, 14, 3);
+      ctx.fill();
+      // 文字
+      ctx.fillStyle = '#fff';
+      ctx.fillText(label, lx, ly);
+    }
   }
 
   /**
@@ -847,6 +868,61 @@ class MapManager {
     this.trailPolylines = [];
   }
 
+  // ----- 对方位置标记 -----
+
+  /**
+   * 创建对方位置标记图标（橙色实心圆点）
+   */
+  _createTargetIcon() {
+    const svg = [
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">',
+      '  <defs>',
+      '    <filter id="ts" x="-20%" y="-20%" width="140%" height="140%">',
+      '      <feDropShadow dx="0" dy="1" stdDeviation="3" flood-opacity="0.5"/>',
+      '    </filter>',
+      '  </defs>',
+      '  <circle cx="20" cy="20" r="17" fill="none" stroke="#FF8C00" stroke-width="1.5" opacity="0.2"/>',
+      '  <circle cx="20" cy="20" r="13" fill="none" stroke="#FF8C00" stroke-width="2" opacity="0.35"/>',
+      '  <circle cx="20" cy="20" r="7" fill="#FF8C00" stroke="#fff" stroke-width="2.5" filter="url(#ts)"/>',
+      '  <circle cx="20" cy="20" r="2.5" fill="#fff" opacity="0.95"/>',
+      '</svg>'
+    ].join('\n');
+    const dataUri = 'data:image/svg+xml;base64,' + btoa(svg);
+    return new qq.maps.MarkerImage(
+      dataUri,
+      new qq.maps.Size(40, 40),
+      new qq.maps.Point(0, 0),
+      new qq.maps.Point(20, 20),
+      new qq.maps.Size(40, 40)
+    );
+  }
+
+  /**
+   * 设置/更新对方位置标记
+   * @param {{lat:number, lng:number}|null} center 坐标，null 则清除
+   */
+  setTarget(center) {
+    if (!this.map) return;
+    if (!center) {
+      if (this.targetMarker) {
+        this.targetMarker.setMap(null);
+        this.targetMarker = null;
+      }
+      return;
+    }
+    const latLng = new qq.maps.LatLng(center.lat, center.lng);
+    if (this.targetMarker) {
+      this.targetMarker.setPosition(latLng);
+    } else {
+      this.targetMarker = new qq.maps.Marker({
+        position: latLng,
+        map: this.map,
+        draggable: false,
+        icon: this._createTargetIcon()
+      });
+    }
+  }
+
   destroy() {
     this.clearTrail();
     if (this._resizeHandler) {
@@ -860,6 +936,10 @@ class MapManager {
     if (this.locationMarker) {
       this.locationMarker.setMap(null);
       this.locationMarker = null;
+    }
+    if (this.targetMarker) {
+      this.targetMarker.setMap(null);
+      this.targetMarker = null;
     }
     this._offCanvas = null;
     this.map = null;

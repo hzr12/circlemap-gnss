@@ -961,6 +961,40 @@ input[type="number"] {
   color: var(--accent-1);
 }
 
+/* ---------- 对方位置 ---------- */
+.target-section {
+  margin-bottom: 14px;
+}
+.target-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.target-row {
+  display: flex;
+  gap: 6px;
+}
+.target-input {
+  flex: 1;
+  min-width: 0;
+}
+.btn-primary-sm {
+  background: rgba(0, 212, 170, 0.15);
+  color: var(--accent-1);
+  border-color: rgba(0, 212, 170, 0.4);
+  cursor: pointer;
+}
+.btn-primary-sm:hover {
+  background: rgba(0, 212, 170, 0.25);
+}
+.target-info {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+}
+
 /* ---------- 圆列表 ---------- */
 .circle-list-section {
   margin-bottom: 14px;

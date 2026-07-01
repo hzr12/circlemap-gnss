@@ -290,6 +290,14 @@ class App {
     document.getElementById('trail-stats-btn').addEventListener('click', () => this._showTrailStats());
     document.getElementById('trail-smooth-btn').addEventListener('click', () => this._toggleTrailSmoothing());
 
+    // —— 对方位置标记 ——
+    this._targetLatInput = document.getElementById('target-lat');
+    this._targetLngInput = document.getElementById('target-lng');
+    this._targetInfoEl = document.getElementById('target-info');
+    this._targetClearBtn = document.getElementById('target-clear-btn');
+    document.getElementById('target-set-btn').addEventListener('click', () => this._setTargetPosition());
+    this._targetClearBtn.addEventListener('click', () => this._clearTarget());
+
     // —— GPS 状态条缓存 + #12 点击切换跟随模式 ——
     this._statusEl = document.getElementById('gps-status');
     this._statusEl.addEventListener('click', () => this._toggleFollowMode());
@@ -1066,6 +1074,11 @@ class App {
     }
     this._updateStatusBar(true); // 刷新状态条（含 elapsed 时间）
     this._updateInfo();
+    // 更新对方距离
+    if (this._targetPos) {
+      const dist = calcDistance(convPos, this._targetPos);
+      this._targetInfoEl.textContent = `${this._targetPos.lat.toFixed(6)}, ${this._targetPos.lng.toFixed(6)} · 距我 ${formatDistance(dist)}`;
+    }
     } catch (e) {
       console.error('_processPosition error:', e.message);
     }
@@ -1108,6 +1121,40 @@ class App {
       this._relocating = false;
       this._lastRelocateAttempt = Date.now();
     }
+  }
+
+  /**
+   * 设置对方位置标记
+   */
+  _setTargetPosition() {
+    const lat = parseFloat(this._targetLatInput.value);
+    const lng = parseFloat(this._targetLngInput.value);
+    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      Toast.show('⚠️ 请输入有效的对方坐标');
+      return;
+    }
+    this._targetPos = { lat, lng };
+    this.mapManager.setTarget(this._targetPos);
+    this._targetClearBtn.disabled = false;
+    this._targetInfoEl.textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    // 计算与我的距离
+    if (this.myPosition) {
+      const dist = calcDistance(this.myPosition, this._targetPos);
+      this._targetInfoEl.textContent += ` · 距我 ${formatDistance(dist)}`;
+    }
+    Toast.show('📍 已标记对方位置');
+  }
+
+  /**
+   * 清除对方位置标记
+   */
+  _clearTarget() {
+    this._targetPos = null;
+    this.mapManager.setTarget(null);
+    this._targetClearBtn.disabled = true;
+    this._targetInfoEl.textContent = '';
+    this._targetLatInput.value = '';
+    this._targetLngInput.value = '';
   }
 
   /**
