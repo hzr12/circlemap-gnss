@@ -1479,49 +1479,16 @@ class App {
   }
 
   /**
-   * 获取当前天气（wttr.in，无 API key）
+   * 获取当前天气（wttr.in，原生支持 CORS，无需代理）
+   * 支持经纬度查询，GPS 定位后使用精确坐标
    */
   _fetchWeather() {
     if (!navigator.onLine) return;
-    // 主用小米天气，备用 wttr.in
-    this._fetchWeatherXiaomi()
-      .catch(() => this._fetchWeatherWttr());
-  }
-
-  /**
-   * 小米天气 API（主用）
-   * sign/appKey 为固定公开值，无需申请
-   * 使用 CORS 代理绕过跨域限制
-   */
-  _fetchWeatherXiaomi() {
     const pos = this.myPosition;
-    const lat = pos?.lat || 0;
-    const lng = pos?.lng || 0;
-    const apiUrl = `https://weatherapi.market.xiaomi.com/wtr-v3/weather/all?latitude=${lat}&longitude=${lng}&sign=zUFJoAR2ZVrDy1vF3D07&appKey=weather20151024&isGlobal=false&locale=zh_cn&days=1`;
-    // 使用 corsproxy.io 代理（免费，无需 API key）
-    const url = `https://corsproxy.io/?url=${encodeURIComponent(apiUrl)}`;
-    return fetch(url, { signal: AbortSignal.timeout(8000) })
-      .then(r => r.json())
-      .then(data => {
-        const cur = data.current;
-        if (!cur) throw new Error('no data');
-        const temp = cur.temperature;
-        const humidity = cur.humidity;
-        const wind = cur.wind?.value || '';
-        const desc = cur.weather?.typeName || '';
-        const feelsLike = cur.feelsLike || '';
-        const humidityText = humidity ? ` 湿度${humidity}%` : '';
-        const feelsText = feelsLike ? ` 体感${feelsLike}°` : '';
-        this._weatherHtml = `<span class="gps-weather" title="湿度 ${humidity}%${feelsText}">🌡${temp}°C 💨${wind}${humidityText}${desc ? ' ' + desc : ''}</span>`;
-        this._updateStatusBar(true);
-      });
-  }
-
-  /**
-   * wttr.in 备用天气
-   */
-  _fetchWeatherWttr() {
-    return fetch('https://wttr.in/?format=j1', { signal: AbortSignal.timeout(8000) })
+    const url = pos
+      ? `https://wttr.in/${pos.lat},${pos.lng}?format=j1`
+      : 'https://wttr.in/?format=j1';
+    fetch(url, { signal: AbortSignal.timeout(8000) })
       .then(r => r.json())
       .then(data => {
         const cur = data.current_condition?.[0];
@@ -1530,7 +1497,8 @@ class App {
         const wind = cur.windspeedKmph;
         const desc = cur.lang_zh?.[0]?.value || cur.weatherDesc?.[0]?.value || '';
         const humidity = cur.humidity;
-        this._weatherHtml = `<span class="gps-weather" title="湿度 ${humidity}%">🌡${temp}°C 💨${wind}km/h${desc ? ' ' + desc : ''}</span>`;
+        const humidityText = humidity ? ` 湿度${humidity}%` : '';
+        this._weatherHtml = `<span class="gps-weather" title="湿度 ${humidity}%">🌡${temp}°C 💨${wind}km/h${humidityText}${desc ? ' ' + desc : ''}</span>`;
         this._updateStatusBar(true);
       })
       .catch(() => {});
