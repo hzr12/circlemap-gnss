@@ -18,5 +18,6 @@ android {
 }
 
 dependencies {
-    implementation "com.getcapacitor:capacitor-android:8.+"
+    // 使用 project 引用而非 Maven 坐标——capacitor-android 在父项目中作为子模块引入
+    implementation project(':capacitor-android')
 }
