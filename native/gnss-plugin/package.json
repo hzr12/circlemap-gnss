@@ -9,7 +9,7 @@
   },
   "capacitor": {
     "android": {
-      "src": "android/src/main/java"
+      "src": "android"
     }
   },
   "peerDependencies": {
