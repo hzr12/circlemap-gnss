@@ -86,6 +86,26 @@ jobs:
         working-directory: native/android
         run: ./gradlew assembleDebug --no-daemon
 
+      - name: Verify GNSS plugin classes in APK
+        working-directory: native
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -f "$APK" ]; then
+            echo "⚠️ APK not found at $APK — skipping verification"
+            echo "::notice title=GNSS Verify::APK not found, skipping class verification"
+            exit 0
+          fi
+          # Unzip and check for GNSS data plugin class
+          unzip -l "$APK" 2>/dev/null | grep -q "gnssdata" || true
+          if unzip -l "$APK" 2>/dev/null | grep -qi "GnssData"; then
+            echo "## ✅ GNSS plugin classes verified in APK" >> $GITHUB_STEP_SUMMARY
+            echo "Found GnssData class in APK" | tee -a $GITHUB_STEP_SUMMARY
+          else
+            echo "## ⚠️ GNSS plugin classes NOT found in APK" >> $GITHUB_STEP_SUMMARY
+            echo "The plugin may not have been linked into the build." >> $GITHUB_STEP_SUMMARY
+            echo "Check the Integrate step logs for insertion errors." >> $GITHUB_STEP_SUMMARY
+          fi
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
