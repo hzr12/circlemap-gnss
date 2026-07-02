@@ -1,0 +1,108 @@
+name: Build Android APK (GNSS Plugin)
+
+on:
+  push:
+    branches: [dev, feature/gnss-plugin]
+    paths:
+      - 'native/**'
+      - 'index.html'
+      - 'js/**'
+      - 'css/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install native project dependencies
+        working-directory: native
+        run: npm ci --no-audit --no-fund
+
+      - name: Build GNSS plugin (TypeScript → JS)
+        working-directory: native/gnss-plugin
+        run: npx tsc
+
+      - name: Add Android platform
+        working-directory: native
+        run: npx cap add android || true
+
+      - name: Sync web assets (from project root)
+        working-directory: native
+        run: npx cap sync android
+
+      - name: Integrate local GNSS plugin into Android project
+        working-directory: native
+        run: |
+          # ── 1. Add module include to settings.gradle ──
+          echo "" >> android/settings.gradle
+          echo "// GNSS data plugin" >> android/settings.gradle
+          echo "include ':gnss-data-plugin'" >> android/settings.gradle
+          echo "project(':gnss-data-plugin').projectDir = new File('../gnss-plugin/android')" >> android/settings.gradle
+
+          # ── 2. Add dependency to app/build.gradle ──
+          # Insert after the capacitor-android dependency line
+          sed -i "s|implementation project(':capacitor-android')|implementation project(':capacitor-android')\n    implementation project(':gnss-data-plugin')|" android/app/build.gradle
+
+          echo "--- settings.gradle (tail) ---"
+          tail -5 android/settings.gradle
+
+          echo "--- app/build.gradle dependencies ---"
+          grep -A2 "gnss-data-plugin" android/app/build.gradle || echo "(checking insert location)"
+
+      - name: Ensure location permissions in app manifest
+        working-directory: native
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          # Add GPS feature if missing
+          if ! grep -q "android.hardware.location.gps" "$MANIFEST"; then
+            sed -i '/<\/manifest>/i \ \ \ \ <uses-feature android:name="android.hardware.location.gps" />' "$MANIFEST"
+            echo "+ Added GPS feature to manifest"
+          fi
+          # Add ACCESS_FINE_LOCATION if missing
+          if ! grep -q "ACCESS_FINE_LOCATION" "$MANIFEST"; then
+            sed -i '/<\/manifest>/i \ \ \ \ <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />' "$MANIFEST"
+            echo "+ Added ACCESS_FINE_LOCATION to manifest"
+          fi
+
+      - name: Build debug APK
+        working-directory: native/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: circlemap-gnss-debug
+          path: native/android/app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
+      - name: Summarize APK info
+        working-directory: native
+        run: |
+          APK_PATH="android/app/build/outputs/apk/debug"
+          if [ -d "$APK_PATH" ]; then
+            echo "## ✅ APK built successfully" >> $GITHUB_STEP_SUMMARY
+            for f in "$APK_PATH"/*.apk; do
+              SIZE=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null)
+              SIZE_MB=$(echo "scale=2; $SIZE/1048576" | bc)
+              echo "- \`$(basename "$f")\` — ${SIZE_MB}MB" >> $GITHUB_STEP_SUMMARY
+            done
+          else
+            echo "## ❌ APK not found" >> $GITHUB_STEP_SUMMARY
+          fi

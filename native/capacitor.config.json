@@ -1,0 +1,12 @@
+{
+  "appId": "com.hzr.circlemap",
+  "appName": "Circlemap",
+  "webDir": "..",
+  "server": {
+    "hostname": "localhost",
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "GnssData": {}
+  }
+}
