@@ -9,8 +9,6 @@ import android.location.OnNmeaMessageListener;
 import android.os.Build;
 import android.util.Log;
 
-import androidx.core.content.ContextCompat;
-
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -165,7 +163,7 @@ public class GnssDataPlugin extends Plugin {
             };
 
             try {
-                locationManager.registerGnssStatusCallback(gnssCallback, null, null);
+                locationManager.registerGnssStatusCallback(gnssCallback);
                 Log.d(TAG, "GnssStatus.Callback registered");
             } catch (SecurityException e) {
                 gnssCallback = null;
