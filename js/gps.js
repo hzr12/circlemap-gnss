@@ -32,6 +32,9 @@ class GPSManager {
     this._gnssInitError = null;    // 初始化失败原因
     this._gnssListeningStarted = false; // startGnss() 是否已调用
     this._gnssStarting = null;     // startGnss() 的 Promise，防止并发
+    this._gnssStatusHandle = null; // gnssStatus 事件监听器句柄
+    this._gnssNmeaHandle = null;   // nmeaSentence 事件监听器句柄
+    this._gnssPollId = null;       // GNSS 轮询兜底定时器
 
     // 电量监控
     this._lowBattery = false;
@@ -196,24 +199,100 @@ class GPSManager {
           return;
         }
       }
-      await this._gnssPlugin.startGnssListening();
-      this._gnssListeningStarted = true; // 成功后才标记，失败时允许重试
-      this._gnssPlugin.addListener('gnssStatus', (event) => {
+
+      // ⚠️ 先注册监听器，再调用 startGnssListening()
+      // 原因：Java 端 registerGnssCallback() 会立即开始回调，
+      // 如果先 start 后 addListener，第一批卫星事件会被丢弃（竞态条件）
+      const gnssHandler = (event) => {
         if (event && event.satellites) {
           this._gnssSatellites = event.satellites;
+          console.log('[GPS] GNSS 事件收到，卫星数:', event.satellites.length);
         }
-      });
-      this._gnssPlugin.addListener('nmeaSentence', (nmea) => {
-        // NMEA 数据已由原生端缓存，JS 端不需要重复存储（死代码已移除）
+      };
+      const nmeaHandler = (nmea) => {
         if (nmea) {
           console.log('[GPS] NMEA:', nmea.sentence?.substring(0, 20) + '...');
         }
-      });
+      };
+
+      // 先注册（Capacitor 允许在 native 方法调用前注册 listener）
+      this._gnssStatusHandle = this._gnssPlugin.addListener('gnssStatus', gnssHandler);
+      this._gnssNmeaHandle = this._gnssPlugin.addListener('nmeaSentence', nmeaHandler);
+
+      // 再启动原生监听
+      await this._gnssPlugin.startGnssListening();
+      this._gnssListeningStarted = true;
       this._gnssInitError = null;
       console.log('[GPS] GNSS 插件已激活，卫星数据可用');
+
+      // 兜底轮询：前 15 秒每 2 秒主动拉取一次，防止事件丢失
+      this._startGnssPollFallback();
     } catch (err) {
       this._gnssInitError = err.message || 'start_failed';
       console.warn('[GPS] GNSS 插件激活失败:', err.message);
+      // 清理可能已注册的监听器
+      this._removeGnssListeners();
+    }
+  }
+
+  /**
+   * GNSS 轮询兜底：启动后前 15 秒每 2 秒拉取一次 getLastGnssData()
+   * 如果事件监听正常工作，轮询结果只是冗余覆盖（无副作用）
+   */
+  _startGnssPollFallback() {
+    this._stopGnssPollFallback();
+    let elapsed = 0;
+    const interval = 2000;
+    const maxDuration = 15000;
+
+    this._gnssPollId = setInterval(async () => {
+      elapsed += interval;
+      if (!this._gnssListeningStarted || !this._gnssPlugin) {
+        this._stopGnssPollFallback();
+        return;
+      }
+      // 如果事件已收到卫星数据，提前停止轮询
+      if (this._gnssSatellites.length > 0) {
+        console.log('[GPS] GNSS 轮询兜底：已收到卫星数据，停止轮询');
+        this._stopGnssPollFallback();
+        return;
+      }
+      try {
+        const data = await this._gnssPlugin.getLastGnssData();
+        if (data && data.satellites && data.satellites.length > 0) {
+          this._gnssSatellites = data.satellites;
+          console.log('[GPS] GNSS 轮询兜底：收到卫星数:', data.satellites.length);
+          this._stopGnssPollFallback();
+        }
+      } catch (e) {
+        console.warn('[GPS] GNSS 轮询兜底失败:', e.message);
+      }
+      if (elapsed >= maxDuration) {
+        this._stopGnssPollFallback();
+        if (this._gnssSatellites.length === 0) {
+          console.warn('[GPS] GNSS 轮询兜底：15s 内未收到卫星数据');
+        }
+      }
+    }, interval);
+  }
+
+  _stopGnssPollFallback() {
+    if (this._gnssPollId) {
+      clearInterval(this._gnssPollId);
+      this._gnssPollId = null;
+    }
+  }
+
+  /**
+   * 移除所有 GNSS 事件监听器
+   */
+  _removeGnssListeners() {
+    try {
+      if (this._gnssStatusHandle) { this._gnssStatusHandle.remove(); this._gnssStatusHandle = null; }
+      if (this._gnssNmeaHandle) { this._gnssNmeaHandle.remove(); this._gnssNmeaHandle = null; }
+    } catch (e) {
+      // Capacitor v6 用 remove()，旧版可能没有
+      try { this._gnssPlugin?.removeAllListeners?.(); } catch (_) {}
     }
   }
 
@@ -222,8 +301,9 @@ class GPSManager {
    */
   stopGnss() {
     if (!this._gnssPlugin || !this._gnssListeningStarted) return;
+    this._removeGnssListeners();
+    this._stopGnssPollFallback();
     try {
-      this._gnssPlugin.removeAllListeners();
       this._gnssPlugin.stopGnssListening?.();
     } catch (e) {
       // 插件可能没有这些方法
