@@ -94,6 +94,25 @@ jobs:
         working-directory: native/android
         run: ./gradlew assembleDebug --no-daemon
 
+      - name: Sign APK with release keystore
+        run: |
+          KEYSTORE="native/circlemap.keystore"
+          APK="native/android/app/build/outputs/apk/debug/app-debug.apk"
+          APK_SIGNED="native/android/app/build/outputs/apk/debug/circlemap-v0.1.0.apk"
+          if [ ! -f "$APK" ]; then
+            echo "⚠️ APK not found, skipping sign"
+            exit 0
+          fi
+          # Align + sign
+          "${ANDROID_HOME}/build-tools/36.0.0/zipalign" -p -f 4 "$APK" "$APK_SIGNED"
+          "${ANDROID_HOME}/build-tools/36.0.0/apksigner" sign \
+            --ks "$KEYSTORE" \
+            --ks-key-alias circlemap \
+            --ks-pass pass:circlemap123 \
+            --key-pass pass:circlemap123 \
+            "$APK_SIGNED"
+          echo "✅ Signed APK: $APK_SIGNED"
+
       - name: Verify GNSS plugin classes in APK
         working-directory: native
         run: |
@@ -118,7 +137,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: circlemap-gnss-debug
-          path: native/android/app/build/outputs/apk/debug/*.apk
+          path: native/android/app/build/outputs/apk/debug/circlemap-*.apk
           retention-days: 14
 
       - name: Publish to GitHub Release (on tag push)
@@ -136,8 +155,8 @@ jobs:
             - 深色/浅色主题
 
             ### 安装
-            下载 APK 直接安装到 Android 设备。
-          files: native/android/app/build/outputs/apk/debug/*.apk
+            下载 APK 直接安装到 Android 设备（已签名，小米等设备可直接安装）。
+          files: native/android/app/build/outputs/apk/debug/circlemap-*.apk
           generate_release_notes: true
 
       - name: Summarize APK info
@@ -146,10 +165,12 @@ jobs:
           APK_PATH="android/app/build/outputs/apk/debug"
           if [ -d "$APK_PATH" ]; then
             echo "## ✅ APK built successfully" >> $GITHUB_STEP_SUMMARY
-            for f in "$APK_PATH"/*.apk; do
-              SIZE=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null)
-              SIZE_MB=$(echo "scale=2; $SIZE/1048576" | bc)
-              echo "- \`$(basename "$f")\` — ${SIZE_MB}MB" >> $GITHUB_STEP_SUMMARY
+            for f in "$APK_PATH"/circlemap-*.apk; do
+              if [ -f "$f" ]; then
+                SIZE=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null)
+                SIZE_MB=$(echo "scale=2; $SIZE/1048576" | bc)
+                echo "- \`$(basename "$f")\` — ${SIZE_MB}MB (已签名)" >> $GITHUB_STEP_SUMMARY
+              fi
             done
           else
             echo "## ❌ APK not found" >> $GITHUB_STEP_SUMMARY
