@@ -1481,18 +1481,22 @@ class App {
     const manualIcon = isManual ? ' <span class="gps-manual">📍 手动定位</span>' : ''; // #15
     const degradedIcon = isDowngraded ? ' <span class="gps-degraded">⚡ 低精度</span>' : '';
 
-    // GNSS 卫星数据（仅 Capacitor 原生端可用），有数据时才显示
+    // GNSS 卫星数据（仅 Capacitor 原生端可用），始终渲染
     let gnssHtml = '';
-    if (this.gpsManager.hasGnssPlugin && this.gpsManager.gnssVisibleCount > 0) {
-      const stats = this.gpsManager.gnssConstellationStats;
-      const parts = [];
-      if (stats.gps > 0) parts.push(`GPS:${stats.gps}`);
-      if (stats.beidou > 0) parts.push(`BD:${stats.beidou}`);
-      if (stats.glonass > 0) parts.push(`GLONASS:${stats.glonass}`);
-      if (stats.galileo > 0) parts.push(`GAL:${stats.galileo}`);
-      const snr = this.gpsManager.gnssAvgSnr;
-      gnssHtml = `<span class="gnss-indicator" title="可用卫星 ${this.gpsManager.gnssUsedCount}/${this.gpsManager.gnssVisibleCount}, 平均信噪比 ${snr.toFixed(0)}dB-Hz">` +
-        `🛰️ ${parts.join(' ')} ${snr.toFixed(0)}dB</span>`;
+    if (this.gpsManager.hasGnssPlugin) {
+      if (this.gpsManager.gnssVisibleCount > 0) {
+        const stats = this.gpsManager.gnssConstellationStats;
+        const parts = [];
+        if (stats.gps > 0) parts.push(`GPS:${stats.gps}`);
+        if (stats.beidou > 0) parts.push(`BD:${stats.beidou}`);
+        if (stats.glonass > 0) parts.push(`GLONASS:${stats.glonass}`);
+        if (stats.galileo > 0) parts.push(`GAL:${stats.galileo}`);
+        const snr = this.gpsManager.gnssAvgSnr;
+        gnssHtml = `<span class="gnss-indicator" title="可用卫星 ${this.gpsManager.gnssUsedCount}/${this.gpsManager.gnssVisibleCount}, 平均信噪比 ${snr.toFixed(0)}dB-Hz">` +
+          `🛰️ ${parts.join(' ')} ${snr.toFixed(0)}dB</span>`;
+      } else {
+        gnssHtml = `<span class="gnss-indicator" style="opacity:0.5">🛰️ 等待卫星...</span>`;
+      }
     }
 
     // 信号强度（基于 GPS 精度）
