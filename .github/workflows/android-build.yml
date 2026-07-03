@@ -117,8 +117,13 @@ jobs:
         run: |
           KEYSTORE="native/circlemap.keystore"
           APK="native/android/app/build/outputs/apk/debug/app-debug.apk"
-          VERSION="${GITHUB_REF_NAME#v}"
-          APK_SIGNED="native/android/app/build/outputs/apk/debug/circlemap-v${VERSION:-0.2.0}.apk"
+          # tag push → circlemap-v1.2.3.apk; branch push → circlemap-dev.apk
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="dev"
+          fi
+          APK_SIGNED="native/android/app/build/outputs/apk/debug/circlemap-v${VERSION}.apk"
           if [ ! -f "$APK" ]; then
             echo "⚠️ APK not found, skipping sign"
             exit 0
