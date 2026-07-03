@@ -12,6 +12,9 @@ on:
       - 'css/**'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build debug APK
