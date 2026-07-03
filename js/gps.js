@@ -29,16 +29,22 @@ class GPSManager {
     // GNSS 插件（Capacitor 原生端卫星数据）
     this._gnssPlugin = null;       // Capacitor.Plugins.GnssData 引用
     this._gnssSatellites = [];     // GnssSatelliteInfo[]
-    this._gnssNmea = [];           // GnssNmeaData[]
     this._gnssInitError = null;    // 初始化失败原因
     this._gnssListeningStarted = false; // startGnss() 是否已调用
+    this._gnssStarting = null;     // startGnss() 的 Promise，防止并发
 
     // 电量监控
     this._lowBattery = false;
     this._powerSaving = false;  // 省电模式开关
     this._powerSavingLocked = false;  // 省电模式锁定（低电量时锁定开启）
+    this._battery = null;       // BatteryManager 引用（用于清理）
+    this._batteryCheck = null;  // 电池检查函数引用（用于清理）
     this._initBatteryMonitor();
     this._tryInitGnssPlugin();
+
+    // GPS 节流：最多每 5 秒处理一次位置更新
+    this._lastProcessedTime = 0;
+    this._gpsMinInterval = 5000; // 毫秒
   }
 
   /**
@@ -47,7 +53,8 @@ class GPSManager {
   _initBatteryMonitor() {
     if (!navigator.getBattery) return;
     navigator.getBattery().then(battery => {
-      const check = () => {
+      this._battery = battery;
+      this._batteryCheck = () => {
         const wasLow = this._lowBattery;
         this._lowBattery = battery.level < 0.2;
         if (this._lowBattery && !wasLow) {
@@ -69,10 +76,22 @@ class GPSManager {
           console.log('[GPS] 电量恢复，省电模式已解锁');
         }
       };
-      battery.addEventListener('levelchange', check);
-      battery.addEventListener('chargingchange', check);
-      check();
+      battery.addEventListener('levelchange', this._batteryCheck);
+      battery.addEventListener('chargingchange', this._batteryCheck);
+      this._batteryCheck();
     }).catch(() => {});
+  }
+
+  /**
+   * 清理电池监控监听器
+   */
+  _cleanupBatteryMonitor() {
+    if (this._battery && this._batteryCheck) {
+      this._battery.removeEventListener('levelchange', this._batteryCheck);
+      this._battery.removeEventListener('chargingchange', this._batteryCheck);
+      this._battery = null;
+      this._batteryCheck = null;
+    }
   }
 
   /**
@@ -141,24 +160,53 @@ class GPSManager {
    */
   async startGnss() {
     if (!this._gnssPlugin) {
-      console.warn('[GPS] startGnss 跳过：无 GNSS 插件引用');
-      return;
+      // 尝试重新探测（Capacitor 可能延迟加载）
+      this._tryInitGnssPlugin();
+      if (!this._gnssPlugin) {
+        console.warn('[GPS] startGnss 跳过：无 GNSS 插件引用');
+        return;
+      }
     }
     if (this._gnssListeningStarted) {
-      return; // 防止重复启动
+      return; // 已启动
     }
-    this._gnssListeningStarted = true; // 提前标记，防止并发的重复调用
+    // 防止并发调用（用 Promise 作为 mutex）
+    if (this._gnssStarting) {
+      return this._gnssStarting;
+    }
+    this._gnssStarting = this._startGnssImpl();
     try {
+      await this._gnssStarting;
+    } finally {
+      this._gnssStarting = null;
+    }
+  }
+
+  /**
+   * startGnss() 的实际实现
+   */
+  async _startGnssImpl() {
+    try {
+      // 先请求 Capacitor 权限（与浏览器 GPS 权限是独立的）
+      if (typeof Capacitor !== 'undefined' && Capacitor.requestPermissions) {
+        const result = await Capacitor.requestPermissions({ permissions: ['location'] });
+        if (result.location !== 'granted') {
+          console.warn('[GPS] GNSS 权限未授予:', result.location);
+          this._gnssInitError = 'permission_denied';
+          return;
+        }
+      }
       await this._gnssPlugin.startGnssListening();
+      this._gnssListeningStarted = true; // 成功后才标记，失败时允许重试
       this._gnssPlugin.addListener('gnssStatus', (event) => {
         if (event && event.satellites) {
           this._gnssSatellites = event.satellites;
         }
       });
       this._gnssPlugin.addListener('nmeaSentence', (nmea) => {
-        if (nmea && nmea.sentence) {
-          this._gnssNmea.push(nmea);
-          if (this._gnssNmea.length > 50) this._gnssNmea.shift();
+        // NMEA 数据已由原生端缓存，JS 端不需要重复存储（死代码已移除）
+        if (nmea) {
+          console.log('[GPS] NMEA:', nmea.sentence?.substring(0, 20) + '...');
         }
       });
       this._gnssInitError = null;
@@ -167,6 +215,22 @@ class GPSManager {
       this._gnssInitError = err.message || 'start_failed';
       console.warn('[GPS] GNSS 插件激活失败:', err.message);
     }
+  }
+
+  /**
+   * 停止 GNSS 监听，移除事件监听器。
+   */
+  stopGnss() {
+    if (!this._gnssPlugin || !this._gnssListeningStarted) return;
+    try {
+      this._gnssPlugin.removeAllListeners();
+      this._gnssPlugin.stopGnssListening?.();
+    } catch (e) {
+      // 插件可能没有这些方法
+    }
+    this._gnssListeningStarted = false;
+    this._gnssSatellites = [];
+    this._gnssInitError = null;
   }
 
   /**
@@ -391,6 +455,15 @@ class GPSManager {
 
     this.watchId = navigator.geolocation.watchPosition(
       (position) => {
+        // 节流：最多每 _gpsMinInterval 毫秒处理一次
+        const now = Date.now();
+        if (now - this._lastProcessedTime < this._gpsMinInterval) {
+          // 即使节流，也要更新超时检测时间，避免误判超时
+          this._lastPositionTime = now;
+          return;
+        }
+        this._lastProcessedTime = now;
+
         const pos = {
           lat: position.coords.latitude,
           lng: position.coords.longitude,
@@ -443,6 +516,15 @@ class GPSManager {
   }
 
   /**
+   * 释放所有资源（GPS + GNSS + 电池监控）
+   */
+  destroy() {
+    this.stopWatching();
+    this.stopGnss();
+    this._cleanupBatteryMonitor();
+  }
+
+  /**
    * 获取缓存的最近位置
    * @returns {{lat: number, lng: number, accuracy: number}|null}
    */
@@ -472,11 +554,25 @@ class GPSManager {
   }
 
   /**
+   * GNSS 是否已激活（正在监听卫星数据）
+   */
+  get isGnssActive() {
+    return this._gnssListeningStarted && this._gnssPlugin !== null;
+  }
+
+  /**
+   * GNSS 初始化错误
+   */
+  get gnssError() {
+    return this._gnssInitError;
+  }
+
+  /**
    * 可见卫星列表（来自原生 GNSS 插件）
    * @returns {Array<{svid:number, constellation:string, cn0DbHz:number, usedInFix:boolean}>}
    */
   get gnssSatellites() {
-    return this._gnssSatellites;
+    return this._gnssSatellites.slice(); // 返回防御性副本
   }
 
   /**
