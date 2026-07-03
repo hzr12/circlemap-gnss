@@ -17,6 +17,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -48,9 +49,12 @@ public class GnssDataPlugin extends Plugin {
     private GnssStatus.Callback gnssCallback;
     private OnNmeaMessageListener nmeaListener;
 
+    // 使用 synchronized 保护的线程安全列表
+    private final Object satelliteLock = new Object();
     private final List<GnssSatelliteInfo> lastSatellites = new ArrayList<>();
-    private final List<GnssNmeaData> lastNmeaSentences = new ArrayList<>();
-    private boolean isListening = false;
+
+    private final Object nmeaLock = new Object();
+    private final ArrayDeque<GnssNmeaData> lastNmeaSentences = new ArrayDeque<>();
 
     // ──────────────────────────────────────────────
     // Plugin lifecycle
@@ -64,6 +68,18 @@ public class GnssDataPlugin extends Plugin {
             locationManager = (LocationManager) ctx.getSystemService(Context.LOCATION_SERVICE);
             Log.d(TAG, "Plugin loaded");
         }
+    }
+
+    /**
+     * Activity 销毁时释放 GNSS 回调，防止内存泄漏。
+     */
+    @Override
+    public void handleOnDestroy() {
+        if (locationManager != null) {
+            unregisterGnssCallback();
+            unregisterNmeaListener();
+        }
+        super.handleOnDestroy();
     }
 
     // ──────────────────────────────────────────────
@@ -93,7 +109,6 @@ public class GnssDataPlugin extends Plugin {
         try {
             registerGnssCallback();
             registerNmeaListener();
-            isListening = true;
             Log.d(TAG, "GNSS listening started");
             call.resolve();
         } catch (SecurityException e) {
@@ -112,7 +127,6 @@ public class GnssDataPlugin extends Plugin {
         try {
             unregisterGnssCallback();
             unregisterNmeaListener();
-            isListening = false;
             Log.d(TAG, "GNSS listening stopped");
             call.resolve();
         } catch (Exception e) {
@@ -127,8 +141,12 @@ public class GnssDataPlugin extends Plugin {
     @PluginMethod
     public void getLastGnssData(PluginCall call) {
         JSObject result = new JSObject();
-        result.put("satellites", satellitesToJSArray(lastSatellites));
-        result.put("nmea", nmeaToJSArray(lastNmeaSentences));
+        synchronized (satelliteLock) {
+            result.put("satellites", satellitesToJSArray(lastSatellites));
+        }
+        synchronized (nmeaLock) {
+            result.put("nmea", nmeaToJSArray(lastNmeaSentences));
+        }
         call.resolve(result);
     }
 
@@ -176,12 +194,14 @@ public class GnssDataPlugin extends Plugin {
     }
 
     private void unregisterGnssCallback() {
-        if (gnssCallback != null) {
+        if (gnssCallback != null && locationManager != null) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 locationManager.unregisterGnssStatusCallback(gnssCallback);
             }
             gnssCallback = null;
-            lastSatellites.clear();
+            synchronized (satelliteLock) {
+                lastSatellites.clear();
+            }
             Log.d(TAG, "GnssStatus.Callback unregistered");
         }
     }
@@ -190,7 +210,8 @@ public class GnssDataPlugin extends Plugin {
      * 处理 GnssStatus 更新，提取卫星信息并推送到 JS。
      */
     private void handleSatelliteStatus(GnssStatus status) {
-        lastSatellites.clear();
+        // 构建本地快照，避免长时间持有锁
+        List<GnssSatelliteInfo> snapshot = new ArrayList<>();
         int count = status.getSatelliteCount();
 
         for (int i = 0; i < count; i++) {
@@ -204,17 +225,23 @@ public class GnssDataPlugin extends Plugin {
                     status.hasEphemerisData(i),
                     status.hasAlmanacData(i)
             );
-            lastSatellites.add(info);
+            snapshot.add(info);
         }
 
-        // 推送给 JS 监听器
+        // 更新共享列表（持锁时间最短）
+        synchronized (satelliteLock) {
+            lastSatellites.clear();
+            lastSatellites.addAll(snapshot);
+        }
+
+        // 推送给 JS 监听器（使用本地快照，不持锁）
         JSObject event = new JSObject();
-        event.put("satellites", satellitesToJSArray(lastSatellites));
+        event.put("satellites", satellitesToJSArray(snapshot));
         notifyListeners("gnssStatus", event);
 
         Log.d(TAG, "Satellites: " + count
-                + " (used: " + countUsed(lastSatellites)
-                + ", avg SNR: " + String.format("%.1f", avgSnr(lastSatellites)) + " dB-Hz)");
+                + " (used: " + countUsed(snapshot)
+                + ", avg SNR: " + String.format("%.1f", avgSnr(snapshot)) + " dB-Hz)");
     }
 
     // ──────────────────────────────────────────────
@@ -224,13 +251,22 @@ public class GnssDataPlugin extends Plugin {
     private void registerNmeaListener() {
         if (nmeaListener != null) return;
 
+        // API 24+ 才有 OnNmeaMessageListener
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            Log.w(TAG, "NMEA listener requires API 24+, current API: "
+                    + Build.VERSION.SDK_INT + " — NMEA unavailable");
+            return;
+        }
+
         nmeaListener = (sentence, timestamp) -> {
             GnssNmeaData data = new GnssNmeaData(timestamp, sentence);
 
             // 缓存（限制数量防内存泄漏）
-            lastNmeaSentences.add(data);
-            if (lastNmeaSentences.size() > MAX_NMEA_CACHE) {
-                lastNmeaSentences.remove(0);
+            synchronized (nmeaLock) {
+                if (lastNmeaSentences.size() >= MAX_NMEA_CACHE) {
+                    lastNmeaSentences.pollFirst(); // O(1)
+                }
+                lastNmeaSentences.addLast(data);
             }
 
             // 推送给 JS
@@ -249,10 +285,12 @@ public class GnssDataPlugin extends Plugin {
     }
 
     private void unregisterNmeaListener() {
-        if (nmeaListener != null) {
+        if (nmeaListener != null && locationManager != null) {
             locationManager.removeNmeaListener(nmeaListener);
             nmeaListener = null;
-            lastNmeaSentences.clear();
+            synchronized (nmeaLock) {
+                lastNmeaSentences.clear();
+            }
             Log.d(TAG, "NmeaListener unregistered");
         }
     }
@@ -285,11 +323,12 @@ public class GnssDataPlugin extends Plugin {
         return arr;
     }
 
-    private static JSArray nmeaToJSArray(List<GnssNmeaData> nmeaList) {
+    private static JSArray nmeaToJSArray(ArrayDeque<GnssNmeaData> nmeaQueue) {
         JSArray arr = new JSArray();
         // 按时间倒序，最新的在前
-        for (int i = nmeaList.size() - 1; i >= 0; i--) {
-            arr.put(nmeaList.get(i).toJSObject());
+        Object[] array = nmeaQueue.toArray();
+        for (int i = array.length - 1; i >= 0; i--) {
+            arr.put(((GnssNmeaData) array[i]).toJSObject());
         }
         return arr;
     }
