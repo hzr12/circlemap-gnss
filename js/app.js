@@ -1597,7 +1597,7 @@ class App {
    * 免费、无需 API key、原生 CORS
    */
   _fetchWeatherOpenMeteo(lat, lng) {
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&timezone=auto`;
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&daily=sunrise,sunset&timezone=auto&forecast_days=1`;
     return fetch(url, { signal: AbortSignal.timeout(5000) })
       .then(r => r.json())
       .then(data => {
@@ -1609,7 +1609,15 @@ class App {
         const code = cur.weather_code;
         const desc = App._weatherCodeToZh(code);
         const humidityText = humidity != null ? ` 湿度${humidity}%` : '';
-        this._weatherHtml = `<span class="gps-weather" title="湿度 ${humidity}%">🌡${temp}°C 💨${wind}km/h${humidityText}${desc ? ' ' + desc : ''}</span>`;
+        // 日出日落
+        let sunText = '';
+        const daily = data.daily;
+        if (daily?.sunrise?.[0] && daily?.sunset?.[0]) {
+          const sunrise = daily.sunrise[0].slice(11);
+          const sunset = daily.sunset[0].slice(11);
+          sunText = ` 日出${sunrise} 日落${sunset}`;
+        }
+        this._weatherHtml = `<span class="gps-weather" title="湿度 ${humidity}%">🌡${temp}°C 💨${wind}km/h${humidityText}${desc ? ' ' + desc : ''}${sunText}</span>`;
         this._updateStatusBar(true);
       });
   }
@@ -1619,8 +1627,8 @@ class App {
    */
   _fetchWeatherWttr(lat, lng) {
     const url = (lat && lng)
-      ? `https://wttr.in/${lat},${lng}?format=j1`
-      : 'https://wttr.in/?format=j1';
+      ? `https://wttr.in/${lat},${lng}?format=j1&lang=zh`
+      : 'https://wttr.in/?format=j1&lang=zh';
     return fetch(url, { signal: AbortSignal.timeout(8000) })
       .then(r => r.json())
       .then(data => {
