@@ -40,6 +40,8 @@ class App {
     this._pageShowHandler = null;     // pageshow 处理器引用
     this._lastSpeed = null;           // 上次速度（m/s）
     this._lastAltitude = null;        // 上次海拔（米）
+    this._batteryLevel = null;        // 电池电量（0-1）
+    this._batteryCharging = false;    // 是否在充电
     this._lastCalcPos = null;         // 上一个连续定位位置（用于自行计算速度）
     this._lastCalcTime = null;        // 上一个连续定位时间戳
     this._lastAccuracy = null;        // 最近一次定位精度（米），用于精度圈范围判断
@@ -98,6 +100,9 @@ class App {
     // 天气获取
     this._weatherHtml = '';
     this._fetchWeather();
+
+    // 电池监控
+    this._initBattery();
 
     // 进入页面后自动启动持续 GPS 追踪
     this._startWatching();
@@ -269,6 +274,16 @@ class App {
       }
     });
 
+    // —— 选点至我的位置按钮 ——
+    document.getElementById('center-to-me-btn').addEventListener('click', () => {
+      if (!this.myPosition) {
+        Toast.show('⚠️ 尚未定位，请先点击 GPS 按钮');
+        return;
+      }
+      this.mapManager.setCenter(this.myPosition);
+      Toast.show('📍 选点中心已设为我的位置');
+    });
+
     // —— #14 设为我当前位置按钮 ——
     document.getElementById('set-mypos-btn').addEventListener('click', () => {
       const lat = parseFloat(this._latInput.value);
@@ -289,10 +304,12 @@ class App {
 
     // —— 轨迹记录按钮 ——
     document.getElementById('trail-record-btn').addEventListener('click', () => this._toggleTrailRecording());
+    document.getElementById('trail-pause-btn').addEventListener('click', () => this._toggleTrailPause());
     document.getElementById('trail-clear-btn').addEventListener('click', () => this._clearTrail());
     document.getElementById('trail-export-btn').addEventListener('click', () => this._exportGpx());
     document.getElementById('trail-stats-btn').addEventListener('click', () => this._showTrailStats());
     document.getElementById('trail-smooth-btn').addEventListener('click', () => this._toggleTrailSmoothing());
+    document.getElementById('power-saving-btn').addEventListener('click', () => this._togglePowerSaving());
 
     // —— 对方位置标记（复用坐标输入区） ——
     this._targetInfoEl = document.getElementById('target-info');
@@ -785,6 +802,21 @@ class App {
   }
 
   /**
+   * 切换轨迹暂停/继续状态
+   */
+  _toggleTrailPause() {
+    if (!this.trail.isRecording) return;
+    if (this.trail.isPaused) {
+      this.trail.resume();
+      Toast.show('▶ 轨迹记录已继续');
+    } else {
+      this.trail.pause();
+      Toast.show('⏸ 轨迹记录已暂停');
+    }
+    this._updateTrailUI();
+  }
+
+  /**
    * 导出 GPX 文件（#18 — 委托给 GpxExport 模块，含#7 schema修复）
    */
   _exportGpx() {
@@ -814,6 +846,22 @@ class App {
     }
     this._updateTrailUI();
     Toast.show(this._trailSmoothing ? '✨ 轨迹平滑已开启' : '⬜ 轨迹平滑已关闭');
+  }
+
+  /**
+   * 切换省电模式
+   */
+  _togglePowerSaving() {
+    if (this.gpsManager.isPowerSavingLocked) {
+      Toast.show('电量不足，省电模式已锁定，充电后自动解锁');
+      return;
+    }
+    const next = this.gpsManager.togglePowerSaving();
+    const btn = document.getElementById('power-saving-btn');
+    if (btn) {
+      btn.classList.toggle('active', next);
+    }
+    Toast.show(next ? '省电模式已开启（GPS 精度降低）' : '省电模式已关闭（GPS 恢复高精度）');
   }
 
   /**
@@ -944,6 +992,7 @@ class App {
    */
   _updateTrailUI() {
     const btn = document.getElementById('trail-record-btn');
+    const pauseBtn = document.getElementById('trail-pause-btn');
     const clearBtn = document.getElementById('trail-clear-btn');
     const exportBtn = document.getElementById('trail-export-btn');
     const statsBtn = document.getElementById('trail-stats-btn');
@@ -956,6 +1005,12 @@ class App {
       btn.innerHTML = this.trail.isRecording
         ? '<span class="trail-dot"></span> 记录中...'
         : '<span class="trail-dot"></span> 开始记录';
+    }
+
+    // 暂停按钮
+    if (pauseBtn) {
+      pauseBtn.disabled = !this.trail.isRecording;
+      pauseBtn.textContent = this.trail.isPaused ? '继续' : '暂停';
     }
 
     // 距离
@@ -1526,6 +1581,12 @@ class App {
     if (this._lastAltitude != null) {
       line2Parts.push(`<span class="gps-altitude">${Math.round(this._lastAltitude)}m</span>`);
     }
+    if (this._batteryLevel != null) {
+      const pct = Math.round(this._batteryLevel * 100);
+      const timeStr = this._getBatteryTimeStr();
+      const label = this._batteryCharging ? '充电中' : (timeStr ? `约${timeStr}` : '');
+      line2Parts.push(`<span class="gps-battery" title="电量 ${pct}%">${pct}%${label ? ' ' + label : ''}</span>`);
+    }
     if (nearStr) line2Parts.push(nearStr);
     const line2 = line2Parts.length ? line2Parts.join(' ｜ ') : '<span style="opacity:0.5">位置待更新</span>';
 
@@ -1643,6 +1704,76 @@ class App {
         this._updateStatusBar(true);
       })
       .catch(() => {});
+  }
+
+  /**
+   * 初始化电池监控
+   */
+  _initBattery() {
+    if (!navigator.getBattery) return;
+    navigator.getBattery().then(battery => {
+      this._batteryLevel = battery.level;
+      this._batteryCharging = battery.charging;
+      this._batteryTime = battery.dischargingTime; // 剩余时间（秒），Infinity 表示充电中
+      this._updateStatusBar(true);
+
+      // 记录电量变化时间点，用于计算消耗速率
+      this._batteryLastLevel = battery.level;
+      this._batteryLastTime = Date.now();
+
+      battery.addEventListener('levelchange', () => {
+        const now = Date.now();
+        const dt = (now - this._batteryLastTime) / 1000; // 秒
+        const dl = this._batteryLastLevel - battery.level;
+        if (dt > 60 && dl > 0) {
+          // 超过 1 分钟且有消耗，计算速率
+          this._batteryConsumeRate = dl / dt; // 每秒消耗比例
+        }
+        this._batteryLastLevel = battery.level;
+        this._batteryLastTime = now;
+        this._batteryLevel = battery.level;
+        this._batteryCharging = battery.charging;
+        this._batteryTime = battery.dischargingTime;
+        this._updateStatusBar(true);
+        // 低电量警告
+        if (battery.level <= 0.15 && !battery.charging) {
+          Toast.show('电量不足 15%，建议开启省电模式');
+        }
+      });
+
+      battery.addEventListener('chargingchange', () => {
+        this._batteryCharging = battery.charging;
+        this._batteryTime = battery.dischargingTime;
+        this._updateStatusBar(true);
+      });
+
+      battery.addEventListener('dischargingtimechange', () => {
+        this._batteryTime = battery.dischargingTime;
+        this._updateStatusBar(true);
+      });
+    }).catch(() => {});
+  }
+
+  /**
+   * 获取格式化的电池续航时间
+   * @returns {string|null}
+   */
+  _getBatteryTimeStr() {
+    if (this._batteryCharging) return null;
+    // 优先用浏览器 API
+    if (this._batteryTime && isFinite(this._batteryTime) && this._batteryTime > 0) {
+      const h = Math.floor(this._batteryTime / 3600);
+      const m = Math.floor((this._batteryTime % 3600) / 60);
+      return h > 0 ? `${h}h${m}m` : `${m}m`;
+    }
+    // 降级：用消耗速率估算
+    if (this._batteryConsumeRate && this._batteryConsumeRate > 0 && this._batteryLevel != null) {
+      const remainSec = this._batteryLevel / this._batteryConsumeRate;
+      const h = Math.floor(remainSec / 3600);
+      const m = Math.floor((remainSec % 3600) / 60);
+      return h > 0 ? `~${h}h${m}m` : `~${m}m`;
+    }
+    return null;
   }
 
   /**
