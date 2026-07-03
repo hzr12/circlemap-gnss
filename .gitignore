@@ -15,3 +15,5 @@ __pycache__/
 
 # changelog — tracked in repo now
 .omo/
+
+.bak_dev_*/
