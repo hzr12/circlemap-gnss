@@ -113,9 +113,10 @@ class App {
         this._watchingBeforeHide = true;
         this._stopWatching();
       }
-      if (this.trail.positions.length > 0) {
-        Storage.saveTrail(this.trail); // 切后台时保存轨迹
-      }
+      // 轨迹保存已停用
+      // if (this.trail.positions.length > 0) {
+      //   Storage.saveTrail(this.trail); // 切后台时保存轨迹
+      // }
     };
     this._pageShowHandler = () => {
       if (this._watchingBeforeHide) {
@@ -302,13 +303,13 @@ class App {
     // —— 清除按钮 ——
     document.getElementById('clear-btn').addEventListener('click', () => this._clearAll());
 
-    // —— 轨迹记录按钮 ——
-    document.getElementById('trail-record-btn').addEventListener('click', () => this._toggleTrailRecording());
-    document.getElementById('trail-pause-btn').addEventListener('click', () => this._toggleTrailPause());
-    document.getElementById('trail-clear-btn').addEventListener('click', () => this._clearTrail());
-    document.getElementById('trail-export-btn').addEventListener('click', () => this._exportGpx());
-    document.getElementById('trail-stats-btn').addEventListener('click', () => this._showTrailStats());
-    document.getElementById('trail-smooth-btn').addEventListener('click', () => this._toggleTrailSmoothing());
+    // —— 轨迹记录按钮（已停用） ——
+    // document.getElementById('trail-record-btn').addEventListener('click', () => this._toggleTrailRecording());
+    // document.getElementById('trail-pause-btn').addEventListener('click', () => this._toggleTrailPause());
+    // document.getElementById('trail-clear-btn').addEventListener('click', () => this._clearTrail());
+    // document.getElementById('trail-export-btn').addEventListener('click', () => this._exportGpx());
+    // document.getElementById('trail-stats-btn').addEventListener('click', () => this._showTrailStats());
+    // document.getElementById('trail-smooth-btn').addEventListener('click', () => this._toggleTrailSmoothing());
     document.getElementById('power-saving-btn').addEventListener('click', () => this._togglePowerSaving());
 
     // —— 对方位置标记（复用坐标输入区） ——
@@ -681,10 +682,10 @@ class App {
 
       // 权限已确认，激活 GNSS 卫星监听
       this.gpsManager.startGnss().then(() => {
-        if (this.gpsManager.hasGnssPlugin) {
+        if (this.gpsManager.isGnssActive) {
           Toast.show(`🛰️ GNSS 卫星数据已激活`);
         }
-      }).catch(() => {});
+      }).catch(err => console.error('[GNSS] unexpected error:', err));
     } catch (err) {
       Toast.show('❌ ' + err.message);
       this._gpsBtn.classList.remove('located');
@@ -1153,10 +1154,10 @@ class App {
 
         // 首次定位成功 → 权限已确认，激活 GNSS 卫星监听
         this.gpsManager.startGnss().then(() => {
-          if (this.gpsManager.hasGnssPlugin) {
+          if (this.gpsManager.isGnssActive) {
             Toast.show(`🛰️ GNSS 卫星数据已激活`);
           }
-        }).catch(() => {});
+        }).catch(err => console.error('[GNSS] unexpected error:', err));
       }
     } else if (this._isWatching) {
       // 用户手动选过中心点 → 不覆盖 center（GPS 只更新自身位置标记）
@@ -1172,23 +1173,23 @@ class App {
       }
     }
 
-    // —— 记录历史轨迹（通过 Trail 模块，#18） ——
-    if (this.trail.isRecording) {
-      const added = this.trail.addPoint({
-        lat: convPos.lat,
-        lng: convPos.lng,
-        wgsLat: pos.lat,
-        wgsLng: pos.lng,
-        time: pos.timestamp || Date.now(),
-        accuracy: pos.accuracy || 0,
-        speed: pos.speed,
-        heading: pos.heading
-      });
-      if (added) {
-        this.mapManager.setTrail(this._getTrailPositions());
-        this._updateTrailUI();
-      }
-    }
+    // —— 记录历史轨迹（通过 Trail 模块，#18）（已停用） ——
+    // if (this.trail.isRecording) {
+    //   const added = this.trail.addPoint({
+    //     lat: convPos.lat,
+    //     lng: convPos.lng,
+    //     wgsLat: pos.lat,
+    //     wgsLng: pos.lng,
+    //     time: pos.timestamp || Date.now(),
+    //     accuracy: pos.accuracy || 0,
+    //     speed: pos.speed,
+    //     heading: pos.heading
+    //   });
+    //   if (added) {
+    //     this.mapManager.setTrail(this._getTrailPositions());
+    //     this._updateTrailUI();
+    //   }
+    // }
 
     // 位移 >N 米才重建圆列表（省性能）
     if (!this._lastDistPos || calcDistance(convPos, this._lastDistPos) > CONFIG.MIN_DISPLACEMENT_M) {
@@ -1426,8 +1427,8 @@ class App {
    * 保存状态到 localStorage（circles + 设置）（#18 委托给 Storage 模块）
    */
   _saveState() {
-    // 轨迹定期保存（始终写入，空数组可清除 localStorage 旧数据）
-    Storage.saveTrail(this.trail);
+    // 轨迹定期保存已停用
+    // Storage.saveTrail(this.trail);
     if (!this._dirty) return;
     this._dirty = false;
     Storage.saveCircles(this.mapManager, this.circleRadius, this.center);
@@ -1472,16 +1473,16 @@ class App {
       }
     }
 
-    // 恢复轨迹数据（独立于 circles，保证有轨迹时总能恢复）
-    const trailData = Storage.loadTrail();
-    if (trailData && Array.isArray(trailData.positions) && trailData.positions.length > 0) {
-      this.trail.positions = trailData.positions;
-      this.trail.lastPos = trailData.positions[trailData.positions.length - 1];
-      this._updateTrailUI();
-      if (trailData.positions.length >= 2) {
-        this.mapManager.setTrail(this._getTrailPositions());
-      }
-    }
+    // 恢复轨迹数据已停用
+    // const trailData = Storage.loadTrail();
+    // if (trailData && Array.isArray(trailData.positions) && trailData.positions.length > 0) {
+    //   this.trail.positions = trailData.positions;
+    //   this.trail.lastPos = trailData.positions[trailData.positions.length - 1];
+    //   this._updateTrailUI();
+    //   if (trailData.positions.length >= 2) {
+    //     this.mapManager.setTrail(this._getTrailPositions());
+    //   }
+    // }
   }
 
   /* ============= 状态 & 信息更新 ============= */
@@ -2034,6 +2035,7 @@ class App {
    * 销毁应用，清理所有定时器和事件监听器
    */
   destroy() {
+    this.gpsManager.destroy(); // 停止 GPS + GNSS + 电池监控
     if (this._intervalId) {
       clearInterval(this._intervalId);
       this._intervalId = null;
