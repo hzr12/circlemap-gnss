@@ -35,6 +35,8 @@ class GPSManager {
 
     // 电量监控
     this._lowBattery = false;
+    this._powerSaving = false;  // 省电模式开关
+    this._powerSavingLocked = false;  // 省电模式锁定（低电量时锁定开启）
     this._initBatteryMonitor();
     this._tryInitGnssPlugin();
   }
@@ -50,16 +52,69 @@ class GPSManager {
         this._lowBattery = battery.level < 0.2;
         if (this._lowBattery && !wasLow) {
           console.warn('[GPS] 电量低于 20%，已降低 GPS 频率');
+          // 低电量时锁定省电模式
+          this._powerSavingLocked = true;
+          if (!this._powerSaving) {
+            this.togglePowerSaving(true);
+          }
           // 仅在刚进入低电量时重启 watchPosition
           if (this.isWatching) {
             this.stopWatching();
             this.startWatching({ enableHighAccuracy: false, timeout: 15000, maximumAge: 15000 });
           }
         }
+        // 充电时解锁省电模式
+        if (!this._lowBattery && this._powerSavingLocked && battery.charging) {
+          this._powerSavingLocked = false;
+          console.log('[GPS] 电量恢复，省电模式已解锁');
+        }
       };
       battery.addEventListener('levelchange', check);
+      battery.addEventListener('chargingchange', check);
       check();
     }).catch(() => {});
+  }
+
+  /**
+   * 切换省电模式
+   * @param {boolean} [force] - 强制设置，不传则切换
+   * @returns {boolean} 当前省电模式状态
+   */
+  togglePowerSaving(force) {
+    // 锁定时不允许关闭
+    if (this._powerSavingLocked && force === false) {
+      console.warn('[GPS] 电量不足，省电模式已锁定');
+      return true;
+    }
+    const next = force !== undefined ? force : !this._powerSaving;
+    if (next === this._powerSaving) return this._powerSaving;
+    this._powerSaving = next;
+    console.log(`[GPS] 省电模式: ${next ? '开启' : '关闭'}`);
+    if (this.isWatching) {
+      this.stopWatching();
+      if (next) {
+        // 省电模式：低精度 + 长超时 + 允许缓存
+        this.startWatching({ enableHighAccuracy: false, timeout: 15000, maximumAge: 15000 });
+      } else {
+        // 标准模式：高精度 + 短超时
+        this.startWatching({ enableHighAccuracy: true, timeout: CONFIG.GPS_WATCH_TIMEOUT, maximumAge: 5000 });
+      }
+    }
+    return this._powerSaving;
+  }
+
+  /**
+   * 获取省电模式状态
+   */
+  get isPowerSaving() {
+    return this._powerSaving;
+  }
+
+  /**
+   * 获取省电模式是否锁定
+   */
+  get isPowerSavingLocked() {
+    return this._powerSavingLocked;
   }
 
   /**
