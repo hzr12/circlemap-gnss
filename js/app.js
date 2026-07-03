@@ -749,6 +749,7 @@ class App {
   _clearTrail() {
     const savedPositions = this.trail.positions.slice();
     const savedLastPos = this.trail.lastPos;
+    const savedRecording = this.trail.isRecording;
 
     this.trail.clear();
     this.mapManager.clearTrail();
@@ -758,6 +759,7 @@ class App {
     this._showUndoToast('轨迹已清除', () => {
       this.trail.positions = savedPositions;
       this.trail.lastPos = savedLastPos;
+      this.trail.isRecording = savedRecording;
       if (savedPositions.length >= 2) {
         this.mapManager.setTrail(this._getTrailPositions());
       }
@@ -1182,6 +1184,7 @@ class App {
 
     } catch (err) {
       console.warn('[AutoRelocate] 重定位失败:', err.message);
+      Toast.show('⚠️ 自动重定位失败');
       // 失败后留待下一个周期再试（依靠 _lastRelocateAttempt 控制频率）
     } finally {
       this._relocating = false;
@@ -1332,12 +1335,7 @@ class App {
     } catch (e) { /* 静默 */ }
     document.documentElement.setAttribute('data-theme', this._theme);
     this.mapManager.setTheme(this._theme);
-    // 等 DOM 就绪后更新按钮图标
-    if (document.readyState !== 'loading') {
-      this._updateThemeBtn();
-    } else {
-      document.addEventListener('DOMContentLoaded', () => this._updateThemeBtn());
-    }
+    this._updateThemeBtn();
   }
 
   /**
