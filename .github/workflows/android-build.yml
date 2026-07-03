@@ -143,7 +143,7 @@ jobs:
           path: native/android/app/build/outputs/apk/debug/circlemap-*.apk
           retention-days: 14
 
-      - name: Publish to GitHub Release (on tag push)
+      - name: Publish to GitHub Release (tag push — 正式版)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
@@ -161,6 +161,41 @@ jobs:
             下载 APK 直接安装到 Android 设备（已签名，小米等设备可直接安装）。
           files: native/android/app/build/outputs/apk/debug/circlemap-*.apk
           generate_release_notes: true
+
+      - name: Publish dev build to release (branch push — 每日构建)
+        if: github.ref_type == 'branch' && !startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          TAG="dev-build"
+          APK_GLOB="native/android/app/build/outputs/apk/debug/circlemap-*.apk"
+
+          # 检查 APK 是否存在
+          APK_FILES=$(ls $APK_GLOB 2>/dev/null || true)
+          if [ -z "$APK_FILES" ]; then
+            echo "⚠️ APK not found at $APK_GLOB — skipping dev release"
+            exit 0
+          fi
+
+          # 删除旧 dev release 和 tag（忽略不存在错误）
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          git tag -f "$TAG" 2>/dev/null || true
+
+          # 创建新 dev release（pre-release 标记）
+          gh release create "$TAG" \
+            --title "Circlemap Dev Build (${{ github.sha }})" \
+            --prerelease \
+            --notes "自动构建于 commit \`${{ github.sha }}\` 分支 \`${{ github.ref_name }}\`
+
+            ⚠️ 此为开发版预发布，可能包含未稳定功能。
+
+            **构建信息**
+            - Commit: ${{ github.sha }}
+            - 分支: ${{ github.ref_name }}
+            - 触发: ${{ github.event_name }}" \
+            $APK_FILES
+
+          echo "✅ Dev release 已更新"
 
       - name: Summarize APK info
         working-directory: native
