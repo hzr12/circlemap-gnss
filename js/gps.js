@@ -18,6 +18,9 @@ class GPSManager {
     this.onWatchStop = null;
     this.onDowngrade = null;   // 降级回调 (timeout) => void
     this.onRecovery = null;    // 恢复回调 (success: boolean) => void
+    this.onPowerSavingChange = null; // 省电模式变更回调 (isOn: boolean) => void
+    this.onCriticalBattery = null;   // 低电量自动停止回调 () => void
+    this.onRestoreTracking = null;   // 电量恢复自动恢复追踪回调 () => void
 
     // GPS 超时降级状态
     this._consecutiveTimeouts = 0;  // 连续超时次数
@@ -396,8 +399,7 @@ class GPSManager {
 
     // 用新参数重启 watchPosition
     if (this.isWatching) {
-      this.stopWatching();
-      this.isWatching = false;
+      this.stopWatching(); // 内部已设置 isWatching = false
       this.startWatching({
         enableHighAccuracy: false,
         timeout: CONFIG.GPS_LOW_ACCURACY_TIMEOUT,
@@ -446,8 +448,7 @@ class GPSManager {
 
       // 用高精度参数重启 watchPosition
       if (this.isWatching) {
-        this.stopWatching();
-        this.isWatching = false;
+        this.stopWatching(); // 内部已设置 isWatching = false
         this.startWatching({
           enableHighAccuracy: true,
           timeout: CONFIG.GPS_WATCH_TIMEOUT,
@@ -574,6 +575,7 @@ class GPSManager {
         if (now - this._lastProcessedTime < this._gpsMinInterval) {
           // 即使节流，也要更新超时检测时间，避免误判超时
           this._lastPositionTime = now;
+          this._consecutiveTimeouts = 0; // 节流丢弃的位置仍视为有效信号，重置超时计数
           return;
         }
         this._lastProcessedTime = now;

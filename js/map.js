@@ -242,11 +242,15 @@ class MapManager {
   }
 
   _redraw() {
+    if (!this.canvas) return; // 防御：destroy 后被调用时直接返回
+    const parent = this.canvas.parentElement;
+    if (!parent) return; // 防御：canvas 已从 DOM 移除
+
     const dpr = window.devicePixelRatio || 1;
     const ctx = this.ctx;
-    const parent = this.canvas.parentElement;
     const w = parent.offsetWidth;
     const h = parent.offsetHeight;
+    if (w === 0 || h === 0) return; // 防御：父容器尺寸为 0（隐藏状态）
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);

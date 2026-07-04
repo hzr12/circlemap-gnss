@@ -15,6 +15,12 @@ class App {
       this._gpsBtn.classList.remove('watching');
       this._gpsBtn.title = '定位到我的位置';
       this._hideSpeedChart();
+      // 清理速度曲线数据，避免重启追踪时显示旧数据（与 _stopWatching 保持一致）
+      this._speedHistory = [];
+      if (this._speedChart) {
+        this._speedChart.data.datasets[0].data = [];
+        this._speedChart.update('none');
+      }
     };
     this.gpsManager.onPowerSavingChange = (isOn) => {
       const btn = document.getElementById('power-saving-btn');
@@ -51,6 +57,8 @@ class App {
     this._isManualPosition = false;   // #13 是否手动设置的位置
     this._manualCenter = false;       // 用户是否通过点击/输入手动设过中心点
     this._dirty = false;              // 是否有未持久化的状态变更
+    this._trailDirty = false;         // 轨迹是否有未持久化的变更
+    this._lastGcj02ErrorToast = 0;    // 坐标转换失败 Toast 防抖时间戳
     this._intervalId = null;          // 定时刷新 interval ID
     this._resizeHandler = null;       // 地图 resize 事件处理器引用
     this._visibilityHandler = null;   // visibilitychange 处理器引用
@@ -60,6 +68,12 @@ class App {
     this._lastAltitude = null;        // 上次海拔（米）
     this._batteryLevel = null;        // 电池电量（0-1）
     this._batteryCharging = false;    // 是否在充电
+    this._battery = null;             // BatteryManager 引用（用于清理）
+    this._batteryLevelHandler = null;        // levelchange 处理器引用
+    this._batteryChargingHandler = null;     // chargingchange 处理器引用
+    this._batteryTimeHandler = null;         // dischargingtimechange 处理器引用
+    this._panelMediaQuery = null;     // 面板折叠响应式查询引用
+    this._panelMediaqueryChange = null; // mediaquery change 处理器引用
     this._lastCalcPos = null;         // 上一个连续定位位置（用于自行计算速度）
     this._lastCalcTime = null;        // 上一个连续定位时间戳
     this._lastAccuracy = null;        // 最近一次定位精度（米），用于精度圈范围判断
@@ -89,10 +103,11 @@ class App {
       this._bottomPanel.classList.add('collapsed');
     }
     this._panelMediaQuery = window.matchMedia(`(max-width: ${CONFIG.MOBILE_BREAKPOINT}px)`);
-    this._panelMediaQuery.addEventListener('change', (e) => {
+    this._panelMediaqueryChange = (e) => {
       this._panelCollapsed = e.matches;
       this._bottomPanel.classList.toggle('collapsed', e.matches);
-    });
+    };
+    this._panelMediaQuery.addEventListener('change', this._panelMediaqueryChange);
 
     // 读取 URL 参数
     this._checkUrlParams();
@@ -769,6 +784,13 @@ class App {
     this._prevDistances = {};
     this._hideSpeedChart();
 
+    // 清理速度曲线数据，避免重启追踪时显示旧数据
+    this._speedHistory = [];
+    if (this._speedChart) {
+      this._speedChart.data.datasets[0].data = [];
+      this._speedChart.update('none');
+    }
+
     this._gpsBtn.classList.remove('watching');
     this._gpsBtn.title = '定位到我的位置';
 
@@ -876,16 +898,19 @@ class App {
     const savedPositions = this.trail.positions.slice();
     const savedLastPos = this.trail.lastPos;
     const savedRecording = this.trail.isRecording;
+    const savedPaused = this.trail.isPaused;
 
     this.trail.clear();
     this.mapManager.clearTrail();
     this._updateTrailUI();
+    this._trailDirty = true;
     Storage.saveTrail(this.trail); // 清除持久化
 
     this._showUndoToast('轨迹已清除', () => {
       this.trail.positions = savedPositions;
       this.trail.lastPos = savedLastPos;
       this.trail.isRecording = savedRecording;
+      this.trail.isPaused = savedPaused;
       if (savedPositions.length >= 2) {
         this.mapManager.setTrail(this._getTrailPositions());
       }
@@ -900,6 +925,7 @@ class App {
   _toggleTrailRecording() {
     if (this.trail.isRecording) {
       this.trail.stop();
+      this._trailDirty = true;
       Storage.saveTrail(this.trail); // 停止时保存最终轨迹
       Toast.show('⏹ 轨迹记录已停止');
     } else {
@@ -917,6 +943,7 @@ class App {
     if (!this.trail.isRecording) return;
     if (this.trail.isPaused) {
       this.trail.resume();
+      this._trailDirty = true;
       Toast.show('▶ 轨迹记录已继续');
     } else {
       this.trail.pause();
@@ -1294,6 +1321,7 @@ class App {
         heading: pos.heading
       });
       if (added) {
+        this._trailDirty = true;
         this.mapManager.setTrail(this._getTrailPositions());
         this._updateTrailUI();
       }
@@ -1313,6 +1341,11 @@ class App {
     }
     } catch (e) {
       console.error('_processPosition error:', e.message);
+      // 转换失败时通知用户（30秒内不重复提示）
+      if (!this._lastGcj02ErrorToast || Date.now() - this._lastGcj02ErrorToast > 30000) {
+        this._lastGcj02ErrorToast = Date.now();
+        Toast.show('⚠️ 坐标转换失败，位置未更新');
+      }
     }
   }
 
@@ -1398,9 +1431,11 @@ class App {
   _clearAll() {
     const savedCircles = this.mapManager.circles.slice();
     const savedSelectedId = this.mapManager.selectedCircleId;
+    const savedPrevDistances = { ...this._prevDistances };
 
     this.mapManager.clearCircles();
     document.getElementById('infoArea').classList.add('hidden');
+    this._prevDistances = {}; // 清理趋势缓存，避免 ID 意外碰撞时有残留数据
     this._updateCircleList(true);
     this._updateStatusBar(true);
     this._dirty = true;
@@ -1409,6 +1444,7 @@ class App {
     this._showUndoToast('已清除全部', () => {
       this.mapManager.circles = savedCircles;
       this.mapManager.selectedCircleId = savedSelectedId;
+      this._prevDistances = savedPrevDistances;
       if (savedSelectedId != null) {
         this._setRadiusSliderValue(
           this.mapManager.circles.find(c => c.id === savedSelectedId)?.maxRadius || CONFIG.DEFAULT_RADIUS
@@ -1509,11 +1545,30 @@ class App {
     this._theme = this._theme === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', this._theme);
     this.mapManager.setTheme(this._theme);
+    this._updateChartTheme(); // 同步更新速度曲线主题色
     try {
       localStorage.setItem('circlemap_theme', this._theme);
     } catch (e) { /* 静默 */ }
     this._updateThemeBtn();
     Toast.show(this._theme === 'light' ? '☀️ 已切换为浅色主题' : '🌙 已切换为深色主题');
+  }
+
+  /**
+   * 更新速度曲线（Chart.js）的主题色，跟随全局 _theme 变化
+   */
+  _updateChartTheme() {
+    if (!this._speedChart) return;
+    const isDark = this._theme === 'dark';
+    const gridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
+    const textColor = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)';
+    const scales = this._speedChart.options.scales;
+    if (scales?.x?.ticks) scales.x.ticks.color = textColor;
+    if (scales?.x?.title) scales.x.title.color = textColor;
+    if (scales?.x?.grid) scales.x.grid.color = gridColor;
+    if (scales?.y?.ticks) scales.y.ticks.color = textColor;
+    if (scales?.y?.title) scales.y.title.color = textColor;
+    if (scales?.y?.grid) scales.y.grid.color = gridColor;
+    this._speedChart.update('none');
   }
 
   /**
@@ -1535,8 +1590,11 @@ class App {
    * 保存状态到 localStorage（circles + 设置）（#18 委托给 Storage 模块）
    */
   _saveState() {
-    // 轨迹定期保存
-    Storage.saveTrail(this.trail);
+    // 轨迹仅在有变更时保存
+    if (this._trailDirty) {
+      this._trailDirty = false;
+      Storage.saveTrail(this.trail);
+    }
     if (!this._dirty) return;
     this._dirty = false;
     Storage.saveCircles(this.mapManager, this.circleRadius, this.center);
@@ -1850,6 +1908,7 @@ class App {
   _initBattery() {
     if (!navigator.getBattery) return;
     navigator.getBattery().then(battery => {
+      this._battery = battery;
       this._batteryLevel = battery.level;
       this._batteryCharging = battery.charging;
       this._batteryTime = battery.dischargingTime; // 剩余时间（秒），Infinity 表示充电中
@@ -1859,7 +1918,7 @@ class App {
       this._batteryLastLevel = battery.level;
       this._batteryLastTime = Date.now();
 
-      battery.addEventListener('levelchange', () => {
+      this._batteryLevelHandler = () => {
         const now = Date.now();
         const dt = (now - this._batteryLastTime) / 1000; // 秒
         const dl = this._batteryLastLevel - battery.level;
@@ -1877,19 +1936,34 @@ class App {
         if (battery.level <= 0.15 && !battery.charging) {
           Toast.show('电量不足 15%，建议开启省电模式');
         }
-      });
+      };
+      battery.addEventListener('levelchange', this._batteryLevelHandler);
 
-      battery.addEventListener('chargingchange', () => {
+      this._batteryChargingHandler = () => {
         this._batteryCharging = battery.charging;
         this._batteryTime = battery.dischargingTime;
         this._updateStatusBar(true);
-      });
+      };
+      battery.addEventListener('chargingchange', this._batteryChargingHandler);
 
-      battery.addEventListener('dischargingtimechange', () => {
+      this._batteryTimeHandler = () => {
         this._batteryTime = battery.dischargingTime;
         this._updateStatusBar(true);
-      });
+      };
+      battery.addEventListener('dischargingtimechange', this._batteryTimeHandler);
     }).catch(() => {});
+  }
+
+  _cleanupBattery() {
+    if (this._battery) {
+      if (this._batteryLevelHandler) this._battery.removeEventListener('levelchange', this._batteryLevelHandler);
+      if (this._batteryChargingHandler) this._battery.removeEventListener('chargingchange', this._batteryChargingHandler);
+      if (this._batteryTimeHandler) this._battery.removeEventListener('dischargingtimechange', this._batteryTimeHandler);
+      this._battery = null;
+      this._batteryLevelHandler = null;
+      this._batteryChargingHandler = null;
+      this._batteryTimeHandler = null;
+    }
   }
 
   /**
@@ -2173,6 +2247,18 @@ class App {
    */
   destroy() {
     this.gpsManager.destroy(); // 停止 GPS + GNSS + 电池监控
+    // 清理 Chart.js 实例（必须显式销毁，否则会泄漏 canvas 引用 + 动画帧）
+    if (this._speedChart) {
+      this._speedChart.destroy();
+      this._speedChart = null;
+    }
+    // 清理电池事件监听器
+    this._cleanupBattery();
+    // 清理 mediaQuery 监听器
+    if (this._panelMediaQuery && this._panelMediaqueryChange) {
+      this._panelMediaQuery.removeEventListener('change', this._panelMediaqueryChange);
+      this._panelMediaqueryChange = null;
+    }
     if (this._intervalId) {
       clearInterval(this._intervalId);
       this._intervalId = null;
