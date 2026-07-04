@@ -704,8 +704,7 @@ class App {
     this._isWatching = true;
     this._firstFix = true;
     this._manualCenter = false; // 重新开启 GPS 追踪 → 取消手动锁定
-    this._speedTrackingStart = Date.now();
-    this._speedHistory = [];
+    if (!this._speedHistory.length) this._speedTrackingStart = Date.now();
     this._showSpeedChart();
 
     this._gpsBtn.classList.add('watching');
