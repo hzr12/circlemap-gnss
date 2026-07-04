@@ -1640,21 +1640,11 @@ class App {
     let gnssHtml = '';
     if (this.gpsManager.hasGnssPlugin) {
       if (this.gpsManager.gnssVisibleCount > 0) {
-        const usedStats = this.gpsManager.gnssUsedConstellationStats;
-        const visibleStats = this.gpsManager.gnssConstellationStats;
-        const usedParts = [];
-        if (usedStats.gps > 0) usedParts.push(`GPS:${usedStats.gps}`);
-        if (usedStats.beidou > 0) usedParts.push(`BD:${usedStats.beidou}`);
-        if (usedStats.glonass > 0) usedParts.push(`GLONASS:${usedStats.glonass}`);
-        if (usedStats.galileo > 0) usedParts.push(`GAL:${usedStats.galileo}`);
-        const visibleParts = [];
-        if (visibleStats.gps > 0) visibleParts.push(`GPS:${visibleStats.gps}`);
-        if (visibleStats.beidou > 0) visibleParts.push(`BD:${visibleStats.beidou}`);
-        if (visibleStats.glonass > 0) visibleParts.push(`GLONASS:${visibleStats.glonass}`);
-        if (visibleStats.galileo > 0) visibleParts.push(`GAL:${visibleStats.galileo}`);
+        const used = this.gpsManager.gnssUsedCount;
+        const visible = this.gpsManager.gnssVisibleCount;
         const snr = this.gpsManager.gnssAvgSnr;
-        gnssHtml = `<span class="gnss-indicator" title="参与定位 ${this.gpsManager.gnssUsedCount}/${this.gpsManager.gnssVisibleCount}, 平均信噪比 ${snr.toFixed(0)}dB-Hz">` +
-          `🛰️ 定位:${usedParts.join(' ')} 可见:${visibleParts.join(' ')} ${snr.toFixed(0)}dB</span>`;
+        gnssHtml = `<span class="gnss-indicator" title="参与定位 ${used}/${visible}, 平均信噪比 ${snr.toFixed(0)}dB-Hz">` +
+          `🛰️ ${used}/${visible} ${snr.toFixed(0)}dB</span>`;
       } else {
         gnssHtml = `<span class="gnss-indicator" style="opacity:0.5">🛰️ 等待卫星...</span>`;
       }
