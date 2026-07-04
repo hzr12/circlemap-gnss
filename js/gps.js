@@ -276,6 +276,12 @@ class GPSManager {
       }
       try {
         const data = await this._gnssPlugin.getLastGnssData();
+        // 关键：await 之后再 re-check，stopGnss() 可能在我们 yield 期间清空了状态，
+        // 此时任何回写都会让 _gnssSatellites 显示陈旧数据
+        if (!this._gnssListeningStarted || !this._gnssPlugin) {
+          this._stopGnssPollFallback();
+          return;
+        }
         if (data && data.satellites && data.satellites.length > 0) {
           this._gnssSatellites = data.satellites;
           console.log('[GPS] GNSS 轮询兜底：收到卫星数:', data.satellites.length);

@@ -129,9 +129,15 @@ public class GnssDataPlugin extends Plugin {
         } catch (SecurityException e) {
             // 真的没权限时 LocationManager 会抛这个
             Log.w(TAG, "SecurityException during GNSS start: " + e.getMessage());
+            // 清理可能已成功注册的部分（registerGnssCallback 可能已注册 GnssStatus callback）
+            unregisterGnssCallback();
+            unregisterNmeaListener();
             call.reject("Location permission denied: " + e.getMessage(), "PERMISSION_DENIED");
         } catch (Exception e) {
             Log.e(TAG, "Failed to start GNSS listening", e);
+            // 同上，catch-all 路径也清理
+            unregisterGnssCallback();
+            unregisterNmeaListener();
             call.reject("Failed to start GNSS listening: " + e.getMessage(), "UNKNOWN_ERROR");
         }
     }
