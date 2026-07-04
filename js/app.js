@@ -1644,7 +1644,7 @@ class App {
         const visible = this.gpsManager.gnssVisibleCount;
         const snr = this.gpsManager.gnssAvgSnr;
         gnssHtml = `<span class="gnss-indicator" title="参与定位 ${used}/${visible}, 平均信噪比 ${snr.toFixed(0)}dB-Hz">` +
-          `🛰️ ${used}/${visible} ${snr.toFixed(0)}dB</span>`;
+          `🛰️ 定位:${used} 可见:${visible} 信噪比:${snr.toFixed(0)}dB</span>`;
       } else {
         gnssHtml = `<span class="gnss-indicator" style="opacity:0.5">🛰️ 等待卫星...</span>`;
       }
