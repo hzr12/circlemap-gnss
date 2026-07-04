@@ -1,4 +1,4 @@
-name: Build Android APK (GNSS Plugin)
+﻿name: Build Android APK (GNSS Plugin)
 
 on:
   push:
@@ -64,6 +64,11 @@ jobs:
         working-directory: native
         run: npx cap add android || true
 
+      - name: Copy web assets to native/web/
+        run: |
+          mkdir -p native/web
+          cp -R index.html js css native/web/
+          ls -la native/web/
       - name: Sync web assets to Android project
         working-directory: native
         run: npx cap sync android
@@ -162,15 +167,13 @@ jobs:
           body: |
             ## Circlemap ${{ github.ref_name }}
 
-            ### 包含
-            - 腾讯地图同心圆（Canvas 叠加层）
-            - GNSS 卫星数据显示（GPS/北斗/GLONASS/Galileo）
-            - 轨迹记录 + GPX 导出
-            - 深色/浅色主题
+            ### 鍖呭惈
+            - 鑵捐鍦板浘鍚屽績鍦嗭紙Canvas 鍙犲姞灞傦級
+            - GNSS 鍗槦鏁版嵁鏄剧ず锛圙PS/鍖楁枟/GLONASS/Galileo锛?            - 杞ㄨ抗璁板綍 + GPX 瀵煎嚭
+            - 娣辫壊/娴呰壊涓婚
 
-            ### 安装
-            下载 APK 直接安装到 Android 设备（已签名，小米等设备可直接安装）。
-          files: native/android/app/build/outputs/apk/debug/circlemap-*.apk
+            ### 瀹夎
+            涓嬭浇 APK 鐩存帴瀹夎鍒?Android 璁惧锛堝凡绛惧悕锛屽皬绫崇瓑璁惧鍙洿鎺ュ畨瑁咃級銆?          files: native/android/app/build/outputs/apk/debug/circlemap-*.apk
           generate_release_notes: true
 
       - name: Publish dev build to release (branch push = dev build)
@@ -190,14 +193,13 @@ jobs:
             --target "${{ github.sha }}" \
             --title "Circlemap Dev Build (${{ github.sha }})" \
             --prerelease \
-            --notes "自动构建，commit \`${{ github.sha }}\` 分支 \`${{ github.ref_name }}\`
+            --notes "鑷姩鏋勫缓锛宑ommit \`${{ github.sha }}\` 鍒嗘敮 \`${{ github.ref_name }}\`
 
-            此为开发版预发布，可能包含未稳定功能。
-
-            **构建信息**
+            姝や负寮€鍙戠増棰勫彂甯冿紝鍙兘鍖呭惈鏈ǔ瀹氬姛鑳姐€?
+            **鏋勫缓淇℃伅**
             - Commit: ${{ github.sha }}
-            - 分支: ${{ github.ref_name }}
-            - 触发: ${{ github.event_name }}" \
+            - 鍒嗘敮: ${{ github.ref_name }}
+            - 瑙﹀彂: ${{ github.event_name }}" \
             $APK_FILES
           echo "Dev release updated"
 
@@ -211,7 +213,7 @@ jobs:
               if [ -f "$f" ]; then
                 SIZE=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null)
                 SIZE_MB=$(echo "scale=2; $SIZE/1048576" | bc)
-                echo "- \`$(basename "$f")\` ${SIZE_MB}MB (已签名)" >> $GITHUB_STEP_SUMMARY
+                echo "- \`$(basename "$f")\` ${SIZE_MB}MB (宸茬鍚?" >> $GITHUB_STEP_SUMMARY
               fi
             done
           else
