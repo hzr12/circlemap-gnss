@@ -1,4 +1,4 @@
-﻿name: Build Android APK (GNSS Plugin)
+﻿name: 构建 Android APK（GNSS 插件）
 
 on:
   push:
@@ -17,22 +17,22 @@ permissions:
 
 jobs:
   build:
-    name: Build debug APK
+    name: 构建调试版 APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      - name: Checkout
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: Cache npm dependencies
+      - name: 缓存 npm 依赖
         uses: actions/cache@v4
         with:
           path: native/node_modules
           key: npm-${{ hashFiles('native/package-lock.json') }}
           restore-keys: npm-
 
-      - name: Cache Gradle
+      - name: 缓存 Gradle
         uses: actions/cache@v4
         with:
           path: |
@@ -41,74 +41,72 @@ jobs:
           key: gradle-${{ hashFiles('native/android/**/*.gradle') }}
           restore-keys: gradle-
 
-      - name: Setup Node.js
+      - name: 配置 Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Setup Java
+      - name: 配置 Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 21
 
-      - name: Install native project dependencies
+      - name: 安装原生项目依赖
         working-directory: native
         run: npm install --no-audit --no-fund
 
-      - name: Build GNSS plugin (TypeScript to JS)
+      - name: 构建 GNSS 插件（TypeScript → JS）
         working-directory: native/gnss-plugin
         run: npx tsc
 
-      - name: Add Android platform
+      - name: 添加 Android 平台
         working-directory: native
         run: npx cap add android || true
 
-      - name: Copy web assets to native/web/
+      - name: 复制 Web 资源到 native/web/
         run: |
           mkdir -p native/web
           cp -R index.html js css native/web/
           ls -la native/web/
-      - name: Sync web assets to Android project
+
+      - name: 同步 Web 资源到 Android 项目
         working-directory: native
         run: npx cap sync android
 
-      - name: Integrate local GNSS plugin into Android project
+      - name: 集成 GNSS 插件到 Android 项目
         working-directory: native
         run: |
-          # -- 1. Add module include to settings.gradle --
           echo "" >> android/settings.gradle
           echo "// GNSS data plugin" >> android/settings.gradle
           echo "include ':gnss-data-plugin'" >> android/settings.gradle
           echo "project(':gnss-data-plugin').projectDir = new File('../gnss-plugin/android')" >> android/settings.gradle
 
-          # -- 2. Add dependency to app/build.gradle --
           sed -i "s|implementation project(':capacitor-android')|implementation project(':capacitor-android')\n    implementation project(':gnss-data-plugin')|" android/app/build.gradle
 
           echo "--- settings.gradle (tail) ---"
           tail -5 android/settings.gradle
-
           echo "--- app/build.gradle dependencies ---"
           grep -A2 "gnss-data-plugin" android/app/build.gradle || echo "(checking insert location)"
 
-      - name: Ensure location permissions in app manifest
+      - name: 确保 Manifest 包含定位权限
         working-directory: native
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           if ! grep -q "android.hardware.location.gps" "$MANIFEST"; then
             sed -i '/<\/manifest>/i \ \ \ \ <uses-feature android:name="android.hardware.location.gps" />' "$MANIFEST"
-            echo "+ Added GPS feature to manifest"
+            echo "+ 已添加 GPS feature"
           fi
           if ! grep -q "ACCESS_FINE_LOCATION" "$MANIFEST"; then
             sed -i '/<\/manifest>/i \ \ \ \ <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />' "$MANIFEST"
-            echo "+ Added ACCESS_FINE_LOCATION to manifest"
+            echo "+ 已添加 ACCESS_FINE_LOCATION"
           fi
 
-      - name: Build debug APK
+      - name: 构建调试版 APK
         working-directory: native/android
         run: ./gradlew assembleDebug --no-daemon
 
-      - name: Sign APK with release keystore
+      - name: 签名 APK
         run: |
           KEYSTORE="native/circlemap.keystore"
           APK="native/android/app/build/outputs/apk/debug/app-debug.apk"
@@ -119,12 +117,11 @@ jobs:
           fi
           APK_SIGNED="native/android/app/build/outputs/apk/debug/circlemap-v${VERSION}.apk"
           if [ ! -f "$APK" ]; then
-            echo "APK not found, skipping sign"
+            echo "APK 不存在，跳过签名"
             exit 0
           fi
-          # Auto-detect latest build-tools version
           BT_DIR=$(ls "${ANDROID_HOME}/build-tools/" | sort -V | tail -1)
-          echo "Using build-tools $BT_DIR"
+          echo "使用 build-tools $BT_DIR"
           "${ANDROID_HOME}/build-tools/${BT_DIR}/zipalign" -p -f 4 "$APK" "$APK_SIGNED"
           "${ANDROID_HOME}/build-tools/${BT_DIR}/apksigner" sign \
             --ks "$KEYSTORE" \
@@ -132,34 +129,34 @@ jobs:
             --ks-pass pass:circlemap123 \
             --key-pass pass:circlemap123 \
             "$APK_SIGNED"
-          echo "Signed APK: $APK_SIGNED"
+          echo "签名完成: $APK_SIGNED"
 
-      - name: Verify GNSS plugin classes in APK
+      - name: 验证 APK 中的 GNSS 插件类
         working-directory: native
         run: |
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
           if [ ! -f "$APK" ]; then
-            echo "APK not found at $APK, skipping verification"
-            echo "::notice title=GNSS Verify::APK not found, skipping class verification"
+            echo "APK 不存在，跳过验证"
+            echo "::notice title=GNSS 验证::APK 不存在，跳过类验证"
             exit 0
           fi
           if unzip -l "$APK" 2>/dev/null | grep -qi "GnssData"; then
-            echo "## GNSS plugin classes verified in APK" >> $GITHUB_STEP_SUMMARY
-            echo "Found GnssData class in APK" | tee -a $GITHUB_STEP_SUMMARY
+            echo "## GNSS 插件类已验证" >> $GITHUB_STEP_SUMMARY
+            echo "在 APK 中找到 GnssData 类" | tee -a $GITHUB_STEP_SUMMARY
           else
-            echo "## GNSS plugin classes NOT found in APK" >> $GITHUB_STEP_SUMMARY
-            echo "The plugin may not have been linked into the build." >> $GITHUB_STEP_SUMMARY
-            echo "Check the Integrate step logs for insertion errors." >> $GITHUB_STEP_SUMMARY
+            echo "## ⚠️ 未找到 GNSS 插件类" >> $GITHUB_STEP_SUMMARY
+            echo "插件可能未被链接到构建中。" >> $GITHUB_STEP_SUMMARY
+            echo "请检查集成步骤的日志。" >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Upload APK artifact
+      - name: 上传 APK 产物
         uses: actions/upload-artifact@v4
         with:
           name: circlemap-gnss-debug
           path: native/android/app/build/outputs/apk/debug/circlemap-*.apk
           retention-days: 14
 
-      - name: Publish to GitHub Release (tag push = release)
+      - name: 发布正式版到 GitHub Release（tag 推送）
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
@@ -167,16 +164,18 @@ jobs:
           body: |
             ## Circlemap ${{ github.ref_name }}
 
-            ### 鍖呭惈
-            - 鑵捐鍦板浘鍚屽績鍦嗭紙Canvas 鍙犲姞灞傦級
-            - GNSS 鍗槦鏁版嵁鏄剧ず锛圙PS/鍖楁枟/GLONASS/Galileo锛?            - 杞ㄨ抗璁板綍 + GPX 瀵煎嚭
-            - 娣辫壊/娴呰壊涓婚
+            ### 包含
+            - 腾讯地图同心圆（Canvas 叠加层）
+            - GNSS 卫星数据显示（GPS/北斗/GLONASS/Galileo）
+            - 轨迹记录 + GPX 导出
+            - 深色/浅色主题
 
-            ### 瀹夎
-            涓嬭浇 APK 鐩存帴瀹夎鍒?Android 璁惧锛堝凡绛惧悕锛屽皬绫崇瓑璁惧鍙洿鎺ュ畨瑁咃級銆?          files: native/android/app/build/outputs/apk/debug/circlemap-*.apk
+            ### 安装
+            下载 APK 直接安装到 Android 设备（已签名，小米等设备可直接安装）。
+          files: native/android/app/build/outputs/apk/debug/circlemap-*.apk
           generate_release_notes: true
 
-      - name: Publish dev build to release (branch push = dev build)
+      - name: 发布开发版到 GitHub Release（分支推送）
         if: github.ref_type == 'branch' && !startsWith(github.ref, 'refs/tags/v')
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -185,37 +184,38 @@ jobs:
           APK_GLOB="native/android/app/build/outputs/apk/debug/circlemap-*.apk"
           APK_FILES=$(ls $APK_GLOB 2>/dev/null || true)
           if [ -z "$APK_FILES" ]; then
-            echo "APK not found at $APK_GLOB, skipping dev release"
+            echo "APK 不存在，跳过开发版发布"
             exit 0
           fi
           gh release delete "$TAG" --yes 2>/dev/null || true
           gh release create "$TAG" \
             --target "${{ github.sha }}" \
-            --title "Circlemap Dev Build (${{ github.sha }})" \
+            --title "Circlemap 开发版 (${{ github.sha }})" \
             --prerelease \
-            --notes "鑷姩鏋勫缓锛宑ommit \`${{ github.sha }}\` 鍒嗘敮 \`${{ github.ref_name }}\`
+            --notes "自动构建，commit \`${{ github.sha }}\` 分支 \`${{ github.ref_name }}\`
 
-            姝や负寮€鍙戠増棰勫彂甯冿紝鍙兘鍖呭惈鏈ǔ瀹氬姛鑳姐€?
-            **鏋勫缓淇℃伅**
+            此为开发版预发布，可能包含未稳定功能。
+
+            **构建信息**
             - Commit: ${{ github.sha }}
-            - 鍒嗘敮: ${{ github.ref_name }}
-            - 瑙﹀彂: ${{ github.event_name }}" \
+            - 分支: ${{ github.ref_name }}
+            - 触发: ${{ github.event_name }}" \
             $APK_FILES
-          echo "Dev release updated"
+          echo "开发版已更新"
 
-      - name: Summarize APK info
+      - name: 汇总 APK 信息
         working-directory: native
         run: |
           APK_PATH="android/app/build/outputs/apk/debug"
           if [ -d "$APK_PATH" ]; then
-            echo "## APK built successfully" >> $GITHUB_STEP_SUMMARY
+            echo "## APK 构建成功" >> $GITHUB_STEP_SUMMARY
             for f in "$APK_PATH"/circlemap-*.apk; do
               if [ -f "$f" ]; then
                 SIZE=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null)
                 SIZE_MB=$(echo "scale=2; $SIZE/1048576" | bc)
-                echo "- \`$(basename "$f")\` ${SIZE_MB}MB (宸茬鍚?" >> $GITHUB_STEP_SUMMARY
+                echo "- \`$(basename "$f")\` ${SIZE_MB}MB（已签名）" >> $GITHUB_STEP_SUMMARY
               fi
             done
           else
-            echo "## APK not found" >> $GITHUB_STEP_SUMMARY
+            echo "## APK 不存在" >> $GITHUB_STEP_SUMMARY
           fi
