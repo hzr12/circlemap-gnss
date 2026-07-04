@@ -73,6 +73,12 @@ class GPSManager {
             this.startWatching({ enableHighAccuracy: false, timeout: 15000, maximumAge: 15000 });
           }
         }
+        // 电量 < 10%：自动停止追踪
+        if (battery.level < 0.1 && this.isWatching) {
+          console.warn('[GPS] 电量低于 10%，自动停止追踪');
+          this.stopWatching();
+          if (this.onCriticalBattery) this.onCriticalBattery();
+        }
         // 充电时解锁省电模式
         if (!this._lowBattery && this._powerSavingLocked && battery.charging) {
           this._powerSavingLocked = false;

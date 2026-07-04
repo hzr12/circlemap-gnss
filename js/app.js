@@ -9,6 +9,13 @@ class App {
   constructor() {
     this.mapManager = new MapManager();
     this.gpsManager = new GPSManager();
+    this.gpsManager.onCriticalBattery = () => {
+      Toast.show('🔴 电量不足 10%，追踪已自动停止');
+      this._isWatching = false;
+      this._gpsBtn.classList.remove('watching');
+      this._gpsBtn.title = '定位到我的位置';
+      this._hideSpeedChart();
+    };
     this.circleRadius = CONFIG.DEFAULT_RADIUS;
     this.center = null;          // 当前标记位置
     this.myPosition = null;      // 我的位置（GCJ-02，由 GPS 定位设置）
@@ -1770,6 +1777,7 @@ class App {
    */
   _fetchWeather() {
     if (!navigator.onLine) return;
+    if (this.gpsManager.isPowerSaving) return; // 省电模式下跳过天气请求
     const pos = this.myPosition;
     const lat = pos?.lat ?? 39.9;
     const lng = pos?.lng ?? 116.4;
