@@ -469,6 +469,36 @@ input[type="number"] {
   white-space: nowrap; /* 保持每一行小块不拆字 */
 }
 
+/* 底部独立卫星 bar：与上方 panel-body 用分割条隔开 */
+.gnss-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  padding: 8px 12px 10px;
+  margin: 6px 12px 8px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  min-height: 18px;
+  text-align: center;
+  word-break: break-word;
+}
+
+.gnss-bar:empty {
+  display: none; /* 没有原生 GNSS 插件时（web/ios）整条 bar 隐藏 */
+}
+
+.gnss-bar .gnss-indicator {
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+}
+
 .gps-tracking {
   color: var(--accent-1);
   animation: trackingBlink 1.5s ease-in-out infinite;

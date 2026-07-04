@@ -353,6 +353,9 @@ class App {
     this._statusEl.addEventListener('click', () => this._toggleFollowMode());
     this._statusEl.style.cursor = 'pointer';
 
+    // —— GNSS 卫星显示：始终在面板最底部的独立 bar ——
+    this._gnssBarEl = document.getElementById('gnss-bar');
+
     // —— GPS 按钮：短按单次定位，长按切换持续追踪 ——
     let pressTimer = null;
     let isLongPress = false;
@@ -1494,6 +1497,8 @@ class App {
     if (!this._statusEl) return;
     if (!this.myPosition) {
       this._statusEl.innerHTML = '<div class="gps-line1"><span class="gps-dot"></span><span class="gps-offline">⊙ 未定位，点击 GPS 按钮定位</span></div>';
+      // 未定位时清空底部卫星 bar，避免上一次 '等待卫星...' 残留
+      if (this._gnssBarEl) this._gnssBarEl.innerHTML = '';
       return;
     }
     // 节流：不强制刷新时跳过高频调用
@@ -1571,10 +1576,9 @@ class App {
         `</span>`;
     }
 
-    // 第二行：信号 + 卫星 + 速度 + 海拔 + 最近圆
+    // 第二行：信号 + 速度 + 海拔 + 最近圆（GNSS 数据已移到底部独立 gnss-bar 不再放这行）
     const line2Parts = [];
     if (signalHtml) line2Parts.push(signalHtml);
-    if (gnssHtml) line2Parts.push(gnssHtml);
     if (this._lastSpeed != null) {
       const kmh = this._lastSpeed * 3.6;
       line2Parts.push(`<span class="gps-speed">${kmh.toFixed(1)}km/h</span>`);
@@ -1598,6 +1602,11 @@ class App {
       `<div class="gps-line1"><span class="${dotClass}"></span><span class="gps-online">${isManual ? '📍' : '◉'} 已定位</span>${degradedIcon}${manualIcon}${watchingIcon}${followIcon} <span class="gps-elapsed">(${elapsed})</span>${staleIcon}</div>` +
       `<div class="gps-line2">${line2}</div>` +
       line3;
+
+    // 底部卫星 bar：独立渲染
+    if (this._gnssBarEl) {
+      this._gnssBarEl.innerHTML = gnssHtml || '';
+    }
   }
 
   /**
