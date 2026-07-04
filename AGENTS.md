@@ -6,9 +6,17 @@
 
 - **`dev` 是主开发分支，永远不要删除 `dev` 分支**
 - 所有新功能、bug 修复都在 `dev` 上开发
-- `dev` 分支只接受web更新
+- `dev` 分支只接受web更新，以后有新的web内容直接同步
 - PR 合并到 `main` 时**不要**使用 `--delete-branch` 参数
 - `main` 只接受从 `dev` 合并，不在 `main` 上直接提交
+
+### 三段式分支架构
+| 分支 | 角色 | 内容 | 提交 |
+|---|---|---|---|
+| `dev` | web-only 主线 | 仅 `index.html`、`js/**`、`css/**`、`AGENTS.md` 等浏览器可运行文件 | web-only 改动可直接合入；不接受 `native/**` 与 `.github/workflows/**` |
+| `feature/*` | 原生端分支 | 含完整 `native/gnss-plugin/**`、`native/capacitor.config.json`、CI 配置 | GNnative/ 改动完成后手动将 web-only 部分 cherry-pick / checkout 到 `dev` |
+| `main` | 正式发布线 | 仅接受从 `dev` 合并；不允许直接提交 | 由用户手动从 `dev` PR；不含发布 APK 标签的功能提交 |
+| `vX.Y.Z` tag | 正式版快照 | 指向特定 `feature/*` 的发布 commit | `git tag -a vX.Y.Z <feature/... HEAD> && git push origin vX.Y.Z` 触发 GH Actions Release 流程 |
 
 ## 首个命令
 
