@@ -224,12 +224,14 @@ class GPSManager {
       this._gnssListeningStarted = true;
       this._gnssInitError = null;
       console.log('[GPS] GNSS 插件已激活，卫星数据可用');
+      Toast.show('🛰️ GNSS 启动，等待卫星...');
 
       // 兜底轮询：前 15 秒每 2 秒主动拉取一次，防止事件丢失
       this._startGnssPollFallback();
     } catch (err) {
       this._gnssInitError = err.message || 'start_failed';
       console.warn('[GPS] GNSS 插件激活失败:', err.message);
+      Toast.show(`❌ GNSS 启动失败: ${err.message || '未知错误'}`, 4000);
       // 清理可能已注册的监听器
       this._removeGnssListeners();
     }
@@ -244,6 +246,7 @@ class GPSManager {
     let elapsed = 0;
     const interval = 2000;
     const maxDuration = 15000;
+    let toastedNoData = false; // 避免 2s 轮询重复弹 toast
 
     this._gnssPollId = setInterval(async () => {
       elapsed += interval;
@@ -254,6 +257,7 @@ class GPSManager {
       // 如果事件已收到卫星数据，提前停止轮询
       if (this._gnssSatellites.length > 0) {
         console.log('[GPS] GNSS 轮询兜底：已收到卫星数据，停止轮询');
+        Toast.show(`🛰️ 已检测到 ${this._gnssSatellites.length} 颗卫星`);
         this._stopGnssPollFallback();
         return;
       }
@@ -262,6 +266,7 @@ class GPSManager {
         if (data && data.satellites && data.satellites.length > 0) {
           this._gnssSatellites = data.satellites;
           console.log('[GPS] GNSS 轮询兜底：收到卫星数:', data.satellites.length);
+          Toast.show(`🛰️ 兜底轮询：${data.satellites.length} 颗卫星`);
           this._stopGnssPollFallback();
         }
       } catch (e) {
@@ -269,8 +274,10 @@ class GPSManager {
       }
       if (elapsed >= maxDuration) {
         this._stopGnssPollFallback();
-        if (this._gnssSatellites.length === 0) {
+        if (this._gnssSatellites.length === 0 && !toastedNoData) {
+          toastedNoData = true;
           console.warn('[GPS] GNSS 轮询兜底：15s 内未收到卫星数据');
+          Toast.show('[GPS] GNSS 轮询兜底：15s 内未收到卫星数据', 5000);
         }
       }
     }, interval);
