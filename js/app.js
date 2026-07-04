@@ -16,6 +16,14 @@ class App {
       this._gpsBtn.title = '定位到我的位置';
       this._hideSpeedChart();
     };
+    this.gpsManager.onPowerSavingChange = (isOn) => {
+      const btn = document.getElementById('power-saving-btn');
+      if (btn) btn.classList.toggle('active', isOn);
+    };
+    this.gpsManager.onRestoreTracking = () => {
+      Toast.show('🔋 电量恢复，已自动恢复追踪');
+      this._startWatching();
+    };
     this.circleRadius = CONFIG.DEFAULT_RADIUS;
     this.center = null;          // 当前标记位置
     this.myPosition = null;      // 我的位置（GCJ-02，由 GPS 定位设置）
@@ -722,6 +730,7 @@ class App {
       if (this._isWatching && pos.speed != null) {
         const elapsed = (Date.now() - this._speedTrackingStart) / 1000;
         this._speedHistory.push({ x: Math.round(elapsed * 10) / 10, y: pos.speed });
+        if (this._speedHistory.length > 1000) this._speedHistory.shift();
         this._updateSpeedChart();
       }
       this._processQueue = this._processQueue
@@ -788,10 +797,6 @@ class App {
   _hideSpeedChart() {
     const section = document.getElementById('speed-chart-section');
     if (section) section.classList.add('hidden');
-    if (this._speedChart) {
-      this._speedChart.destroy();
-      this._speedChart = null;
-    }
   }
 
   _initSpeedChart() {

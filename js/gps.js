@@ -42,6 +42,7 @@ class GPSManager {
     this._powerSavingLocked = false;  // 省电模式锁定（低电量时锁定开启）
     this._battery = null;       // BatteryManager 引用（用于清理）
     this._batteryCheck = null;  // 电池检查函数引用（用于清理）
+    this._autoStoppedByBattery = false;  // 是否因低电量自动停止追踪
     this._initBatteryMonitor();
     this._tryInitGnssPlugin();
 
@@ -66,6 +67,7 @@ class GPSManager {
           this._powerSavingLocked = true;
           if (!this._powerSaving) {
             this.togglePowerSaving(true);
+            if (this.onPowerSavingChange) this.onPowerSavingChange(true);
           }
           // 仅在刚进入低电量时重启 watchPosition
           if (this.isWatching) {
@@ -76,13 +78,19 @@ class GPSManager {
         // 电量 < 10%：自动停止追踪
         if (battery.level < 0.1 && this.isWatching) {
           console.warn('[GPS] 电量低于 10%，自动停止追踪');
+          this._autoStoppedByBattery = true;
           this.stopWatching();
           if (this.onCriticalBattery) this.onCriticalBattery();
         }
-        // 充电时解锁省电模式
+        // 充电时解锁省电模式并恢复追踪
         if (!this._lowBattery && this._powerSavingLocked && battery.charging) {
           this._powerSavingLocked = false;
           console.log('[GPS] 电量恢复，省电模式已解锁');
+          // 如果是因低电量自动停止的，恢复追踪
+          if (this._autoStoppedByBattery && this.onRestoreTracking) {
+            this._autoStoppedByBattery = false;
+            this.onRestoreTracking();
+          }
         }
       };
       battery.addEventListener('levelchange', this._batteryCheck);

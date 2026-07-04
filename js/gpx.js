@@ -17,8 +17,8 @@ class GpxExport {
     let trkptXml = '';
     for (let i = 0; i < positions.length; i++) {
       const pt = positions[i];
-      const lat = typeof pt.wgsLat === 'number' ? pt.wgsLat.toFixed(6) : pt.lat.toFixed(6);
-      const lng = typeof pt.wgsLng === 'number' ? pt.wgsLng.toFixed(6) : pt.lng.toFixed(6);
+      const lat = typeof pt.wgsLat === 'number' && isFinite(pt.wgsLat) ? pt.wgsLat.toFixed(6) : (isFinite(pt.lat) ? pt.lat.toFixed(6) : '0.000000');
+      const lng = typeof pt.wgsLng === 'number' && isFinite(pt.wgsLng) ? pt.wgsLng.toFixed(6) : (isFinite(pt.lng) ? pt.lng.toFixed(6) : '0.000000');
       const ts = pt.time ? new Date(pt.time).toISOString() : new Date().toISOString();
 
       let extra = '';
