@@ -14,7 +14,7 @@
 | 分支 | 角色 | 内容 | 提交 |
 |---|---|---|---|
 | `dev` | web-only 主线 | 仅 `index.html`、`js/**`、`css/**`、`AGENTS.md` 等浏览器可运行文件 | web-only 改动可直接合入；不接受 `native/**` 与 `.github/workflows/**` |
-| `feature/*` | 原生端分支 | 含完整 `native/gnss-plugin/**`、`native/capacitor.config.json`、CI 配置 | GNnative/ 改动完成后手动将 web-only 部分 cherry-pick / checkout 到 `dev` |
+| `circlemap-gnss` | 原生端项目 | 含完整 `native/gnss-plugin/**`、`native/capacitor.config.json`、CI 配置 | GNnative/ 改动完成后手动将 web-only 部分 cherry-pick / checkout 到 `dev` |
 | `main` | 正式发布线 | 仅接受从 `dev` 合并；不允许直接提交 | 由用户手动从 `dev` PR；不含发布 APK 标签的功能提交 |
 | `vX.Y.Z` tag | 正式版快照 | 指向特定 `feature/*` 的发布 commit | `git tag -a vX.Y.Z <feature/... HEAD> && git push origin vX.Y.Z` 触发 GH Actions Release 流程 |
 
@@ -102,6 +102,40 @@ Canvas 叠加层 `#circle-canvas` 浮在腾讯地图 div 之上：
 - 总超时兜底 = timeout + 5000ms（防 GPS 信号弱卡死）
 - 页面 `visibilitychange` + `pagehide` 兜底：后台自动停追踪，前台恢复
 - 位置过期阈值 10 分钟，自动重定位最小间隔 5 分钟
+
+## GNSS 卫星（原生端）
+
+### 数据来源
+- **Android GNSS API**：`GnssStatus.Callback` 回调，每秒更新
+- **Capacitor 插件**：`GnssDataPlugin.java` → `gnssStatus` 事件
+- **轮询兜底**：`getLastGnssData()` 每 2 秒，最多 15 秒
+
+### 卫星数据字段
+每颗卫星：`{svid, constellation, cn0DbHz, elevation, azimuth, usedInFix, hasEphemeris, hasAlmanac}`
+
+| 字段 | 含义 |
+|---|---|
+| `svid` | 卫星编号 (PRN) |
+| `constellation` | 星座：GPS/BEIDOU/GLONASS/GALILEO |
+| `cn0DbHz` | 信噪比 (dB-Hz) |
+| `usedInFix` | **是否参与定位解算** |
+| `hasEphemeris` | 是否有星历数据 |
+| `hasAlmanac` | 是否有年历数据 |
+
+### JS Getters（gps.js）
+- `gnssUsedCount` — 参与定位的卫星数
+- `gnssVisibleCount` — 可见卫星总数
+- `gnssAvgSnr` — 参与定位卫星的平均信噪比
+- `gnssConstellationStats` — 所有可见卫星按星座分组
+- `gnssUsedConstellationStats` — **参与定位的卫星按星座分组**
+
+### 显示格式（app.js）
+```
+🛰️ 定位:GPS:8 BD:5 可见:GPS:12 BD:8 GLONASS:3 45dB
+```
+- **定位**：参与定位解算的卫星（`usedInFix=true`）
+- **可见**：所有检测到的卫星（含星历但未参与定位）
+- **dB**：参与定位卫星的平均信噪比
 
 ## 开发注意事项
 

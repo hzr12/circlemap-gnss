@@ -699,12 +699,31 @@ class GPSManager {
   }
 
   /**
-   * 按星座分组的卫星数量
+   * 按星座分组的卫星数量（所有可见卫星）
    * @returns {{gps:number, beidou:number, glonass:number, galileo:number, other:number}}
    */
   get gnssConstellationStats() {
     const stats = { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 };
     for (const s of this._gnssSatellites) {
+      switch (s.constellation) {
+        case 'GPS':     stats.gps++; break;
+        case 'BEIDOU':  stats.beidou++; break;
+        case 'GLONASS': stats.glonass++; break;
+        case 'GALILEO': stats.galileo++; break;
+        default:        stats.other++; break;
+      }
+    }
+    return stats;
+  }
+
+  /**
+   * 按星座分组的参与定位卫星数量
+   * @returns {{gps:number, beidou:number, glonass:number, galileo:number, other:number}}
+   */
+  get gnssUsedConstellationStats() {
+    const stats = { gps: 0, beidou: 0, glonass: 0, galileo: 0, other: 0 };
+    for (const s of this._gnssSatellites) {
+      if (!s.usedInFix) continue;
       switch (s.constellation) {
         case 'GPS':     stats.gps++; break;
         case 'BEIDOU':  stats.beidou++; break;
