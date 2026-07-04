@@ -6,6 +6,7 @@
 
 - **`dev` 是主开发分支，永远不要删除 `dev` 分支**
 - 所有新功能、bug 修复都在 `dev` 上开发
+- `dev` 分支只接受web更新
 - PR 合并到 `main` 时**不要**使用 `--delete-branch` 参数
 - `main` 只接受从 `dev` 合并，不在 `main` 上直接提交
 
