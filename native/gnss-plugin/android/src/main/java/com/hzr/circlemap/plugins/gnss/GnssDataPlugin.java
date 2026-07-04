@@ -103,9 +103,22 @@ public class GnssDataPlugin extends Plugin {
             return;
         }
 
-        if (!hasPermission("location")) {
-            call.reject("ACCESS_FINE_LOCATION permission not granted", "PERMISSION_DENIED");
+        // ⚠️ 不要用 Capacitor 的 hasPermission("location") alias 检查
+        // 原因：浏览器 Geolocation 与 Capacitor plugin 的权限别名不同步，
+        // 例如：Geolocation API 已工作（精度 5m）但 GnssDataPlugin 的 alias 仍为 not granted
+        // 直接用 Android 系统权限检查，拿到的就是 LocationManager 真实可用的状态
+        Context ctx = getContext();
+        if (ctx == null) {
+            call.reject("Plugin context not available", "NO_CONTEXT");
             return;
+        }
+        int perm = ctx.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION);
+        if (perm != PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "ACCESS_FINE_LOCATION not granted (system check), but trying anyway — " +
+                    "LocationManager may have its own grant from prior browser Geolocation flow");
+            // 不直接 reject，让 try/catch 兜底。LocationManager 内部会再次校验权限。
+        } else {
+            Log.d(TAG, "ACCESS_FINE_LOCATION granted (system check)");
         }
 
         try {
@@ -114,6 +127,8 @@ public class GnssDataPlugin extends Plugin {
             Log.d(TAG, "GNSS listening started");
             call.resolve();
         } catch (SecurityException e) {
+            // 真的没权限时 LocationManager 会抛这个
+            Log.w(TAG, "SecurityException during GNSS start: " + e.getMessage());
             call.reject("Location permission denied: " + e.getMessage(), "PERMISSION_DENIED");
         } catch (Exception e) {
             Log.e(TAG, "Failed to start GNSS listening", e);

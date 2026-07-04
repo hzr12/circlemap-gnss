@@ -220,7 +220,20 @@ class GPSManager {
       this._gnssNmeaHandle = this._gnssPlugin.addListener('nmeaSentence', nmeaHandler);
 
       // 再启动原生监听
-      await this._gnssPlugin.startGnssListening();
+      try {
+        await this._gnssPlugin.startGnssListening();
+      } catch (startErr) {
+        // 把 PermissionDenied 直接显式说清楚，方便排查
+        const code = startErr && startErr.code ? String(startErr.code) : 'NO_CODE';
+        const msg = `[${code}] ${startErr?.message || '未知'}`;
+        console.warn('[GPS] startGnssListening 拒绝:', msg);
+        if (code === 'PERMISSION_DENIED') {
+          Toast.show(`❌ ACCESS_FINE_LOCATION 权限被拒 — 请到系统设置→应用→CircleMap→位置，开启"始终允许"`, 6000);
+        } else {
+          Toast.show(`❌ startGnssListening: ${msg}`, 5000);
+        }
+        throw startErr;
+      }
       this._gnssListeningStarted = true;
       this._gnssInitError = null;
       console.log('[GPS] GNSS 插件已激活，卫星数据可用');
