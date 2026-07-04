@@ -7,6 +7,8 @@ import android.location.GnssStatus;
 import android.location.LocationManager;
 import android.location.OnNmeaMessageListener;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import com.getcapacitor.JSArray;
@@ -181,11 +183,27 @@ public class GnssDataPlugin extends Plugin {
             };
 
             try {
-                locationManager.registerGnssStatusCallback(gnssCallback);
-                Log.d(TAG, "GnssStatus.Callback registered");
+                // 必须传 Handler → 主线程 Looper。原因：
+                // 单参数 registerGnssStatusCallback(callback) 要求调用方必须是 Looper 线程，
+                // 但 Capacitor @PluginMethod 默认在线程池里跑，不是 Looper。
+                // 传 Handler 后 callback 固定在主线程触发，回调和 notifyListeners 都在 Looper 上，不会丢事件。
+                Handler mainHandler = new Handler(Looper.getMainLooper());
+                boolean registered = locationManager.registerGnssStatusCallback(gnssCallback, mainHandler);
+                Log.d(TAG, "GnssStatus.Callback registered=" + registered + " on mainLooper");
             } catch (SecurityException e) {
                 gnssCallback = null;
                 throw e;
+            } catch (IllegalArgumentException e) {
+                // API 24/25 上某些 ROM 的 registerGnssStatusCallback 仍然单参数重载不识别
+                // 无参 fallback 一次
+                Log.w(TAG, "registerGnssStatusCallback(handler) failed, fallback: " + e.getMessage());
+                try {
+                    locationManager.registerGnssStatusCallback(gnssCallback);
+                    Log.d(TAG, "GnssStatus.Callback registered via no-arg fallback");
+                } catch (Exception e2) {
+                    gnssCallback = null;
+                    throw e2;
+                }
             }
         } else {
             Log.w(TAG, "GnssStatus.Callback requires API 24+, current API: "
@@ -276,8 +294,10 @@ public class GnssDataPlugin extends Plugin {
         };
 
         try {
-            locationManager.addNmeaListener(nmeaListener, null);
-            Log.d(TAG, "NmeaListener registered");
+            // 同样传主线程 handler — 避免 capacitor 线程池不是 looper 线程导致 callback 永远不触发
+            Handler mainHandler = new Handler(Looper.getMainLooper());
+            boolean added = locationManager.addNmeaListener(nmeaListener, mainHandler);
+            Log.d(TAG, "NmeaListener registered=" + added + " on mainLooper");
         } catch (SecurityException e) {
             nmeaListener = null;
             throw e;
