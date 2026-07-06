@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>鬼抓人——地图雷达</title>
-  <link rel="stylesheet" href="css/style.css?t=20260706v48">
+  <link rel="stylesheet" href="css/style.css?t=20260706v49">
 </head>
 <body>
   <div id="map">
@@ -44,6 +44,14 @@
           <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
         </svg>
       </button>
+    </div>
+    <div class="accent-row">
+      <span class="accent-label">主题</span>
+      <button class="accent-dot active" data-accent="cyan" style="--c:#00D4AA" title="青"></button>
+      <button class="accent-dot" data-accent="green" style="--c:#34D399" title="绿"></button>
+      <button class="accent-dot" data-accent="blue" style="--c:#60A5FA" title="蓝"></button>
+      <button class="accent-dot" data-accent="purple" style="--c:#A78BFA" title="紫"></button>
+      <button class="accent-dot" data-accent="orange" style="--c:#FB923C" title="橙"></button>
     </div>
 
     <div class="panel-body">
@@ -296,6 +304,21 @@
   <script src="js/map.js?t=20260706v24"></script>
   <script src="js/tile-cache.js?t=20260706v48"></script>
   <script src="js/gps.js?t=20260705v26"></script>
-<script src="js/app.js?t=20260706v48"></script>
+<script src="js/app.js?t=20260706v50"></script>
+
+<!-- 首次上手引导 -->
+<div id="onboarding-overlay" class="onboarding-overlay">
+  <div class="onboarding-backdrop"></div>
+  <div class="onboarding-card">
+    <div class="onboarding-step-indicator" id="onboarding-step">1/7</div>
+    <span class="onboarding-icon" id="onboarding-icon">🎯</span>
+    <div class="onboarding-title" id="onboarding-title">欢迎</div>
+    <div class="onboarding-text" id="onboarding-text">描述</div>
+    <div class="onboarding-actions">
+      <button id="onboarding-skip-btn" class="onboarding-skip">跳过</button>
+      <button id="onboarding-next-btn" class="onboarding-next">下一步</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>

@@ -79,7 +79,10 @@ class App {
     this._lastCalcTime = null;        // 上一个连续定位时间戳
     this._lastAccuracy = null;        // 最近一次定位精度（米），用于精度圈范围判断
     this._theme = 'dark';             // 主题：dark | light
+    this._accent = 'cyan';            // 主色方案：cyan | green | blue | purple | orange
     this._trailSmoothing = true;      // 轨迹平滑开关
+    this._onboardingStep = 0;         // 引导当前步骤
+    this._onboardingActive = false;   // 引导是否正在显示
     this._processQueue = Promise.resolve(); // GPS 位置处理串行队列
   }
 
@@ -116,6 +119,9 @@ class App {
     // 恢复主题偏好
     this._restoreTheme();
 
+    // 恢复主色方案
+    this._restoreAccent();
+
     // 恢复轨迹平滑偏好
     try {
       const pref = localStorage.getItem('circlemap_trail_smooth');
@@ -140,6 +146,9 @@ class App {
 
     // 进入页面后自动启动持续 GPS 追踪
     this._startWatching();
+
+    // 首次上手引导
+    setTimeout(() => this._showOnboarding(), 1500);
 
     // 页面可见性变化：后台停 GPS，前台恢复（#6 加 pagehide 兜底 iOS）
     this._pageHideHandler = () => {
@@ -415,6 +424,15 @@ class App {
 
     // —— 主题切换按钮 ——
     document.getElementById('theme-btn').addEventListener('click', () => this._toggleTheme());
+
+    // —— 主色选择器 ——
+    document.querySelectorAll('.accent-dot').forEach(btn => {
+      btn.addEventListener('click', () => this._setAccent(btn.dataset.accent));
+    });
+
+    // —— 上手引导按钮 ——
+    document.getElementById('onboarding-next-btn').addEventListener('click', () => this._nextOnboardingStep());
+    document.getElementById('onboarding-skip-btn').addEventListener('click', () => this._dismissOnboarding());
 
     // —— 圆列表事件委托（选中/编辑/删除） ——
     this._circleListEl = document.getElementById('circle-list');
@@ -1633,6 +1651,171 @@ class App {
       ? '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>'
       : '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
     btn.title = isDark ? '切换浅色主题' : '切换深色主题';
+  }
+
+  /* ============= 主色方案 ============= */
+
+  /**
+   * 恢复主色方案偏好
+   */
+  _restoreAccent() {
+    const accents = ['cyan', 'green', 'blue', 'purple', 'orange'];
+    try {
+      const saved = localStorage.getItem('circlemap_accent');
+      if (accents.includes(saved)) this._accent = saved;
+    } catch (e) { /* 静默 */ }
+    document.documentElement.setAttribute('data-accent', this._accent);
+    this._updateAccentBtns();
+  }
+
+  /**
+   * 设置主色方案
+   * @param {string} name
+   */
+  _setAccent(name) {
+    if (name === this._accent) return;
+    this._accent = name;
+    document.documentElement.setAttribute('data-accent', name);
+    this._updateAccentBtns();
+    try { localStorage.setItem('circlemap_accent', name); } catch (e) { /* 静默 */ }
+    if (this._onboardingActive) return; // 引导中不弹 Toast
+    Toast.show(`🎨 已切换为${ {cyan:'青色', green:'绿色', blue:'蓝色', purple:'紫色', orange:'橙色'}[name] }主题`);
+  }
+
+  /**
+   * 更新主色按钮选中状态
+   */
+  _updateAccentBtns() {
+    document.querySelectorAll('.accent-dot').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.accent === this._accent);
+    });
+  }
+
+  /* ============= 首次上手引导 ============= */
+
+  /** 引导步骤定义 */
+  static ONBOARDING_STEPS = [
+    {
+      icon: '🎯',
+      title: '欢迎使用鬼抓人地图雷达',
+      text: '实时追踪距离与方位，支持离线瓦片\n下面花 30 秒了解核心功能'
+    },
+    {
+      icon: '📍',
+      target: '#gps-btn',
+      title: '① 定位当前位置',
+      text: '点击右下角的 GPS 按钮定位您的位置\n长按按钮切换持续追踪模式'
+    },
+    {
+      icon: '🗺️',
+      target: '.mode-tabs',
+      title: '② 选择中心点',
+      text: '点击地图任意位置设为圆心\n或切换到「输入坐标」手动输入'
+    },
+    {
+      icon: '✏️',
+      target: '#parse-input',
+      title: '③ 坐标快速输入',
+      text: '支持智能粘贴识别：\n23.1291, 113.2644 (十进制)\n23°7′44.76″N 113°15′51.84″E (度分秒)'
+    },
+    {
+      icon: '⭕',
+      target: '#draw-btn',
+      title: '④ 绘制同心圆',
+      text: '设置半径后点击「绘制圆形」\n多层同心圆自动显示在地图上'
+    },
+    {
+      icon: '📋',
+      target: '.info-area',
+      title: '⑤ 查看信息 & 复制坐标',
+      text: '选中圆时下方显示圆心坐标、半径等\n点击坐标可一键复制到剪贴板'
+    },
+    {
+      icon: '🏃',
+      target: '.trail-section',
+      title: '⑥ 轨迹记录',
+      text: '开始记录移动路线，查看速度曲线\n支持平滑、统计、离线瓦片缓存'
+    },
+    {
+      icon: '🎉',
+      title: '准备好了！',
+      text: '现在开始您的户外探险吧\n遇到问题可随时参考功能提示'
+    }
+  ];
+
+  /**
+   * 显示首次上手引导
+   */
+  _showOnboarding() {
+    try {
+      const done = localStorage.getItem('circlemap_onboarding_done');
+      if (done === '1') return;
+    } catch (e) { /* 静默 */ }
+
+    this._onboardingStep = 0;
+    this._onboardingActive = true;
+    this._renderOnboardingStep();
+    document.getElementById('onboarding-overlay').classList.add('show');
+  }
+
+  /**
+   * 渲染引导步骤
+   */
+  _renderOnboardingStep() {
+    const steps = App.ONBOARDING_STEPS;
+    const step = steps[this._onboardingStep];
+    if (!step) return;
+
+    // 移除旧高亮
+    document.querySelectorAll('.onboarding-highlight').forEach(el => {
+      el.classList.remove('onboarding-highlight');
+    });
+
+    // 高亮目标元素
+    if (step.target) {
+      const target = document.querySelector(step.target);
+      if (target) target.classList.add('onboarding-highlight');
+    }
+
+    // 更新内容
+    document.getElementById('onboarding-step').textContent =
+      `${this._onboardingStep + 1}/${steps.length}`;
+    document.getElementById('onboarding-icon').textContent = step.icon || '🎯';
+    document.getElementById('onboarding-title').textContent = step.title;
+    document.getElementById('onboarding-text').textContent = step.text;
+
+    // 更新按钮
+    const nextBtn = document.getElementById('onboarding-next-btn');
+    if (this._onboardingStep === steps.length - 1) {
+      nextBtn.textContent = '开始使用';
+    } else {
+      nextBtn.textContent = '下一步';
+    }
+  }
+
+  /**
+   * 下一步
+   */
+  _nextOnboardingStep() {
+    const steps = App.ONBOARDING_STEPS;
+    if (this._onboardingStep >= steps.length - 1) {
+      this._dismissOnboarding();
+      return;
+    }
+    this._onboardingStep++;
+    this._renderOnboardingStep();
+  }
+
+  /**
+   * 关闭引导
+   */
+  _dismissOnboarding() {
+    this._onboardingActive = false;
+    document.getElementById('onboarding-overlay').classList.remove('show');
+    document.querySelectorAll('.onboarding-highlight').forEach(el => {
+      el.classList.remove('onboarding-highlight');
+    });
+    try { localStorage.setItem('circlemap_onboarding_done', '1'); } catch (e) { /* 静默 */ }
   }
 
   /* ============= 数据持久化 ============= */
