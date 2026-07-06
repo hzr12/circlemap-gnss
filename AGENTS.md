@@ -16,7 +16,7 @@ css/
   panel.css         ← 面板结构 + 模式切换 + 坐标输入 + 半径 + 信息展示
   gps.css           ← GPS 状态条 + 信号强度 + GNSS
   circles.css       ← 圆列表 + 距离标记 + 对方位置 + 最近定位
-  trail.css         ← 轨迹记录 + 速度曲线 + 离线缓存
+  trail.css         ← 轨迹记录 + 速度曲线
   toast-modal.css   ← Toast + Modal
   onboarding.css    ← 首次上手引导
   responsive.css    ← 移动端 / 平板 / 桌面响应式
@@ -26,10 +26,8 @@ js/
   map.js            ← MapManager（腾讯地图 + Canvas 同心圆渲染）
   gps.js            ← GPSManager（浏览器 Geolocation API + GNSS 插件）
   trail.js          ← Trail（轨迹采样、平滑、距离计算）
-  tile-cache.js     ← TileCacheManager（离线瓦片缓存管理）
   toast.js          ← Toast（短暂消息提示）
   storage.js        ← Storage（localStorage 读写）
-  sw.js             ← Service Worker（离线瓦片缓存拦截）
 native/             ← Capacitor v8 Android 原生壳 + GNSS 插件
   gnss-plugin/      ← 自定义 Capacitor 插件（原生端 GNSS 卫星数据）
   capacitor.config.json
@@ -75,8 +73,8 @@ CI 会自动完成上述流程并发布到 GitHub Release。
 ## 关键架构事实
 
 ### 无框架 / 无构建
-纯 ES6 class，8 个 `*.js` 文件通过 `<script>` 标签顺序加载（依赖顺序见 `index.html` 末尾）。  
-**加载顺序有依赖：** `config.js → toast.js → storage.js → trail.js → map.js → tile-cache.js → gps.js → app.js`。  
+纯 ES6 class，7 个 `*.js` 文件通过 `<script>` 标签顺序加载（依赖顺序见 `index.html` 末尾）。  
+**加载顺序有依赖：** `config.js → toast.js → storage.js → trail.js → map.js → gps.js → app.js`。  
 更改文件需更新 `index.html` 中脚本 `<script src="...">` 的 `?t=` 缓存版本戳（手动 bump）。
 
 ### 入口初始化
@@ -108,6 +106,8 @@ CI 会自动完成上述流程并发布到 GitHub Release。
 - Trail 类独立管理轨迹数组
 - 自适应采样：最小 10m 间隔 + 精度联动抖动过滤（`TRAIL_JITTER_FACTOR = 1.5`）
 - 滑动窗口平滑（窗口 5，`getSmoothedPositions`），偏好存储 `localStorage`
+
+### 持久化
 
 ### 持久化
 - `localStorage` 保存：圆圈列表、选中状态、半径、中心点、轨迹数据、主题偏好、平滑开关
@@ -156,4 +156,5 @@ CI 会自动完成上述流程并发布到 GitHub Release。
 8. **GNSS 插件**：仅在 Capacitor Android 原生端可用；浏览器 Web 端不显示卫星数据，GNSS bar 会自动隐藏（`display: none`）。
 9. **最大轨迹 500 点**：`TRAIL_MAX_POINTS`，超出后丢弃最早的点。
 10. **Chart.js 实例必须 `destroy()`**：`App.destroy()` 中显式销毁，否则 canvas 引用泄漏。
-11. **思考和推理必须使用中文回答**
+11. **离线瓦片缓存已移除**（`js/tile-cache.js`, `js/sw.js`）。之前的实现有 SW 作用域 + opaque response 双重问题，无法工作。如需重新实现，需同时修复 scope 注册和 opaque 缓存策略。
+12. **思考和推理必须使用中文回答**
