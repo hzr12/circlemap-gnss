@@ -510,8 +510,67 @@ class App {
    * @param {string} text
    * @returns {{lat:number,lng:number}|null}
    */
+  /**
+   * 度分秒 → 十进制
+   * 支持: 23°7'44.76"N  23°7′44.76″N  N23°7'44.76"  23°7'44.76"
+   */
+  _dmsToDecimal(str) {
+    if (!str || typeof str !== 'string') return null;
+    str = str.trim();
+    if (!str) return null;
+    if (!/[°]/.test(str)) return null;
+
+    let dir = 1;
+    if (/[SsWw]/.test(str)) dir = -1;
+
+    // 去掉方向字母和度符号，统一分秒分隔符为空格
+    str = str.replace(/[NSEWnsew°]/g, '').replace(/['′]/g, ' ').replace(/["″]/g, ' ');
+
+    const nums = str.match(/-?\d+\.?\d*/g);
+    if (!nums || nums.length < 1) return null;
+
+    const deg = parseFloat(nums[0]);
+    const min = nums.length >= 2 ? parseFloat(nums[1]) : 0;
+    const sec = nums.length >= 3 ? parseFloat(nums[2]) : 0;
+
+    if (isNaN(deg)) return null;
+    const sign = deg < 0 ? -1 : 1;
+    return sign * dir * (Math.abs(deg) + (min || 0) / 60 + (sec || 0) / 3600);
+  }
+
+  /**
+   * 解析度分秒格式坐标文本
+   */
+  _parseDmsText(text) {
+    const parts = text.split(/[,，\s]+/).filter(Boolean);
+    let lat = null, lng = null;
+
+    for (const p of parts) {
+      const dd = this._dmsToDecimal(p);
+      if (dd == null) continue;
+      if (/[NnSs]/.test(p)) lat = dd;
+      else if (/[EeWw]/.test(p)) lng = dd;
+    }
+
+    if (lat != null && lng != null) return { lat, lng };
+
+    // 无方向标记，取前两个 DMS 值为 lat, lng
+    const dmsVals = [];
+    for (const p of parts) {
+      const dd = this._dmsToDecimal(p);
+      if (dd != null) dmsVals.push(dd);
+    }
+    if (dmsVals.length >= 2) return { lat: dmsVals[0], lng: dmsVals[1] };
+
+    return null;
+  }
+
   _parseCoordText(text) {
     if (!text) return null;
+
+    // 度分秒格式优先
+    if (/[°]/.test(text)) return this._parseDmsText(text);
+
     // 提取所有数字（含负号和小数点）
     const nums = text.match(/-?\d+\.?\d*/g);
     if (!nums || nums.length < 2) return null;
@@ -567,13 +626,20 @@ class App {
    * 手动输入坐标 → 仅定位，不自动绘制
    */
   _onCoordInput() {
-    const lat = parseFloat(this._latInput.value);
-    const lng = parseFloat(this._lngInput.value);
+    let lat = parseFloat(this._latInput.value);
+    let lng = parseFloat(this._lngInput.value);
+
+    // 尝试度分秒解析
+    if (isNaN(lat)) lat = this._dmsToDecimal(this._latInput.value);
+    if (isNaN(lng)) lng = this._dmsToDecimal(this._lngInput.value);
 
     if (!isNaN(lat) && !isNaN(lng) &&
         lat >= -90 && lat <= 90 &&
         lng >= -180 && lng <= 180) {
       this.center = { lat, lng };
+      // 转换成功后回填十进制
+      this._latInput.value = lat.toFixed(6);
+      this._lngInput.value = lng.toFixed(6);
       this.mapManager.setCenter(this.center);
       this._manualCenter = true; // 手动输入坐标 → 不再被 GPS 覆盖
       this._dirty = true;
