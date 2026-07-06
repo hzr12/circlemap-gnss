@@ -19,7 +19,7 @@ js/
   tile-cache.js     ← TileCacheManager（离线瓦片缓存管理）
   toast.js          ← Toast（短暂消息提示）
   storage.js        ← Storage（localStorage 读写）
-sw.js               ← Service Worker（离线瓦片缓存拦截）
+  sw.js             ← Service Worker（离线瓦片缓存拦截）
 native/             ← Capacitor v8 Android 原生壳 + GNSS 插件
   gnss-plugin/      ← 自定义 Capacitor 插件（原生端 GNSS 卫星数据）
   capacitor.config.json

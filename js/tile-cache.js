@@ -25,7 +25,7 @@ class TileCacheManager {
   async _initSW() {
     if (!('serviceWorker' in navigator)) return;
     try {
-      this._swReg = await navigator.serviceWorker.register('sw.js');
+      this._swReg = await navigator.serviceWorker.register('js/sw.js');
       this._ready = true;
       this._updateStats();
     } catch (e) {
