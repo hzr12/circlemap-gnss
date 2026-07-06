@@ -9,7 +9,17 @@
 
 ```
 index.html          ← 唯一入口（直接打开即可运行）
-css/style.css       ← 深色/浅色双主题（CSS 变量）
+css/
+  theme.css         ← CSS 变量 + 主色方案 + 深浅主题
+  base.css          ← Reset + 基础样式 + 按钮通用
+  map.css           ← 地图容器 + Canvas + 浮动按钮
+  panel.css         ← 面板结构 + 模式切换 + 坐标输入 + 半径 + 信息展示
+  gps.css           ← GPS 状态条 + 信号强度 + GNSS
+  circles.css       ← 圆列表 + 距离标记 + 对方位置 + 最近定位
+  trail.css         ← 轨迹记录 + 速度曲线 + 离线缓存
+  toast-modal.css   ← Toast + Modal
+  onboarding.css    ← 首次上手引导
+  responsive.css    ← 移动端 / 平板 / 桌面响应式
 js/
   config.js         ← 所有可调参数 + 工具函数（calcDistance, formatDistance 等）
   app.js            ← 主控制器 App 类（UI 绑定 + 逻辑编排 + 启动入口）
@@ -136,7 +146,7 @@ CI 会自动完成上述流程并发布到 GitHub Release。
 
 ## 常见陷阱
 
-1. **`?t=` 缓存版本戳**：修改 `js/*.js` 或 `css/style.css` 后必须更新 `index.html` 中对应 `<script>` / `<link>` 的版本戳（`YYYYMMDDvN`），否则浏览器缓存旧代码。
+1. **`?t=` 缓存版本戳**：修改 `js/*.js` 或 `css/*.css` 后必须更新 `index.html` 中对应 `<script>` / `<link>` 的版本戳（`YYYYMMDDvN`），否则浏览器缓存旧代码。
 2. **脚本加载顺序**：新加 JS 文件必须按正确顺序插入 `index.html` 的 `<script>` 标签列表。
 3. **坐标转换 5 秒超时**：`wgs84ToGcj02` 的 convertor API 调用有 5 秒硬超时。弱网环境超时后会降级到手写算法，不影响功能。
 4. **腾讯地图 API 加载**：页面需联网加载 `map.qq.com/api/js`，内网/断网不可用。

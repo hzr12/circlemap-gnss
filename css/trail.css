@@ -1,0 +1,243 @@
+/* ---------- 速度曲线面板 ---------- */
+
+.speed-chart-section {
+  margin: 6px 12px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  overflow: hidden;
+}
+
+.speed-chart-section.hidden {
+  display: none;
+}
+
+.speed-chart-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.speed-chart-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.speed-chart-info {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  flex: 1;
+  text-align: right;
+}
+
+.speed-chart-toggle {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 2px;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.speed-chart-toggle.collapsed {
+  transform: rotate(-90deg);
+}
+
+.speed-chart-body {
+  height: 120px;
+  padding: 0 8px 6px;
+  transition: height 0.2s;
+  overflow: hidden;
+}
+
+.speed-chart-body.collapsed {
+  height: 0;
+  padding: 0 8px;
+}
+
+.speed-chart-body canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+/* ---------- 轨迹记录�?---------- */
+.trail-section {
+  margin-bottom: 14px;
+}
+
+.trail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.trail-distance {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--accent-1);
+  font-weight: 600;
+}
+
+.trail-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-trail {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+}
+
+.btn-trail:active {
+  transform: scale(0.97);
+}
+
+.btn-trail.recording {
+  background: linear-gradient(135deg, rgba(0, 212, 170, 0.15), rgba(0, 163, 255, 0.08));
+  color: var(--accent-1);
+  border-color: rgba(0, 212, 170, 0.4);
+  box-shadow: inset 0 1px 0 rgba(0, 212, 170, 0.1), 0 2px 12px rgba(0, 212, 170, 0.15);
+}
+
+.trail-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  display: inline-block;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.btn-trail.recording .trail-dot {
+  background: #FF4757;
+  box-shadow: 0 0 6px #FF4757;
+  animation: trailPulse 1s ease-in-out infinite;
+}
+
+/* 轨迹第二行操作栏（统计、平滑） */
+.trail-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.trail-actions .btn-sm {
+  flex: 1;
+  padding: 6px 6px;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.smooth-icon {
+  font-size: 12px;
+}
+.trail-actions .btn-sm.active {
+  background: rgba(0, 212, 170, 0.12);
+  color: var(--accent-1);
+  border-color: rgba(0, 212, 170, 0.3);
+}
+/* ---------- 离线瓦片缓存 ---------- */
+.cache-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 4px 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  flex-wrap: wrap;
+}
+.cache-size {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cache-clear-btn {
+  font-size: 13px !important;
+  padding: 2px 6px !important;
+  line-height: 1 !important;
+  opacity: 0.5;
+  transition: opacity 0.15s;
+}
+.cache-clear-btn:hover {
+  opacity: 1;
+}
+.cache-progress {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+.cache-progress-bar {
+  flex: 1;
+  height: 4px;
+  background: var(--bg-input);
+  border-radius: 2px;
+  overflow: hidden;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent-1));
+  width: 0%;
+  transition: width 0.2s ease;
+}
+.cache-progress-text {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  min-width: 40px;
+  text-align: right;
+}
+.cache-progress.hidden {
+  display: none;
+}
+
+/* 速度色阶图例 */
+.speed-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  padding: 5px 0;
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+.speed-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.speed-legend-item i {
+  width: 12px;
+  height: 3px;
+  border-radius: 1.5px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+@keyframes trailPulse {
+  0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 6px #FF4757; }
+  50% { opacity: 0.5; transform: scale(0.75); box-shadow: 0 0 2px #FF4757; }
+}
