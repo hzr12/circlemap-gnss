@@ -89,14 +89,6 @@ class App {
     // 初始化地图
     this.mapManager.init('map', CONFIG.DEFAULT_CENTER, CONFIG.DEFAULT_ZOOM);
 
-    // #DEBUG: Toast 显示设备环境参数（调试瓦片差异用）
-    {
-      const _dpr = window.devicePixelRatio || 1;
-      const _zoom = this.mapManager.map ? this.mapManager.map.getZoom() : CONFIG.DEFAULT_ZOOM;
-      const _wv = /wv|WebView|Android.*Chrome\/[.\d]+ Mobile/.test(navigator.userAgent);
-      Toast.show(`📡 DPR:${_dpr}  Z:${_zoom}${_wv ? '  WebView' : ''}`, 5000);
-    }
-
     // 注册中心点变化回调（含选中圆圈回调）
     this.mapManager.onCenterChange = (center, circle) => this._onCenterChanged(center, circle);
 
@@ -718,7 +710,11 @@ class App {
       Toast.show(`✅ 定位成功（精度 ±${pos.accuracy.toFixed(0)} 米）`);
 
       // 权限已确认，激活 GNSS 卫星监听
-      this.gpsManager.startGnss().catch(err => console.error('[GNSS] unexpected error:', err));
+      this.gpsManager.startGnss().then(() => {
+        if (this.gpsManager.isGnssActive) {
+          Toast.show(`🛰️ GNSS 卫星数据已激活`);
+        }
+      }).catch(err => console.error('[GNSS] unexpected error:', err));
     } catch (err) {
       Toast.show('❌ ' + err.message);
       this._gpsBtn.classList.remove('located');
@@ -1292,7 +1288,11 @@ class App {
         Toast.show(`✅ 定位成功（精度 ±${pos.accuracy.toFixed(0)} 米）`);
 
         // 首次定位成功 → 权限已确认，激活 GNSS 卫星监听
-        this.gpsManager.startGnss().catch(err => console.error('[GNSS] unexpected error:', err));
+        this.gpsManager.startGnss().then(() => {
+          if (this.gpsManager.isGnssActive) {
+            Toast.show(`🛰️ GNSS 卫星数据已激活`);
+          }
+        }).catch(err => console.error('[GNSS] unexpected error:', err));
       }
     } else if (this._isWatching) {
       // 用户手动选过中心点 → 不覆盖 center（GPS 只更新自身位置标记）
@@ -1717,6 +1717,13 @@ class App {
       } else {
         gnssHtml = `<span class="gnss-indicator" style="opacity:0.5">🛰️ 等待卫星...</span>`;
       }
+    }
+    // #DEBUG: 在 GNSS 卫星数量下方显示设备环境参数
+    {
+      const _dpr = window.devicePixelRatio || 1;
+      const _zoom = this.mapManager.map ? this.mapManager.map.getZoom() : '?';
+      const _wv = /wv|WebView|Android.*Chrome\/[.\d]+ Mobile/.test(navigator.userAgent);
+      gnssHtml += `<br><span style="font-size:10px;opacity:0.6">📡 DPR:${_dpr}  Z:${_zoom}${_wv ? '  WebView' : ''}</span>`;
     }
 
     // 信号强度（基于 GPS 精度）
