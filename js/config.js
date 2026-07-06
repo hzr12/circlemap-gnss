@@ -209,3 +209,21 @@ async function copyText(text) {
     return false;
   }
 }
+
+/**
+ * 十进制经纬度 → 度分秒(DMS) 格式
+ * @param {number} dd 十进制度数
+ * @param {'lat'|'lng'} type 纬度或经度
+ * @returns {string} 如 "23°7′44.76″N"
+ */
+function ddToDms(dd, type) {
+  const dir = type === 'lat'
+    ? (dd >= 0 ? 'N' : 'S')
+    : (dd >= 0 ? 'E' : 'W');
+  const abs = Math.abs(dd);
+  const deg = Math.floor(abs);
+  const minFull = (abs - deg) * 60;
+  const min = Math.floor(minFull);
+  const sec = (minFull - min) * 60;
+  return `${deg}°${min}′${sec.toFixed(2)}″${dir}`;
+}

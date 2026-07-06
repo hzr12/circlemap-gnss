@@ -2071,6 +2071,11 @@ class App {
     document.getElementById('info-center').textContent =
       `${sel.center.lat.toFixed(6)}, ${sel.center.lng.toFixed(6)}`;
 
+    const dmsEl = document.getElementById('info-center-dms');
+    if (dmsEl) {
+      dmsEl.textContent = `${ddToDms(sel.center.lat, 'lat')}  ${ddToDms(sel.center.lng, 'lng')}`;
+    }
+
     document.getElementById('info-radius').textContent =
       sel.maxRadius >= 1000
         ? `${(sel.maxRadius / 1000).toFixed(2)} km`
