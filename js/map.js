@@ -72,6 +72,27 @@ class MapManager {
       mapTypeId: qq.maps.MapTypeId.ROADMAP
     });
 
+    // #DEBUG: 输出运行环境关键参数，辅助诊断手机端瓦片差异
+    {
+      const _ua = navigator.userAgent;
+      const _dpr = window.devicePixelRatio || 1;
+      const _ww = window.innerWidth;
+      const _wh = window.innerHeight;
+      const _cap = typeof Capacitor !== 'undefined';
+      const _gnss = typeof GnssData !== 'undefined';
+      console.info('[MapManager] init env:', JSON.stringify({
+        ua: _ua.substring(0, 120),
+        dpr: _dpr,
+        viewport: _ww + 'x' + _wh,
+        platform: navigator.platform || 'unknown',
+        capacitor: _cap,
+        gnssPlugin: _gnss,
+        zoom: this.map.getZoom(),
+        center: center,
+        isWebView: /wv|WebView|Android.*Chrome\/[.\d]+ Mobile/.test(_ua)
+      }, null, 2));
+    }
+
     // 追踪地图实际显示中心（绕过 getCenter 异步问题）
     this._syncCenter = new qq.maps.LatLng(center.lat, center.lng);
 
