@@ -53,7 +53,6 @@ class App {
     this._speedTrackingStart = 0;     // 追踪开始时间戳
     this._lastRecordedFix = null;     // 上次记录的定位
     this.trail = new Trail();         // #18 轨迹管理独立模块
-    this._cacheTileManager = new TileCacheManager(this); // 离线瓦片缓存
     this._followMode = false;         // #12 地图跟随模式
     this._isManualPosition = false;   // #13 是否手动设置的位置
     this._manualCenter = false;       // 用户是否通过点击/输入手动设过中心点
@@ -193,10 +192,6 @@ class App {
         }
       }
       this._saveState();
-      // 定时刷新缓存统计
-      if (this._cacheTileManager && this._cacheTileManager.ready) {
-        this._cacheTileManager._updateStats();
-      }
     }, CONFIG.POSITION_STALE_MS / 10); // 每 60s
   }
 
@@ -358,8 +353,6 @@ class App {
     document.getElementById('trail-pause-btn').addEventListener('click', () => this._toggleTrailPause());
     document.getElementById('trail-clear-btn').addEventListener('click', () => this._clearTrail());
     document.getElementById('trail-stats-btn').addEventListener('click', () => this._showTrailStats());
-    document.getElementById('cache-dl-btn').addEventListener('click', () => this._cacheTileManager.downloadViewport());
-    document.getElementById('cache-clear-btn').addEventListener('click', () => this._confirmClearCache());
     document.getElementById('trail-smooth-btn').addEventListener('click', () => this._toggleTrailSmoothing());
     document.getElementById('power-saving-btn').addEventListener('click', () => this._togglePowerSaving());
 
@@ -1191,65 +1184,6 @@ class App {
     document.getElementById('stats-close-btn').addEventListener('click', () => {
       mo.classList.remove('show');
       setTimeout(() => mo.remove(), 300);
-    });
-  }
-
-  /**
-   * 确认清空缓存弹窗
-   */
-  async _confirmClearCache() {
-    const existing = document.getElementById('cache-confirm-modal');
-    if (existing) existing.remove();
-
-    // 读取当前缓存统计
-    let statsText = '';
-    try {
-      const stats = await this._cacheTileManager.getStats();
-      if (stats.count > 0) {
-        statsText = `当前缓存 ${stats.count} 块，约 ${typeof _formatBytes === 'function' ? _formatBytes(stats.size) : stats.size + 'B'}`;
-      } else {
-        statsText = '暂无缓存数据';
-      }
-    } catch (e) {
-      statsText = '无法读取缓存统计';
-    }
-
-    const html = `<div id="cache-confirm-modal" class="modal-overlay show">
-      <div class="modal-box">
-        <div class="modal-header">
-          <div class="modal-title">清空离线缓存</div>
-          <button class="modal-close" id="cache-confirm-close">✕</button>
-        </div>
-        <div class="confirm-body">
-          <span class="confirm-icon">🗑️</span>
-          <p class="confirm-text">确定清除所有缓存的瓦片吗？</p>
-          <p class="confirm-detail">${statsText}<br>离线地图将在下次联网时重新缓存</p>
-        </div>
-        <div class="confirm-actions">
-          <button class="btn-sm" id="cache-confirm-cancel">取消</button>
-          <button class="btn-sm btn-danger" id="cache-confirm-ok">确认清除</button>
-        </div>
-      </div>
-    </div>`;
-    document.body.insertAdjacentHTML('beforeend', html);
-
-    const modal = document.getElementById('cache-confirm-modal');
-    const box = modal.querySelector('.modal-box');
-
-    const close = () => {
-      modal.classList.remove('show');
-      setTimeout(() => modal.remove(), 300);
-    };
-
-    // 点击外部关闭
-    modal.addEventListener('click', (e) => {
-      if (!box.contains(e.target)) close();
-    });
-    document.getElementById('cache-confirm-close').addEventListener('click', close);
-    document.getElementById('cache-confirm-cancel').addEventListener('click', close);
-    document.getElementById('cache-confirm-ok').addEventListener('click', () => {
-      this._cacheTileManager.clearCache();
-      close();
     });
   }
 
