@@ -29,7 +29,7 @@
   transform: translateX(-50%) translateY(0);
 }
 
-/* 可操�?toast（撤销按钮�?*/
+/* 可操�?toast（撤销按钮�?*/
 .toast-msg.toast-action {
   pointer-events: auto;
   display: flex;
@@ -50,6 +50,20 @@
 }
 .toast-undo-btn:hover {
   opacity: 0.85;
+}
+
+.toast-msg {
+  /* 弹簧感入场 */
+  transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.toast-msg.show {
+  /* 复用已有 */
+}
+
+@keyframes toastSlideIn {
+  0% { opacity: 0; transform: translateX(-50%) translateY(-24px) scale(0.92); }
+  100% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
 }
 
 @media (min-width: 768px) {
@@ -155,6 +169,50 @@
 }
 .stat-value.warning {
   color: var(--warning);
+}
+
+/* ── 确认弹窗（通用） ── */
+.confirm-body {
+  text-align: center;
+  padding: 8px 0 16px;
+}
+.confirm-icon {
+  font-size: 36px;
+  margin-bottom: 8px;
+  display: block;
+}
+.confirm-text {
+  font-size: 15px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+.confirm-detail {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}
+.confirm-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 8px;
+}
+.confirm-actions .btn-sm {
+  min-width: 100px;
+  padding: 10px 20px;
+  font-size: 13px;
+}
+.btn-danger {
+  background: var(--danger);
+  color: #fff;
+  border: none;
+}
+.btn-danger:hover {
+  opacity: 0.9;
+}
+.btn-danger:active {
+  transform: scale(0.95);
 }
 
 @media (max-width: 480px) {

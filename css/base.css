@@ -18,6 +18,15 @@ html, body {
   user-select: none;
 }
 
+/* 入口淡入动画 */
+body {
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+body.app-ready {
+  opacity: 1;
+}
+
 input, button {
   font-family: inherit;
   border: none;
@@ -72,7 +81,7 @@ input[type="number"] {
   border-color: rgba(255, 255, 255, 0.15);
 }
 
-/* ---------- 滚动条美�?---------- */
+/* ---------- 滚动条美�?---------- */
 .bottom-panel::-webkit-scrollbar {
   width: 3px;
 }
