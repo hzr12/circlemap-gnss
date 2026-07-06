@@ -1,6 +1,21 @@
 # Changelog
 
 ```
+* d9c9f12  feat: v1.2.0 — 离线瓦片缓存 + DMS 坐标解析 + 主题主色 + 首次上手引导
+* fe9e01c  refactor: css/style.css 拆分为 10 个板块文件
+* fabe551  refactor: 将 sw.js 移动到 js/ 目录下
+* f5c12b2  feat: 新增 5 组主题主色切换 + 首次上手引导（8 步）
+* 3d639c8  docs: AGENTS.md 同步当前项目结构 + 添加 Commit 描述中文规范
+* 4315d21  CI: 复制 sw.js 到 native/web/ 目录
+* 25b24fd  feat: offline tile cache + remove GPX export
+* 605a166  feat: 圆心坐标度分秒(DMS)格式显示
+* 1a578f7  feat: 度分秒(DMS)格式自动识别与转换十进制经纬度
+* 4818ce6  chore: 移除 DPR 诊断显示，UA 覆盖方案已修复瓦片差异
+* 8546173  feat: 自定义 MainActivity 覆盖 WebView UA 为桌面版以测试瓦片差异
+* c06c0cd  debug: DPR 诊断从 Toast 移至 GNSS 卫星数量下方显示
+* 3e53128  chore: 移除 GNSS 卫星数据已激活 Toast
+* 612ac78  debug: 启动时 Toast 显示 DPR/缩放/WebView 状态，替代 DevTools 调试
+* ab2a392  debug: 添加设备环境诊断日志，辅助排查手机端瓦片差异
 * ac316b7  docs: 创建 AGENTS.md — Circlemap 项目指南
 * 2a9ebcb  feat: 轨迹平滑算法 + 轨迹统计面板
 * f5ae58f  feat: 轨迹按速度分段着色（蓝→青→黄绿→橙→红）
@@ -68,6 +83,7 @@
 
 | Tag / Ref | 版本戳 | 说明 |
 |-----------|--------|------|
+| `v1.2.0` | v50 | 离线瓦片缓存 + DMS 坐标解析/显示 + 主题主色 5 种 + 首次上手引导 8 步 + CSS 拆分为 10 模块 |
 | `ac316b7` | v12 | 轨迹平滑 + 统计面板 |
 | `f5ae58f` | v11 | 轨迹按速度着色 |
 | `a400c78` | v10 | 审查修复 |
