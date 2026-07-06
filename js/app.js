@@ -89,6 +89,14 @@ class App {
     // 初始化地图
     this.mapManager.init('map', CONFIG.DEFAULT_CENTER, CONFIG.DEFAULT_ZOOM);
 
+    // #DEBUG: Toast 显示设备环境参数（调试瓦片差异用）
+    {
+      const _dpr = window.devicePixelRatio || 1;
+      const _zoom = this.mapManager.map ? this.mapManager.map.getZoom() : CONFIG.DEFAULT_ZOOM;
+      const _wv = /wv|WebView|Android.*Chrome\/[.\d]+ Mobile/.test(navigator.userAgent);
+      Toast.show(`📡 DPR:${_dpr}  Z:${_zoom}${_wv ? '  WebView' : ''}`, 5000);
+    }
+
     // 注册中心点变化回调（含选中圆圈回调）
     this.mapManager.onCenterChange = (center, circle) => this._onCenterChanged(center, circle);
 
