@@ -74,6 +74,12 @@ jobs:
         working-directory: native
         run: npx cap sync android
 
+      - name: 覆盖 User-Agent（桌面版 UA 测试瓦片差异）
+        run: |
+          cp native/ua-override/MainActivity.java native/android/app/src/main/java/com/hzr/circlemap/MainActivity.java
+          echo "=== 验证 MainActivity.java ==="
+          head -15 native/android/app/src/main/java/com/hzr/circlemap/MainActivity.java
+
       - name: 集成 GNSS 插件到 Android 项目
         working-directory: native
         run: |
