@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="css/circles.css?t=20260706v50">
   <link rel="stylesheet" href="css/trail.css?t=20260706v50">
   <link rel="stylesheet" href="css/toast-modal.css?t=20260706v50">
-  <link rel="stylesheet" href="css/onboarding.css?t=20260706v50">
+  <link rel="stylesheet" href="css/onboarding.css?t=20260706v51">
   <link rel="stylesheet" href="css/responsive.css?t=20260706v50">
 </head>
 <body>
@@ -313,19 +313,20 @@
   <script src="js/map.js?t=20260706v24"></script>
   <script src="js/tile-cache.js?t=20260706v50"></script>
   <script src="js/gps.js?t=20260705v26"></script>
-<script src="js/app.js?t=20260706v50"></script>
+<script src="js/app.js?t=20260706v51"></script>
 
-<!-- 首次上手引导 -->
-<div id="onboarding-overlay" class="onboarding-overlay">
-  <div class="onboarding-backdrop"></div>
-  <div class="onboarding-card">
-    <div class="onboarding-step-indicator" id="onboarding-step">1/7</div>
-    <span class="onboarding-icon" id="onboarding-icon">🎯</span>
-    <div class="onboarding-title" id="onboarding-title">欢迎</div>
-    <div class="onboarding-text" id="onboarding-text">描述</div>
-    <div class="onboarding-actions">
-      <button id="onboarding-skip-btn" class="onboarding-skip">跳过</button>
-      <button id="onboarding-next-btn" class="onboarding-next">下一步</button>
+<!-- 功能提示浮层（逐个显示在对应功能旁） -->
+<div id="hint-tooltip" class="hint-tooltip" style="display:none">
+  <div class="hint-arrow" id="hint-arrow"></div>
+  <div class="hint-body">
+    <div class="hint-header">
+      <span class="hint-step" id="hint-step"></span>
+      <button class="hint-close" id="hint-close">✕</button>
+    </div>
+    <p class="hint-text" id="hint-text"></p>
+    <div class="hint-footer">
+      <button class="hint-skip" id="hint-skip">全部跳过</button>
+      <button class="hint-next" id="hint-next">知道了</button>
     </div>
   </div>
 </div>

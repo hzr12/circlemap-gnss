@@ -147,8 +147,8 @@ class App {
     // 进入页面后自动启动持续 GPS 追踪
     this._startWatching();
 
-    // 首次上手引导
-    setTimeout(() => this._showOnboarding(), 1500);
+    // 首次功能提示
+    setTimeout(() => this._showHints(), 1500);
 
     // 页面可见性变化：后台停 GPS，前台恢复（#6 加 pagehide 兜底 iOS）
     this._pageHideHandler = () => {
@@ -430,9 +430,10 @@ class App {
       btn.addEventListener('click', () => this._setAccent(btn.dataset.accent));
     });
 
-    // —— 上手引导按钮 ——
-    document.getElementById('onboarding-next-btn').addEventListener('click', () => this._nextOnboardingStep());
-    document.getElementById('onboarding-skip-btn').addEventListener('click', () => this._dismissOnboarding());
+    // —— 功能提示按钮 ——
+    document.getElementById('hint-next').addEventListener('click', () => this._nextHint());
+    document.getElementById('hint-skip').addEventListener('click', () => this._dismissHints());
+    document.getElementById('hint-close').addEventListener('click', () => this._dismissHints());
 
     // —— 圆列表事件委托（选中/编辑/删除） ——
     this._circleListEl = document.getElementById('circle-list');
@@ -1678,7 +1679,6 @@ class App {
     document.documentElement.setAttribute('data-accent', name);
     this._updateAccentBtns();
     try { localStorage.setItem('circlemap_accent', name); } catch (e) { /* 静默 */ }
-    if (this._onboardingActive) return; // 引导中不弹 Toast
     Toast.show(`🎨 已切换为${ {cyan:'青色', green:'绿色', blue:'蓝色', purple:'紫色', orange:'橙色'}[name] }主题`);
   }
 
@@ -1691,62 +1691,41 @@ class App {
     });
   }
 
-  /* ============= 首次上手引导 ============= */
+  /* ============= 功能提示（放在对应功能旁） ============= */
 
-  /** 引导步骤定义 */
-  static ONBOARDING_STEPS = [
+  /** 提示步骤定义 */
+  static HINT_STEPS = [
     {
-      icon: '🎯',
-      title: '欢迎使用鬼抓人地图雷达',
-      text: '实时追踪距离与方位，支持离线瓦片\n下面花 30 秒了解核心功能'
-    },
-    {
-      icon: '📍',
       target: '#gps-btn',
-      title: '① 定位当前位置',
-      text: '点击右下角的 GPS 按钮定位您的位置\n长按按钮切换持续追踪模式'
+      text: '短按定位，长按持续追踪',
+      placement: 'left',
     },
     {
-      icon: '🗺️',
       target: '.mode-tabs',
-      title: '② 选择中心点',
-      text: '点击地图任意位置设为圆心\n或切换到「输入坐标」手动输入'
+      text: '切换到坐标输入模式可手动输入',
+      placement: 'bottom',
     },
     {
-      icon: '✏️',
       target: '#parse-input',
-      title: '③ 坐标快速输入',
-      text: '支持智能粘贴识别：\n23.1291, 113.2644 (十进制)\n23°7′44.76″N 113°15′51.84″E (度分秒)'
+      text: '智能识别度分秒和十进制坐标',
+      placement: 'top',
     },
     {
-      icon: '⭕',
       target: '#draw-btn',
-      title: '④ 绘制同心圆',
-      text: '设置半径后点击「绘制圆形」\n多层同心圆自动显示在地图上'
+      text: '设好半径后点击绘制同心圆',
+      placement: 'top',
     },
     {
-      icon: '📋',
-      target: '.info-area',
-      title: '⑤ 查看信息 & 复制坐标',
-      text: '选中圆时下方显示圆心坐标、半径等\n点击坐标可一键复制到剪贴板'
-    },
-    {
-      icon: '🏃',
       target: '.trail-section',
-      title: '⑥ 轨迹记录',
-      text: '开始记录移动路线，查看速度曲线\n支持平滑、统计、离线瓦片缓存'
+      text: '记录运动路线，查看速度与统计',
+      placement: 'top',
     },
-    {
-      icon: '🎉',
-      title: '准备好了！',
-      text: '现在开始您的户外探险吧\n遇到问题可随时参考功能提示'
-    }
   ];
 
   /**
-   * 显示首次上手引导
+   * 显示功能提示
    */
-  _showOnboarding() {
+  _showHints() {
     try {
       const done = localStorage.getItem('circlemap_onboarding_done');
       if (done === '1') return;
@@ -1754,67 +1733,167 @@ class App {
 
     this._onboardingStep = 0;
     this._onboardingActive = true;
-    this._renderOnboardingStep();
-    document.getElementById('onboarding-overlay').classList.add('show');
+    this._renderHint();
   }
 
   /**
-   * 渲染引导步骤
+   * 定位并渲染当前提示
    */
-  _renderOnboardingStep() {
-    const steps = App.ONBOARDING_STEPS;
+  _renderHint() {
+    const steps = App.HINT_STEPS;
     const step = steps[this._onboardingStep];
-    if (!step) return;
+    if (!step) {
+      this._dismissHints();
+      return;
+    }
 
-    // 移除旧高亮
-    document.querySelectorAll('.onboarding-highlight').forEach(el => {
-      el.classList.remove('onboarding-highlight');
+    const tooltip = document.getElementById('hint-tooltip');
+    const textEl = document.getElementById('hint-text');
+    const stepEl = document.getElementById('hint-step');
+
+    textEl.textContent = step.text;
+    stepEl.textContent = `${this._onboardingStep + 1}/${steps.length}`;
+
+    // 如果提示位于面板内且面板折叠了，展开面板
+    if (step.target && step.target !== '#gps-btn' && step.target !== '#mode-select') {
+      if (this._panelCollapsed) {
+        this._panelCollapsed = false;
+        this._bottomPanel.classList.remove('collapsed');
+      }
+    }
+
+    this._positionHint(step.target, step.placement || 'bottom');
+
+    tooltip.style.display = 'block';
+    // 先让浏览器完成布局再淡入
+    requestAnimationFrame(() => {
+      tooltip.style.opacity = '1';
     });
-
-    // 高亮目标元素
-    if (step.target) {
-      const target = document.querySelector(step.target);
-      if (target) target.classList.add('onboarding-highlight');
-    }
-
-    // 更新内容
-    document.getElementById('onboarding-step').textContent =
-      `${this._onboardingStep + 1}/${steps.length}`;
-    document.getElementById('onboarding-icon').textContent = step.icon || '🎯';
-    document.getElementById('onboarding-title').textContent = step.title;
-    document.getElementById('onboarding-text').textContent = step.text;
-
-    // 更新按钮
-    const nextBtn = document.getElementById('onboarding-next-btn');
-    if (this._onboardingStep === steps.length - 1) {
-      nextBtn.textContent = '开始使用';
-    } else {
-      nextBtn.textContent = '下一步';
-    }
   }
 
   /**
-   * 下一步
+   * 将提示浮层定位到目标元素旁
+   * @param {string|null} targetSelector CSS 选择器，null 则居中
+   * @param {string} placement 首选方位: top|bottom|left|right
    */
-  _nextOnboardingStep() {
-    const steps = App.ONBOARDING_STEPS;
+  _positionHint(targetSelector, placement) {
+    const tooltip = document.getElementById('hint-tooltip');
+    const arrow = document.getElementById('hint-arrow');
+
+    // 无目标 → 居中（结尾提示）
+    if (!targetSelector) {
+      tooltip.style.transform = '';
+      tooltip.style.top = '50%';
+      tooltip.style.left = '50%';
+      tooltip.style.transform = 'translate(-50%, -50%)';
+      tooltip.setAttribute('data-placement', 'center');
+      if (arrow) arrow.style.display = 'none';
+      return;
+    }
+
+    if (arrow) arrow.style.display = 'block';
+
+    const target = document.querySelector(targetSelector);
+    if (!target || target.offsetWidth === 0) {
+      // 目标不存在或隐藏 → 居中降级
+      tooltip.style.transform = '';
+      tooltip.style.top = '50%';
+      tooltip.style.left = '50%';
+      tooltip.style.transform = 'translate(-50%, -50%)';
+      tooltip.setAttribute('data-placement', 'center');
+      return;
+    }
+
+    tooltip.style.transform = '';
+    const tr = target.getBoundingClientRect();
+
+    // 临时显示以测量尺寸
+    tooltip.style.display = 'block';
+    tooltip.style.opacity = '0';
+    const tw = tooltip.offsetWidth;
+    const th = tooltip.offsetHeight;
+    tooltip.style.display = 'none';
+    tooltip.style.opacity = '';
+
+    const PAD = 10;     // 距视口边距
+    const GAP = 12;     // 与目标的间距（含箭头视觉空间）
+
+    // 按优先级依次尝试各方位，选第一个完全可见的
+    const tries = [placement, 'bottom', 'top', 'right', 'left'];
+    let best = null;
+
+    for (const p of tries) {
+      let t, l;
+      switch (p) {
+        case 'left':
+          t = tr.top + tr.height / 2 - th / 2;
+          l = tr.left - tw - GAP;
+          break;
+        case 'right':
+          t = tr.top + tr.height / 2 - th / 2;
+          l = tr.right + GAP;
+          break;
+        case 'top':
+          t = tr.top - th - GAP;
+          l = tr.left + tr.width / 2 - tw / 2;
+          break;
+        case 'bottom':
+        default:
+          t = tr.bottom + GAP;
+          l = tr.left + tr.width / 2 - tw / 2;
+          break;
+      }
+
+      // 夹紧到视口内
+      const ct = Math.max(PAD, Math.min(t, window.innerHeight - th - PAD));
+      const cl = Math.max(PAD, Math.min(l, window.innerWidth - tw - PAD));
+
+      // 检查方向是否仍然正确（没有被夹偏太远）
+      const tOff = Math.abs(ct - t);
+      const lOff = Math.abs(cl - l);
+      const tooFar = Math.max(tOff, lOff) > Math.max(tw, th) * 0.5;
+
+      if (!tooFar || best === null) {
+        best = { top: ct, left: cl, placement: p };
+        if (!tooFar && p === placement) break; // 完美命中
+      }
+    }
+
+    // 如果全都失败，居中
+    if (!best) {
+      tooltip.style.top = '50%';
+      tooltip.style.left = '50%';
+      tooltip.style.transform = 'translate(-50%, -50%)';
+      tooltip.setAttribute('data-placement', 'center');
+      return;
+    }
+
+    tooltip.style.top = best.top + 'px';
+    tooltip.style.left = best.left + 'px';
+    tooltip.setAttribute('data-placement', best.placement);
+  }
+
+  /**
+   * 下一个提示
+   */
+  _nextHint() {
+    const steps = App.HINT_STEPS;
     if (this._onboardingStep >= steps.length - 1) {
-      this._dismissOnboarding();
+      this._dismissHints();
       return;
     }
     this._onboardingStep++;
-    this._renderOnboardingStep();
+    this._renderHint();
   }
 
   /**
-   * 关闭引导
+   * 关闭所有提示
    */
-  _dismissOnboarding() {
+  _dismissHints() {
     this._onboardingActive = false;
-    document.getElementById('onboarding-overlay').classList.remove('show');
-    document.querySelectorAll('.onboarding-highlight').forEach(el => {
-      el.classList.remove('onboarding-highlight');
-    });
+    const tooltip = document.getElementById('hint-tooltip');
+    tooltip.style.display = 'none';
+    tooltip.style.opacity = '0';
     try { localStorage.setItem('circlemap_onboarding_done', '1'); } catch (e) { /* 静默 */ }
   }
 
