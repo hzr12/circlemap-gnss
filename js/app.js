@@ -718,11 +718,7 @@ class App {
       Toast.show(`✅ 定位成功（精度 ±${pos.accuracy.toFixed(0)} 米）`);
 
       // 权限已确认，激活 GNSS 卫星监听
-      this.gpsManager.startGnss().then(() => {
-        if (this.gpsManager.isGnssActive) {
-          Toast.show(`🛰️ GNSS 卫星数据已激活`);
-        }
-      }).catch(err => console.error('[GNSS] unexpected error:', err));
+      this.gpsManager.startGnss().catch(err => console.error('[GNSS] unexpected error:', err));
     } catch (err) {
       Toast.show('❌ ' + err.message);
       this._gpsBtn.classList.remove('located');
@@ -1296,11 +1292,7 @@ class App {
         Toast.show(`✅ 定位成功（精度 ±${pos.accuracy.toFixed(0)} 米）`);
 
         // 首次定位成功 → 权限已确认，激活 GNSS 卫星监听
-        this.gpsManager.startGnss().then(() => {
-          if (this.gpsManager.isGnssActive) {
-            Toast.show(`🛰️ GNSS 卫星数据已激活`);
-          }
-        }).catch(err => console.error('[GNSS] unexpected error:', err));
+        this.gpsManager.startGnss().catch(err => console.error('[GNSS] unexpected error:', err));
       }
     } else if (this._isWatching) {
       // 用户手动选过中心点 → 不覆盖 center（GPS 只更新自身位置标记）
