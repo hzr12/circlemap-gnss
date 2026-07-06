@@ -1,148 +1,149 @@
-# Circlemap — Agent Guide
+# Circlemap — 同心圆雷达地图
 
-> 纯 JS 同心圆地图工具（腾讯地图 API v2），专为户外活动设计。
+纯前端单页应用（SPA），基于腾讯地图 JavaScript API v2。  
+用于"鬼抓人"等户外活动——以任意点为中心绘制同心圆，实时追踪距离、方位、轨迹。
 
-## ⚠️ 分支规则（必须遵守）
+---
 
-- **`dev` 是主开发分支，永远不要删除 `dev` 分支**
-- 所有新功能、bug 修复都在 `dev` 上开发
-- `dev` 分支只接受web更新，以后有新的web内容直接同步
-- PR 合并到 `main` 时**不要**使用 `--delete-branch` 参数
-- `main` 只接受从 `dev` 合并，不在 `main` 上直接提交
+## 项目结构速览
 
-### 三段式分支架构
-| 分支 | 角色 | 内容 | 提交 |
-|---|---|---|---|
-| `dev` | web-only 主线 | 仅 `index.html`、`js/**`、`css/**`、`AGENTS.md` 等浏览器可运行文件 | web-only 改动可直接合入；不接受 `native/**` 与 `.github/workflows/**` |
-| `circlemap-gnss` | 原生端项目 | 含完整 `native/gnss-plugin/**`、`native/capacitor.config.json`、CI 配置 | GNnative/ 改动完成后手动将 web-only 部分 cherry-pick / checkout 到 `dev` |
-| `main` | 正式发布线 | 仅接受从 `dev` 合并；不允许直接提交 | 由用户手动从 `dev` PR；不含发布 APK 标签的功能提交 |
-| `vX.Y.Z` tag | 正式版快照 | 指向特定 `feature/*` 的发布 commit | `git tag -a vX.Y.Z <feature/... HEAD> && git push origin vX.Y.Z` 触发 GH Actions Release 流程 |
-
-## 首个命令
-
-```powershell
-# 在本地启动一个静态服务器预览
-cd F:\project\circlemap; python -m http.server 8000
+```
+index.html          ← 唯一入口（直接打开即可运行）
+css/style.css       ← 深色/浅色双主题（CSS 变量）
+js/
+  config.js         ← 所有可调参数 + 工具函数（calcDistance, formatDistance 等）
+  app.js            ← 主控制器 App 类（UI 绑定 + 逻辑编排 + 启动入口）
+  map.js            ← MapManager（腾讯地图 + Canvas 同心圆渲染）
+  gps.js            ← GPSManager（浏览器 Geolocation API + GNSS 插件）
+  trail.js          ← Trail（轨迹采样、平滑、距离计算）
+  tile-cache.js     ← TileCacheManager（离线瓦片缓存管理）
+  toast.js          ← Toast（短暂消息提示）
+  storage.js        ← Storage（localStorage 读写）
+sw.js               ← Service Worker（离线瓦片缓存拦截）
+native/             ← Capacitor v8 Android 原生壳 + GNSS 插件
+  gnss-plugin/      ← 自定义 Capacitor 插件（原生端 GNSS 卫星数据）
+  capacitor.config.json
+  package.json
+.github/workflows/
+  android-build.yml ← CI: 构建签名 APK 并发布 GitHub Release
 ```
 
-## 关键架构
+---
 
-### 脚本加载顺序（严格依赖）
-`index.html` 中 `<script>` 顺序不可乱：
+## 运行与调试
+
+**Web 端** — 直接双击 `index.html` 或用任意 HTTP 服务器托管即可运行：
 ```
-config.js → toast.js → storage.js → trail.js → gpx.js → map.js → gps.js → app.js
+# Python
+python -m http.server 8080
+
+# Node
+npx serve
 ```
-新增 JS 文件必须插入正确位置。`config.js` 定义全局 `CONFIG` 和全局函数（`calcDistance`、`calcBearing`、`formatDistance` 等），被所有其他文件依赖。
+打开 `http://localhost:8080`。  
+不需要 `npm install`，没有 webpack/rollup/web-vite 构建步骤。
 
-### 版本戳
-修改 JS/CSS 后必须**更新所有** `?t=` 参数（统一递增），否则浏览器缓存会加载旧代码。
+**调试技巧：**
+- `window.app` 或 `window._app` 暴露了 App 实例，控制台可直接调用 `app.gpsManager.gnssSatellites` 等
+- 所有配置参数在 `CONFIG` 全局对象中（`js/config.js`）
 
-### 坐标体系
-- **内部存储/渲染全部 GCJ-02**（腾讯地图使用）
-- GPS 返回 WGS84，通过 `mapManager.wgs84ToGcj02()` 即时纠偏
-- 纠偏算法嵌入在 map.js（纯 JS，不依赖腾讯地图 convertor API）
-- GPX 导出时输出 `wgsLat/wgsLng`（优先）或 `lat/lng`（GCJ-02 降级），用户需知此区别
-
-## 模块职责
-
-| 文件 | 职责 | 关键点 |
-|------|------|--------|
-| `config.js` | 全局常量 + 工具函数 | 所有 magic number 在此，全局函数也在此 |
-| `app.js` | 主控制器 | 协调所有模块，绑定 UI 事件，**不要往这里加绘图逻辑** |
-| `map.js` | 地图管理器 | 腾讯地图 API + Canvas 叠加层，**两阶段渲染管线** |
-| `gps.js` | GPS 定位 | `getCurrentPosition()` / `watchPosition()`，iOS 切后台兜底 |
-| `trail.js` | 轨迹存储 + 采样 | 最大 500 点，10m 最小采样间距，`getSmoothedPositions()` |
-| `storage.js` | localStorage 持久化 | 静态类，4 个 key |
-| `gpx.js` | GPX 导出 | GPX 1.1 schema，含 `gpxtpx:speed/course` 扩展 |
-| `toast.js` | Toast 提示 | 简单消息提示。**带撤销按钮的 toast 在 app.js 的 `_showUndoToast()`** |
-
-## 渲染管线（map.js）
-
-Canvas 叠加层 `#circle-canvas` 浮在腾讯地图 div 之上：
-
-1. `_scheduleRedraw()` — RAF 节流到 30fps
-2. `_redraw()` — 两阶段：
-   - **Pass 1（离屏 Canvas）**：`_drawCircleFill()` — 画所有圆的填充，重叠自动叠色加深
-   - `drawImage` 合成到主 Canvas
-   - **Pass 2（主 Canvas）**：`_drawCircleStrokes()` — 描边 + 圆心标记
-3. `_getColors()` — 根据 `_theme` 返回 9 字段颜色对象，dark/light 各一套
-4. 轨迹使用 `qq.maps.Polyline` **数组**（不是单条 Polyline），按速度分段着色
-
-### 离屏 Canvas 要点
-- `_getOffscreen(w, h)` 懒创建，尺寸变化时重建
-- `devicePixelRatio` 处理 HiDPI
-- 所有绘制坐标经 `_latLngToContainerPoint()` 投影到像素
-
-## localStorage keys
-
-| Key | 用途 | 写入时机 |
-|-----|------|---------|
-| `circlemap_data` | 圆数据 + 设置 | 有变更时 (`_dirty` 门控) |
-| `circlemap_trail` | 轨迹点数组 | 停止录制 / 切后台 / 定期 |
-| `circlemap_theme` | 主题 dark/light | 切换主题时 |
-| `circlemap_trail_smooth` | 平滑开关 | 切换时 |
-
-## 轨迹系统
-
-- `Trail.positions[]` 每个点：`{lat, lng, wgsLat?, wgsLng?, time, accuracy?, speed?, heading?}`
-- `getSmoothedPositions(windowSize=5)` — 滑动窗口平均，不修改原始数据，返回新数组
-- 渲染调用链：`_getTrailPositions()` → `mapManager.setTrail()`
-- 速度着色：5 档（蓝 0-0.5 / 青 0.5-1.5 / 黄绿 1.5-3 / 橙 3-5 / 红 >5 m/s）
-- 连续同色段合并为一条 Polyline（500点 → 典型 20-50 段）
-
-## 样式体系
-
-- CSS 变量 `:root` + `[data-theme="light"]` override，约 30 个变量
-- Canvas 颜色独立于 CSS，在 `map.js._getColors()` 中定义，修改颜色需**同时改两处**
-- 移动端断点 480px，平板/桌面断点 768px
-
-## GPS 行为
-
-- `enableHighAccuracy: true`, `timeout: 10000`, `maximumAge: 0`（单次）/ 5000（持续）
-- 总超时兜底 = timeout + 5000ms（防 GPS 信号弱卡死）
-- 页面 `visibilitychange` + `pagehide` 兜底：后台自动停追踪，前台恢复
-- 位置过期阈值 10 分钟，自动重定位最小间隔 5 分钟
-
-## GNSS 卫星（原生端）
-
-### 数据来源
-- **Android GNSS API**：`GnssStatus.Callback` 回调，每秒更新
-- **Capacitor 插件**：`GnssDataPlugin.java` → `gnssStatus` 事件
-- **轮询兜底**：`getLastGnssData()` 每 2 秒，最多 15 秒
-
-### 卫星数据字段
-每颗卫星：`{svid, constellation, cn0DbHz, elevation, azimuth, usedInFix, hasEphemeris, hasAlmanac}`
-
-| 字段 | 含义 |
-|---|---|
-| `svid` | 卫星编号 (PRN) |
-| `constellation` | 星座：GPS/BEIDOU/GLONASS/GALILEO |
-| `cn0DbHz` | 信噪比 (dB-Hz) |
-| `usedInFix` | **是否参与定位解算** |
-| `hasEphemeris` | 是否有星历数据 |
-| `hasAlmanac` | 是否有年历数据 |
-
-### JS Getters（gps.js）
-- `gnssUsedCount` — 参与定位的卫星数
-- `gnssVisibleCount` — 可见卫星总数
-- `gnssAvgSnr` — 参与定位卫星的平均信噪比
-- `gnssConstellationStats` — 所有可见卫星按星座分组
-- `gnssUsedConstellationStats` — **参与定位的卫星按星座分组**
-
-### 显示格式（app.js）
+**Android APK 构建：**
+```bash
+cd native
+npm install
+cd gnss-plugin && npx tsc && cd ..
+npx cap add android   # 首次
+# 手动将 Web 资源复制到 native/web/（参考 CI 流程）
+cp -R ../index.html ../js ../css web/
+npx cap sync android
+cd android && ./gradlew assembleDebug
 ```
-🛰️ 定位:8 可见:20 信噪比:45dB
-```
-- `定位:8` — 参与定位解算的卫星数（`usedInFix=true`）
-- `可见:20` — 可见卫星总数（含星历但未参与定位）
-- `信噪比:45dB` — 参与定位卫星的平均信噪比
+CI 会自动完成上述流程并发布到 GitHub Release。
 
-## 开发注意事项
+---
 
-- **不要引入构建工具或框架**——纯 ES6+ 直接在浏览器运行
-- `index.html` 中腾讯地图 API key 为 `OB4BZ-D4W3U-B7VVO-4PJWW-6TKDJ-WPB77`（demo key，可公开）
-- `mode === 'click'` 时地图点击选点，`mode === 'input'` 时隐藏点击提示
-- 半径滑块使用**对数映射**（`sliderToRadius` / `radiusToSlider`），小半径占更多行程
-- 圆 ID 用 `Date.now()` 起始递增（`_idCounter`），避免时间戳碰撞
-- GPX 导出 URL 5 秒后 revoke
-- 撤销 toast 5 秒自动关闭，点击后 `disabled=true` 防双击
+## 关键架构事实
+
+### 无框架 / 无构建
+纯 ES6 class，8 个 `*.js` 文件通过 `<script>` 标签顺序加载（依赖顺序见 `index.html` 末尾）。  
+**加载顺序有依赖：** `config.js → toast.js → storage.js → trail.js → map.js → tile-cache.js → gps.js → app.js`。  
+更改文件需更新 `index.html` 中脚本 `<script src="...">` 的 `?t=` 缓存版本戳（手动 bump）。
+
+### 入口初始化
+`app.js` 末尾：`App` 实例化 → `init()`。  
+双重启动保护：`DOMContentLoaded` + `readyState` 检查，`_appInitialized` 防重复。
+
+### 腾讯地图 API
+- 使用 `qq.maps.*` 命名空间，v2 版本
+- API key `OB4BZ-D4W3U-B7VVO-4PJWW-6TKDJ-WPB77` 是 DEMO key（位于 `config.js` + `index.html` 两处）
+- 额外加载 `libraries=geometry,convertor`（球面计算 + 坐标转换）
+- 坐标纠偏：WGS84（浏览器）→ GCJ-02（腾讯地图），优先官方 convertor API，5 秒超时降级到手写算法
+
+### Canvas 同心圆渲染（`map.js`）
+- 使用 Canvas 叠加层（`#circle-canvas`，CSS `pointer-events: none`）而非腾讯地图原生 Overlay
+- 离屏 Canvas 双 Pass 渲染：Pass 1 画填充（重叠自然加深），Pass 2 画描边+标注
+- `requestAnimationFrame` + 30fps 限频（`_scheduleRedraw`）
+- 事件追踪 `_syncCenter` 而非依赖 `map.getCenter()`（异步问题）
+- 自带 `roundRect` polyfill 兼容 iOS <15.4
+
+### GPS 定位（`gps.js`）
+- 纯浏览器 `Geolocation API`，无第三方 SDK
+- 单次定位（短按按钮）vs 持续追踪 `watchPosition`（长按按钮切换）
+- 节流：高频位置更新每 5 秒最多处理一次（`_gpsMinInterval = 5000`）
+- 超时降级：连续 5 次超时 → 自动切低精度 `enableHighAccuracy: false`，每 2 分钟尝试恢复
+- 省电模式：低电量 <20% 锁定省电，<10% 自动停止追踪
+- GNSS 插件（仅 Capacitor Android）：通过自定义插件读取原始卫星数据（星座、信噪比、参与定位数）
+
+### 轨迹模块
+- Trail 类独立管理轨迹数组
+- 自适应采样：最小 10m 间隔 + 精度联动抖动过滤（`TRAIL_JITTER_FACTOR = 1.5`）
+- 滑动窗口平滑（窗口 5，`getSmoothedPositions`），偏好存储 `localStorage`
+
+### 持久化
+- `localStorage` 保存：圆圈列表、选中状态、半径、中心点、轨迹数据、主题偏好、平滑开关
+- 轨迹和圆圈状态分开存储（`circlemap_data` + `circlemap_trail`）
+- 脏标记模式：`_dirty` / `_trailDirty`，60 秒定时 + 操作时写入
+
+### 删除撤销
+- 清除全部 / 删除单个圆 都支持撤销（5 秒内可点"撤销"按钮）
+- 清除轨迹也支持撤销
+- `_showUndoToast(message, onUndo)` 通用方法
+
+### 信号 / 天气 / 电池
+- GPS 状态条显示：信号强度条（4 档）、速度、海拔、电量、最近圆距离
+- 天气：主用 Open-Meteo（免费无 key），降级到 wttr.in（中文），省电模式下跳过
+- 电池：`navigator.getBattery` 监控，支持消耗速率估算剩余时间
+
+### Android 原生（Capacitor v8）
+- `capacitor.config.json` 中注册了 `GnssData` 插件
+- CI `android-build.yml` 会自动将 web 资源复制到 `native/web/`，`cap sync` 推入 Android 项目
+- GNSS 插件注册监听顺序讲究：先 `addListener` 后 `startGnssListening()`（防竞态）
+- 权限：需 `ACCESS_FINE_LOCATION`，插件同时请求 Capacitor 权限和浏览器 Geolocation 权限
+
+---
+
+## 版本与发布
+
+- 版本号体现在 `index.html` 中脚本的 `?t=YYYYMMDDvN` 参数（手动递增）
+- `CHANGELOG.md` 维护完整的 git 历史（人工维护，非自动生成）
+- GitHub Release：`v*` tag 触发正式版，main push 触发 dev-build 预发布
+- APK 签名：keystore `native/circlemap.keystore`，口令 `circlemap123`
+- **Commit 描述必须使用中文**：feature/bugfix/refactor 等分类允许使用英文前缀（如 `feat:`），但详细描述必须中文
+
+
+
+---
+
+## 常见陷阱
+
+1. **`?t=` 缓存版本戳**：修改 `js/*.js` 或 `css/style.css` 后必须更新 `index.html` 中对应 `<script>` / `<link>` 的版本戳（`YYYYMMDDvN`），否则浏览器缓存旧代码。
+2. **脚本加载顺序**：新加 JS 文件必须按正确顺序插入 `index.html` 的 `<script>` 标签列表。
+3. **坐标转换 5 秒超时**：`wgs84ToGcj02` 的 convertor API 调用有 5 秒硬超时。弱网环境超时后会降级到手写算法，不影响功能。
+4. **腾讯地图 API 加载**：页面需联网加载 `map.qq.com/api/js`，内网/断网不可用。
+5. **`roundRect` polyfill**：影响 Canvas 圆角矩形标注框，iOS <15.4 和 Firefox <112 需要。
+6. **GPS 节流 5 秒**：高频位置更新会被丢弃，实测中连续定位的间隔最少 5 秒。
+7. **后台暂停 GPS**：iOS 使用 `pagehide` / `pageshow` 事件（`visibilitychange` 在 iOS 上不可靠）。
+8. **GNSS 插件**：仅在 Capacitor Android 原生端可用；浏览器 Web 端不显示卫星数据，GNSS bar 会自动隐藏（`display: none`）。
+9. **最大轨迹 500 点**：`TRAIL_MAX_POINTS`，超出后丢弃最早的点。
+10. **Chart.js 实例必须 `destroy()`**：`App.destroy()` 中显式销毁，否则 canvas 引用泄漏。
+11. **思考和推理必须使用中文回答**
