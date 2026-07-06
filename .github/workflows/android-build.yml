@@ -67,7 +67,7 @@ jobs:
       - name: 复制 Web 资源到 native/web/
         run: |
           mkdir -p native/web
-          cp -R index.html js css native/web/
+          cp -R index.html js css sw.js native/web/
           ls -la native/web/
 
       - name: 同步 Web 资源到 Android 项目
