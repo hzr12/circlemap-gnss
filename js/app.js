@@ -1718,13 +1718,6 @@ class App {
         gnssHtml = `<span class="gnss-indicator" style="opacity:0.5">🛰️ 等待卫星...</span>`;
       }
     }
-    // #DEBUG: 在 GNSS 卫星数量下方显示设备环境参数
-    {
-      const _dpr = window.devicePixelRatio || 1;
-      const _zoom = this.mapManager.map ? this.mapManager.map.getZoom() : '?';
-      const _wv = /wv|WebView|Android.*Chrome\/[.\d]+ Mobile/.test(navigator.userAgent);
-      gnssHtml += `<br><span style="font-size:10px;opacity:0.6">📡 DPR:${_dpr}  Z:${_zoom}${_wv ? '  WebView' : ''}</span>`;
-    }
 
     // 信号强度（基于 GPS 精度）
     let signalHtml = '';
