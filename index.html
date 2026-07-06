@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>鬼抓人——地图雷达</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?t=20260706v48">
 </head>
 <body>
   <div id="map">
@@ -187,12 +187,20 @@
           </button>
           <button id="trail-pause-btn" class="btn btn-secondary btn-sm" disabled>暂停</button>
           <button id="trail-clear-btn" class="btn btn-secondary btn-sm" disabled>清除</button>
-          <button id="trail-export-btn" class="btn btn-secondary btn-sm" disabled>GPX</button>
+          <button id="cache-dl-btn" class="btn btn-secondary btn-sm" title="离线缓存当前区域瓦片">📥 缓存</button>
         </div>
         <div class="trail-actions">
           <button id="trail-stats-btn" class="btn-sm" disabled>📊 统计</button>
           <button id="trail-smooth-btn" class="btn-sm active">✨ 平滑</button>
           <button id="power-saving-btn" class="btn-sm" title="省电模式：降低 GPS 精度以节省电量">省电</button>
+        </div>
+        <div class="cache-info">
+          <span class="cache-size" id="cache-size">未缓存</span>
+          <button id="cache-clear-btn" class="btn-sm cache-clear-btn" title="清除瓦片缓存">🗑️</button>
+          <div class="cache-progress hidden" id="cache-progress">
+            <div class="cache-progress-bar" id="cache-progress-bar"></div>
+            <span class="cache-progress-text" id="cache-progress-text">0</span>
+          </div>
         </div>
         <!-- 速度色阶图例 -->
         <div class="speed-legend">
@@ -281,13 +289,13 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 
   <!-- 应用脚本 -->
-  <script src="js/config.js?t=20260706v47"></script>
+  <script src="js/config.js?t=20260706v48"></script>
   <script src="js/toast.js?t=20260703v22"></script>
   <script src="js/storage.js?t=20260703v22"></script>
   <script src="js/trail.js?t=20260703v22"></script>
-  <script src="js/gpx.js?t=20260703v22"></script>
   <script src="js/map.js?t=20260706v24"></script>
+  <script src="js/tile-cache.js?t=20260706v48"></script>
   <script src="js/gps.js?t=20260705v26"></script>
-<script src="js/app.js?t=20260706v47"></script>
+<script src="js/app.js?t=20260706v48"></script>
 </body>
 </html>

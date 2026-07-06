@@ -53,6 +53,7 @@ class App {
     this._speedTrackingStart = 0;     // 追踪开始时间戳
     this._lastRecordedFix = null;     // 上次记录的定位
     this.trail = new Trail();         // #18 轨迹管理独立模块
+    this._cacheTileManager = new TileCacheManager(this); // 离线瓦片缓存
     this._followMode = false;         // #12 地图跟随模式
     this._isManualPosition = false;   // #13 是否手动设置的位置
     this._manualCenter = false;       // 用户是否通过点击/输入手动设过中心点
@@ -340,8 +341,9 @@ class App {
     document.getElementById('trail-record-btn').addEventListener('click', () => this._toggleTrailRecording());
     document.getElementById('trail-pause-btn').addEventListener('click', () => this._toggleTrailPause());
     document.getElementById('trail-clear-btn').addEventListener('click', () => this._clearTrail());
-    document.getElementById('trail-export-btn').addEventListener('click', () => this._exportGpx());
     document.getElementById('trail-stats-btn').addEventListener('click', () => this._showTrailStats());
+    document.getElementById('cache-dl-btn').addEventListener('click', () => this._cacheTileManager.downloadViewport());
+    document.getElementById('cache-clear-btn').addEventListener('click', () => this._cacheTileManager.clearCache());
     document.getElementById('trail-smooth-btn').addEventListener('click', () => this._toggleTrailSmoothing());
     document.getElementById('power-saving-btn').addEventListener('click', () => this._togglePowerSaving());
 
@@ -1019,21 +1021,6 @@ class App {
   }
 
   /**
-   * 导出 GPX 文件（#18 — 委托给 GpxExport 模块，含#7 schema修复）
-   */
-  _exportGpx() {
-    const trajectories = this.trail.positions;
-    if (trajectories.length < 2) {
-      Toast.show('⚠️ 轨迹点太少，无法导出（至少需要 2 个点）');
-      return;
-    }
-    const ok = GpxExport.export(trajectories);
-    if (ok) {
-      Toast.show('✅ 已导出 GPX（' + trajectories.length + ' 个点，' + this._getTrailDistance() + '）');
-    }
-  }
-
-  /**
    * 切换轨迹平滑开关
    */
   _toggleTrailSmoothing() {
@@ -1196,7 +1183,6 @@ class App {
     const btn = document.getElementById('trail-record-btn');
     const pauseBtn = document.getElementById('trail-pause-btn');
     const clearBtn = document.getElementById('trail-clear-btn');
-    const exportBtn = document.getElementById('trail-export-btn');
     const statsBtn = document.getElementById('trail-stats-btn');
     const smoothBtn = document.getElementById('trail-smooth-btn');
     const distEl = document.getElementById('trail-distance');
@@ -1224,7 +1210,6 @@ class App {
     // 操作按钮状态
     const hasPoints = this.trail.positions.length > 0;
     if (clearBtn) clearBtn.disabled = !hasPoints;
-    if (exportBtn) exportBtn.disabled = this.trail.positions.length < 2;
     if (statsBtn) statsBtn.disabled = this.trail.positions.length < 2;
 
     // 平滑按钮状态

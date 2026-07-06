@@ -83,7 +83,6 @@ const CONFIG = {
   MOBILE_BREAKPOINT: 480,               // 移动端断点（像素）
   DEFAULT_TOAST_DURATION: 3000,         // Toast 默认显示时长（毫秒）
   TOAST_FADE_MS: 300,                   // Toast 消失动画（毫秒）
-  GPX_URL_REVOKE_DELAY: 5000            // GPX 导出 URL 释放延迟（毫秒）
 };
 
 /**
