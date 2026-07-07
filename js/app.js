@@ -47,6 +47,9 @@ class App {
     this._panelCollapsed = window.innerWidth <= CONFIG.MOBILE_BREAKPOINT; // 移动端面板默认收起
     this._watchingBeforeHide = false; // 切后台前是否在追踪
     this._restoringView = false;      // 从后台恢复时不飞地图
+    this._isBackground = false;       // 是否在后台模式（pagehide 后 60s polling）
+    this._bgLocateInterval = null;    // 后台轮询定位定时器
+    this._wakeLock = null;            // 屏幕唤醒锁引用
     this._recentFixes = [];           // 最近定位记录（最多 10 条）
     this._speedHistory = [];          // 速度历史 [{x: 秒, y: m/s}]
     this._speedChart = null;          // Chart.js 实例
@@ -149,18 +152,22 @@ class App {
     // 首次功能提示
     setTimeout(() => this._showHints(), 1500);
 
-    // 页面可见性变化：后台停 GPS，前台恢复（#6 加 pagehide 兜底 iOS）
+    // 页面隐藏时切换到后台定位模式（60s 一次单次定位 + wakeLock）
     this._pageHideHandler = () => {
       if (this._isWatching) {
         this._watchingBeforeHide = true;
         this._stopWatching();
+        this._enterBackgroundMode();
       }
       // 轨迹保存
       if (this.trail.positions.length > 0) {
-        Storage.saveTrail(this.trail); // 切后台时保存轨迹
+        Storage.saveTrail(this.trail);
       }
     };
     this._pageShowHandler = () => {
+      if (this._isBackground) {
+        this._exitBackgroundMode();
+      }
       if (this._watchingBeforeHide) {
         this._watchingBeforeHide = false;
         this._restoringView = true;
@@ -354,6 +361,7 @@ class App {
     document.getElementById('trail-clear-btn').addEventListener('click', () => this._clearTrail());
     document.getElementById('trail-stats-btn').addEventListener('click', () => this._showTrailStats());
     document.getElementById('trail-smooth-btn').addEventListener('click', () => this._toggleTrailSmoothing());
+    document.getElementById('export-report-btn').addEventListener('click', () => this._exportReport());
     document.getElementById('power-saving-btn').addEventListener('click', () => this._togglePowerSaving());
 
     // —— 对方位置标记（复用坐标输入区） ——
@@ -884,6 +892,142 @@ class App {
     Toast.show('⏹ 持续追踪已关闭');
   }
 
+  /* ── 后台定位（pagehide → 60s polling + wakeLock） ── */
+
+  /**
+   * 进入后台定位模式：停止连续 watch，改为 60s 单次定位
+   */
+  _enterBackgroundMode() {
+    if (this._isBackground) return;
+    this._isBackground = true;
+    console.log('[Background] 进入后台定位模式');
+
+    // 省电模式下不尝试 wakeLock（避免无谓唤醒）
+    if (!this.gpsManager.isPowerSaving) {
+      this._requestWakeLock();
+    }
+
+    // 立即做一次后台定位
+    this._backgroundLocate();
+
+    // 每 60s 做一次
+    this._bgLocateInterval = setInterval(() => {
+      this._backgroundLocate();
+    }, 60000);
+  }
+
+  /**
+   * 退出后台定位模式，清理资源
+   */
+  _exitBackgroundMode() {
+    if (!this._isBackground && !this._bgLocateInterval && !this._wakeLock) {
+      // 确保清理
+    }
+    this._isBackground = false;
+    if (this._bgLocateInterval) {
+      clearInterval(this._bgLocateInterval);
+      this._bgLocateInterval = null;
+    }
+    this._releaseWakeLock();
+    console.log('[Background] 退出后台定位模式');
+  }
+
+  /**
+   * 后台单次定位（静默更新位置，toast/flyTo 全部跳过）
+   */
+  async _backgroundLocate() {
+    if (this.gpsManager.isPowerSaving && this._batteryLevel != null && this._batteryLevel < 0.1) {
+      // 极低电量时连后台定位也跳过
+      return;
+    }
+    try {
+      // 后台用较长超时（低精度由 gpsManager 自行控制）
+      const pos = await this.gpsManager.getCurrentPosition(30000);
+      await this._processBackgroundPosition(pos);
+    } catch (e) {
+      // 后台定位失败 → 静默，等下一轮
+    }
+  }
+
+  /**
+   * 后台位置处理（静默版 _processPosition，无 UI 刷新）
+   */
+  async _processBackgroundPosition(pos) {
+    try {
+      const convPos = await this.mapManager.wgs84ToGcj02(pos);
+      this.myPosition = convPos;
+      this.myPositionTime = Date.now();
+      this._lastAccuracy = pos.accuracy;
+      this._lastSpeed = pos.speed;
+      this._lastAltitude = pos.altitude;
+      this._lastCalcPos = { lat: convPos.lat, lng: convPos.lng };
+      this._lastCalcTime = pos.timestamp || Date.now();
+      this.mapManager.setMyPos(convPos);
+      this._isManualPosition = false;
+      this.mapManager.setLocation(convPos, pos.accuracy, pos.heading);
+
+      // 记录最近定位
+      this._recordFix(pos, convPos);
+      this._prevDistances = {};
+
+      // 如果正在记录轨迹，加入轨迹点
+      if (this.trail.isRecording && !this.trail.isPaused) {
+        const added = this.trail.addPoint({
+          lat: convPos.lat,
+          lng: convPos.lng,
+          wgsLat: pos.lat,
+          wgsLng: pos.lng,
+          time: pos.timestamp || Date.now(),
+          accuracy: pos.accuracy || 0,
+          speed: pos.speed,
+          heading: pos.heading
+        });
+        if (added) {
+          this._trailDirty = true;
+          this.mapManager.setTrail(this._getTrailPositions());
+        }
+      }
+
+      // 后台不更新 UI，但保存状态
+      this._saveState();
+    } catch (e) {
+      // 静默
+    }
+  }
+
+  /**
+   * 请求屏幕唤醒锁（阻止后台定位时设备休眠）
+   */
+  async _requestWakeLock() {
+    if (typeof navigator.wakeLock === 'undefined') return;
+    if (this._wakeLock) return; // 已有锁
+    try {
+      this._wakeLock = await navigator.wakeLock.request('screen');
+      this._wakeLock.addEventListener('release', () => {
+        this._wakeLock = null;
+      });
+      console.log('[WakeLock] 已获取唤醒锁');
+    } catch (e) {
+      // wakeLock 被拒绝（如省电模式中）
+      this._wakeLock = null;
+      console.log('[WakeLock] 获取失败:', e.message);
+    }
+  }
+
+  /**
+   * 释放屏幕唤醒锁
+   */
+  _releaseWakeLock() {
+    if (!this._wakeLock) return;
+    try {
+      this._wakeLock.release();
+    } catch (e) {
+      // 静默
+    }
+    this._wakeLock = null;
+    console.log('[WakeLock] 已释放唤醒锁');
+  }
+
   /* ── 速度曲线 ─────────────────────────────────────── */
 
   _showSpeedChart() {
@@ -1188,6 +1332,263 @@ class App {
   }
 
   /**
+   * 导出活动报告（单张 PNG 图片）
+   * 合成：地图画布（轨迹 + 同心圆） + 速度曲线 + 统计数据
+   */
+  _exportReport() {
+    const pos = this.trail.positions;
+    if (pos.length < 2) {
+      Toast.show('⚠️ 轨迹点数不足（至少 2 个点）');
+      return;
+    }
+
+    Toast.show('⏳ 正在生成报告...');
+
+    try {
+      const totalDist = this.trail.getDistance();
+      const firstTime = pos[0].time || null;
+      const lastTime = pos[pos.length - 1].time || null;
+      let durationMs = 0;
+      if (firstTime && lastTime && lastTime > firstTime) durationMs = lastTime - firstTime;
+
+      let maxSpeed = 0;
+      let hasSpeed = false;
+      for (const p of pos) {
+        if (p.speed != null && p.speed > maxSpeed) {
+          maxSpeed = p.speed;
+          hasSpeed = true;
+        }
+      }
+      const avgSpeed = durationMs > 0 ? totalDist / (durationMs / 1000) : 0;
+
+      const fmtDate = (ts) => {
+        if (!ts) return '--';
+        const d = new Date(ts);
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      };
+      const fmtDuration = (ms) => {
+        if (ms <= 0) return '--';
+        const s = Math.round(ms / 1000);
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        const sec = s % 60;
+        return h > 0 ? `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}` : `${m}:${String(sec).padStart(2,'0')}`;
+      };
+      const isDark = this._theme === 'dark';
+
+      // ── 计算画布尺寸 ──
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const W = 800 * dpr;
+      const H = 1100 * dpr;
+      const S = dpr; // scale factor for text
+
+      const canvas = document.createElement('canvas');
+      canvas.width = W;
+      canvas.height = H;
+      const ctx = canvas.getContext('2d');
+
+      // ── 底色 ──
+      ctx.fillStyle = isDark ? '#1a1a2e' : '#f0f0f5';
+      ctx.fillRect(0, 0, W, H);
+
+      // ── 标题栏 ──
+      ctx.fillStyle = isDark ? '#16213e' : '#ffffff';
+      ctx.fillRect(0, 0, W, 80 * S);
+      ctx.fillStyle = isDark ? '#00d4aa' : '#0ea5e9';
+      ctx.font = `bold ${24 * S}px "HarmonyOS Sans", sans-serif`;
+      ctx.fillText('📍 活动报告', 24 * S, 44 * S);
+      ctx.fillStyle = isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)';
+      ctx.font = `${13 * S}px "HarmonyOS Sans", sans-serif`;
+      ctx.fillText(new Date().toLocaleString('zh-CN'), 24 * S, 66 * S);
+
+      // ── 绘制轨迹图预览（用 trail 数据渲染迷你地图） ──
+      const mapY = 96 * S;
+      const mapH = 320 * S;
+      const mapW = W - 48 * S;
+      const mapX = 24 * S;
+
+      // 地图背景
+      ctx.fillStyle = isDark ? '#0f3460' : '#dce5f0';
+      ctx.beginPath();
+      ctx.roundRect(mapX, mapY, mapW, mapH, 12 * S);
+      ctx.fill();
+
+      // 计算 trail 边界
+      let minLat = Infinity, maxLat = -Infinity;
+      let minLng = Infinity, maxLng = -Infinity;
+      for (const p of pos) {
+        if (p.lat < minLat) minLat = p.lat;
+        if (p.lat > maxLat) maxLat = p.lat;
+        if (p.lng < minLng) minLng = p.lng;
+        if (p.lng > maxLng) maxLng = p.lng;
+      }
+      const padR = 0.0005;
+      minLat -= padR; maxLat += padR;
+      minLng -= padR; maxLng += padR;
+      const lngSpan = maxLng - minLng || 0.001;
+      const latSpan = maxLat - minLat || 0.001;
+      const margin = 20 * S;
+      const drawW = mapW - margin * 2;
+      const drawH = mapH - margin * 2;
+
+      const toX = (lng) => mapX + margin + ((lng - minLng) / lngSpan) * drawW;
+      const toY = (lat) => mapY + margin + ((maxLat - lat) / latSpan) * drawH; // lat flipped
+
+      // 绘制采样点（同心圆中心）
+      const circles = this.mapManager.getCircles();
+      ctx.strokeStyle = isDark ? 'rgba(0,212,170,0.5)' : 'rgba(14,165,233,0.5)';
+      ctx.lineWidth = 1.5 * S;
+      for (const c of circles) {
+        const cx = toX(c.center.lng);
+        const cy = toY(c.center.lat);
+        // 圆圈半径映射
+        const rPx = Math.max(3 * S, (c.maxRadius / 111320) / latSpan * drawH);
+        ctx.beginPath();
+        ctx.arc(cx, cy, rPx, 0, Math.PI * 2);
+        ctx.stroke();
+        // 圆心点
+        ctx.fillStyle = isDark ? '#00d4aa' : '#0ea5e9';
+        ctx.beginPath();
+        ctx.arc(cx, cy, 3 * S, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // 绘制轨迹线（带速度着色）
+      const trailPoints = this._getTrailPositions();
+      if (trailPoints.length >= 2) {
+        for (let i = 1; i < trailPoints.length; i++) {
+          const p0 = trailPoints[i - 1];
+          const p1 = trailPoints[i];
+          // 简单按速度着色：速度来自原始 trail 数据
+          const speed = p1.speed != null ? p1.speed : 0;
+          const ratio = Math.min(speed / 5, 1);
+          const r = Math.round(80 + (255 - 80) * ratio);
+          const g = Math.round(160 - (160 - 60) * ratio);
+          const b = Math.round(255 - (255 - 60) * ratio);
+          ctx.strokeStyle = `rgb(${r},${g},${b})`;
+          ctx.lineWidth = 2.5 * S;
+          ctx.beginPath();
+          ctx.moveTo(toX(p0.lng), toY(p0.lat));
+          ctx.lineTo(toX(p1.lng), toY(p1.lat));
+          ctx.stroke();
+        }
+      }
+
+      // 起点/终点标记
+      if (trailPoints.length >= 2) {
+        const first = trailPoints[0];
+        const last = trailPoints[trailPoints.length - 1];
+        ctx.fillStyle = '#22c55e';
+        ctx.beginPath();
+        ctx.arc(toX(first.lng), toY(first.lat), 5 * S, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ef4444';
+        ctx.beginPath();
+        ctx.arc(toX(last.lng), toY(last.lat), 5 * S, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.7)';
+        ctx.font = `${11 * S}px "HarmonyOS Sans", sans-serif`;
+        ctx.fillText('起点', toX(first.lng) + 8 * S, toY(first.lat) + 4 * S);
+        ctx.fillText('终点', toX(last.lng) + 8 * S, toY(last.lat) + 4 * S);
+      }
+
+      // ── 速度曲线图（从 SpeedChart canvas 抓取） ──
+      let chartY = mapY + mapH + 16 * S;
+      if (this._speedChart && this._speedChart.canvas) {
+        const chartCanvas = this._speedChart.canvas;
+        const chartW = mapW;
+        const chartH = 180 * S;
+        try {
+          ctx.drawImage(chartCanvas, mapX, chartY, chartW, chartH);
+          chartY += chartH + 16 * S;
+        } catch (e) {
+          // 跨域等导致无法绘制
+          chartY += 16 * S;
+        }
+      }
+
+      // ── 统计信息 ──
+      const statsY = chartY;
+      ctx.fillStyle = isDark ? '#16213e' : '#ffffff';
+      ctx.beginPath();
+      ctx.roundRect(mapX, statsY, mapW, 160 * S, 12 * S);
+      ctx.fill();
+
+      ctx.fillStyle = isDark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.9)';
+      ctx.font = `bold ${16 * S}px "HarmonyOS Sans", sans-serif`;
+      ctx.fillText('📊 轨迹统计', mapX + 16 * S, statsY + 32 * S);
+
+      const statItems = [
+        { label: '总距离', value: formatDistance(totalDist) },
+        { label: '总时长', value: fmtDuration(durationMs) },
+        { label: '平均速度', value: avgSpeed > 0 ? (avgSpeed * 3.6).toFixed(1) + ' km/h' : '--' },
+        { label: '最高速度', value: hasSpeed ? (maxSpeed * 3.6).toFixed(1) + ' km/h' : '--' },
+        { label: '轨迹点数', value: String(pos.length) },
+        { label: '同心圆数', value: String(this.mapManager.getCircles().length) },
+      ];
+
+      ctx.fillStyle = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)';
+      ctx.font = `${12 * S}px "HarmonyOS Sans", sans-serif`;
+      const colW = (mapW - 32 * S) / 3;
+      for (let i = 0; i < statItems.length; i++) {
+        const col = i % 3;
+        const row = Math.floor(i / 3);
+        const sx = mapX + 16 * S + col * colW;
+        const sy = statsY + 56 * S + row * 48 * S;
+        ctx.fillText(statItems[i].label, sx, sy);
+        ctx.fillStyle = isDark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.9)';
+        ctx.font = `bold ${18 * S}px "HarmonyOS Sans", sans-serif`;
+        ctx.fillText(statItems[i].value, sx, sy + 22 * S);
+        ctx.fillStyle = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)';
+        ctx.font = `${12 * S}px "HarmonyOS Sans", sans-serif`;
+      }
+
+      // ── 底部圆信息 ──
+      if (circles.length > 0) {
+        const bottomY = statsY + 180 * S;
+        ctx.fillStyle = isDark ? '#16213e' : '#ffffff';
+        ctx.beginPath();
+        ctx.roundRect(mapX, bottomY, mapW, Math.min(circles.length * 24 + 36, 120) * S, 12 * S);
+        ctx.fill();
+        ctx.fillStyle = isDark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.9)';
+        ctx.font = `bold ${14 * S}px "HarmonyOS Sans", sans-serif`;
+        ctx.fillText('⭕ 同心圆', mapX + 16 * S, bottomY + 26 * S);
+        ctx.fillStyle = isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.6)';
+        ctx.font = `${11 * S}px "HarmonyOS Sans", sans-serif`;
+        const maxShow = Math.min(circles.length, 4);
+        for (let i = 0; i < maxShow; i++) {
+          const c = circles[i];
+          const radiusStr = c.maxRadius >= 1000 ? `${(c.maxRadius/1000).toFixed(1)}km` : `${c.maxRadius}m`;
+          ctx.fillText(`#${i+1}  ${c.center.lat.toFixed(4)}, ${c.center.lng.toFixed(4)} · ${radiusStr} · ${Math.ceil(c.maxRadius / c.interval)}圈`,
+            mapX + 16 * S, bottomY + 48 * S + i * 22 * S);
+        }
+        if (circles.length > 4) {
+          ctx.fillText(`... 共 ${circles.length} 个`, mapX + 16 * S, bottomY + 48 * S + 4 * 22 * S);
+        }
+      }
+
+      // ── 水印 ──
+      ctx.fillStyle = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)';
+      ctx.font = `${11 * S}px "HarmonyOS Sans", sans-serif`;
+      ctx.textAlign = 'right';
+      ctx.fillText('Circlemap · 鬼抓人地图雷达', W - 24 * S, H - 16 * S);
+      ctx.textAlign = 'left';
+
+      // ── 导出 PNG ──
+      const link = document.createElement('a');
+      const dateStr = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+      link.download = `circlemap-activity-${dateStr}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+      Toast.show('✅ 活动报告已导出');
+    } catch (e) {
+      console.error('[Export] 报告导出失败:', e);
+      Toast.show('⚠️ 导出报告失败');
+    }
+  }
+
+  /**
    * 计算轨迹总移动距离
    */
   _getTrailDistance() {
@@ -1203,6 +1604,7 @@ class App {
     const pauseBtn = document.getElementById('trail-pause-btn');
     const clearBtn = document.getElementById('trail-clear-btn');
     const statsBtn = document.getElementById('trail-stats-btn');
+    const exportBtn = document.getElementById('export-report-btn');
     const smoothBtn = document.getElementById('trail-smooth-btn');
     const distEl = document.getElementById('trail-distance');
 
@@ -1230,6 +1632,7 @@ class App {
     const hasPoints = this.trail.positions.length > 0;
     if (clearBtn) clearBtn.disabled = !hasPoints;
     if (statsBtn) statsBtn.disabled = this.trail.positions.length < 2;
+    if (exportBtn) exportBtn.disabled = this.trail.positions.length < 2;
 
     // 平滑按钮状态
     if (smoothBtn) {
@@ -2593,6 +2996,13 @@ class App {
       window.removeEventListener('pageshow', this._pageShowHandler);
       this._pageShowHandler = null;
     }
+    // 清理后台定位资源
+    this._exitBackgroundMode();
+    if (this._bgLocateInterval) {
+      clearInterval(this._bgLocateInterval);
+      this._bgLocateInterval = null;
+    }
+    this._releaseWakeLock();
     this.mapManager.destroy();
   }
 
