@@ -96,14 +96,14 @@
 .gps-stale {
   color: var(--danger);
   font-family: var(--font-sans);
-  font-weight: 600;
+  font-weight: normal;
 }
 
 /* GPS 降级（低精度）模�?*/
 .gps-degraded {
   color: var(--warning);
   font-family: var(--font-sans);
-  font-weight: 600;
+  font-weight: normal;
   font-size: 10px;
 }
 

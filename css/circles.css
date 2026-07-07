@@ -1,8 +1,8 @@
-/* ---------- 圆列表距离标�?---------- */
+/* ---------- 圆列表距离标�?---------- */
 .circle-dist {
   font-size: 11px;
   font-family: var(--font-mono);
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-secondary);
   padding: 2px 8px;
   background: var(--bg-input);
@@ -24,12 +24,12 @@
 /* 趋势箭头样式 */
 .trend-up {
   color: var(--accent-1);
-  font-weight: 700;
+  font-weight: normal;
 }
 
 .trend-down {
   color: var(--danger);
-  font-weight: 700;
+  font-weight: normal;
 }
 /* ---------- 对方位置信息 ---------- */
 .target-info {
@@ -110,7 +110,7 @@
   flex-shrink: 0;
 }
 
-/* ---------- 圆列�?---------- */
+/* ---------- 圆列�?---------- */
 .circle-list-section {
   margin-bottom: 14px;
 }
@@ -160,7 +160,7 @@
   background: var(--bg-accent-subtle);
   color: var(--accent-1);
   font-size: 10px;
-  font-weight: 700;
+  font-weight: normal;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -179,7 +179,7 @@
 
 .circle-name {
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -216,7 +216,7 @@
   cursor: pointer;
 }
 
-/* #10 �?触屏设备默认显示编辑/删除按钮 */
+/* #10 �?触屏设备默认显示编辑/删除按钮 */
 @media (hover: hover) {
   .circle-item:hover .circle-edit,
   .circle-item:hover .circle-del {
@@ -241,7 +241,7 @@
   color: var(--danger);
 }
 
-/* 编辑中半径滑块高�?*/
+/* 编辑中半径滑块高�?*/
 .radius-slider.editing {
   background: rgba(0, 212, 170, 0.15);
 }
@@ -254,7 +254,7 @@
   box-shadow: 0 0 0 5px rgba(0, 212, 170, 0.3), 0 2px 8px rgba(0, 212, 170, 0.3);
 }
 
-/* 小屏幕缩小编�?删除按钮 */
+/* 小屏幕缩小编�?删除按钮 */
 @media (max-width: 480px) {
   .circle-edit,
   .circle-del {
@@ -262,7 +262,7 @@
     height: 24px;
   }
 }
-/* ---------- 最近定位列�?---------- */
+/* ---------- 最近定位列�?---------- */
 .fix-list-section {
   margin-bottom: 14px;
 }
@@ -307,7 +307,7 @@
 }
 
 .fix-accuracy {
-  font-weight: 600;
+  font-weight: normal;
   flex-shrink: 0;
   min-width: 40px;
   text-align: right;
@@ -344,7 +344,7 @@
 
 .fix-manual {
   font-size: 10px;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--warning);
   font-family: var(--font-sans);
 }

@@ -23,7 +23,7 @@
 
 .speed-chart-title {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary);
 }
 
@@ -80,7 +80,7 @@
   font-size: 11px;
   font-family: var(--font-mono);
   color: var(--accent-1);
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .trail-controls {
@@ -97,7 +97,7 @@
   padding: 10px 16px;
   border-radius: var(--radius-sm);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: normal;
   background: var(--bg-input);
   color: var(--text-secondary);
   border: 1px solid var(--border-color);

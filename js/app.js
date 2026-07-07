@@ -1396,7 +1396,7 @@ class App {
       ctx.fillStyle = isDark ? '#16213e' : '#ffffff';
       ctx.fillRect(0, 0, W, 80 * S);
       ctx.fillStyle = isDark ? '#00d4aa' : '#0ea5e9';
-      ctx.font = `bold ${24 * S}px "HarmonyOS Sans", sans-serif`;
+      ctx.font = `${24 * S}px "HarmonyOS Sans", sans-serif`;
       ctx.fillText('📍 活动报告', 24 * S, 44 * S);
       ctx.fillStyle = isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)';
       ctx.font = `${13 * S}px "HarmonyOS Sans", sans-serif`;
@@ -1516,7 +1516,7 @@ class App {
       ctx.fill();
 
       ctx.fillStyle = isDark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.9)';
-      ctx.font = `bold ${16 * S}px "HarmonyOS Sans", sans-serif`;
+      ctx.font = `${16 * S}px "HarmonyOS Sans", sans-serif`;
       ctx.fillText('📊 轨迹统计', mapX + 16 * S, statsY + 32 * S);
 
       const statItems = [
@@ -1538,7 +1538,7 @@ class App {
         const sy = statsY + 56 * S + row * 48 * S;
         ctx.fillText(statItems[i].label, sx, sy);
         ctx.fillStyle = isDark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.9)';
-        ctx.font = `bold ${18 * S}px "HarmonyOS Sans", sans-serif`;
+        ctx.font = `${18 * S}px "HarmonyOS Sans", sans-serif`;
         ctx.fillText(statItems[i].value, sx, sy + 22 * S);
         ctx.fillStyle = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)';
         ctx.font = `${12 * S}px "HarmonyOS Sans", sans-serif`;
@@ -1552,7 +1552,7 @@ class App {
         ctx.roundRect(mapX, bottomY, mapW, Math.min(circles.length * 24 + 36, 120) * S, 12 * S);
         ctx.fill();
         ctx.fillStyle = isDark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.9)';
-        ctx.font = `bold ${14 * S}px "HarmonyOS Sans", sans-serif`;
+        ctx.font = `${14 * S}px "HarmonyOS Sans", sans-serif`;
         ctx.fillText('⭕ 同心圆', mapX + 16 * S, bottomY + 26 * S);
         ctx.fillStyle = isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.6)';
         ctx.font = `${11 * S}px "HarmonyOS Sans", sans-serif`;
