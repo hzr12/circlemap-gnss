@@ -5,6 +5,88 @@
  * 支持单次定位 + 持续追踪
  */
 
+/**
+ * 一维卡尔曼滤波器 — 实时平滑 GPS 位置，抑制漂移
+ * 使用恒速模型（位置+速度），Q/R 自适应 accuracy
+ */
+class KalmanFilter {
+  constructor() {
+    this._x = 0;        // 位置估计
+    this._v = 0;        // 速度估计 (单位/秒)
+    this._P = 1;        // 估计误差协方差
+    this._Q = 0.005;    // 过程噪声（加速度不确定性）
+    this._R = 30;       // 测量噪声（最新 accuracy 动态调整）
+    this._lastTime = 0;
+    this._initialized = false;
+  }
+
+  /**
+   * 重置滤波器（设置初始值）
+   */
+  init(x, time) {
+    this._x = x;
+    this._v = 0;
+    this._P = 1;
+    this._lastTime = time;
+    this._initialized = true;
+  }
+
+  /**
+   * 更新测量值 → 返回滤波后结果
+   * @param {number} z 测量值
+   * @param {number} accuracy GPS 精度（米）
+   * @param {number} time 时间戳（毫秒）
+   * @returns {number} 滤波后值
+   */
+  update(z, accuracy, time) {
+    if (!this._initialized || accuracy > 200) {
+      // 精度太差或未初始化 → 直接接受测量值
+      this.init(z, time);
+      return z;
+    }
+
+    const dt = (time - this._lastTime) / 1000; // 秒
+    this._lastTime = time;
+
+    if (dt <= 0 || dt > 60) {
+      // 时间异常或间隙过大 → 重置
+      this.init(z, time);
+      return z;
+    }
+
+    // ── Predict（预测） ──
+    this._x = this._x + this._v * dt;
+    this._P = this._P + this._Q * dt;
+
+    // 根据 accuracy 动态调整测量噪声
+    this._R = Math.max(3, Math.min(accuracy || 10, 100));
+
+    // ── Update（更新） ──
+    const K = this._P / (this._P + this._R); // 卡尔曼增益
+    const innovation = z - this._x;
+    this._x = this._x + K * innovation;
+
+    // 带阻尼的速度更新（防止噪声放大）
+    this._v = this._v + (K * innovation / Math.max(dt, 0.1)) * 0.25;
+
+    // 限制最大速度（100m/s ≈ 360km/h，防止突发漂移）
+    this._v = Math.max(-100, Math.min(100, this._v));
+
+    // 更新协方差
+    this._P = (1 - K) * this._P;
+
+    return this._x;
+  }
+
+  /** 重置滤波器 */
+  reset() {
+    this._initialized = false;
+    this._x = 0;
+    this._v = 0;
+    this._P = 1;
+  }
+}
+
 class GPSManager {
   constructor() {
     this.watchId = null;
@@ -39,8 +121,14 @@ class GPSManager {
     this._gnssNmeaHandle = null;   // nmeaSentence 事件监听器句柄
     this._gnssPollId = null;       // GNSS 轮询兜底定时器
 
+    // GPS 漂移滤波器
+    this._useFilter = true;           // 是否启用滤波
+    this._latFilter = new KalmanFilter();
+    this._lngFilter = new KalmanFilter();
+    this._rawPosition = null;         // 滤波前的原始位置（保留供 trail 等使用）
+
     // 电量监控
-    this._lowBattery = false;
+    this._lowBattery = false;   // 是否处于低电量状态（<20%）
     this._powerSaving = false;  // 省电模式开关
     this._powerSavingLocked = false;  // 省电模式锁定（低电量时锁定开启）
     this._battery = null;       // BatteryManager 引用（用于清理）
@@ -49,9 +137,11 @@ class GPSManager {
     this._initBatteryMonitor();
     this._tryInitGnssPlugin();
 
-    // GPS 节流：最多每 5 秒处理一次位置更新
+    // GPS 节流：动态间隔（正常 5s，省电模式 30s，后台 60s）
     this._lastProcessedTime = 0;
-    this._gpsMinInterval = 5000; // 毫秒
+    this._gpsMinInterval = 5000;
+    this._gpsPowerSavingInterval = 30000;   // 省电模式间隔
+    this._gpsBackgroundInterval = 60000;    // 后台定位间隔
   }
 
   /**
@@ -84,6 +174,18 @@ class GPSManager {
           this._autoStoppedByBattery = true;
           this.stopWatching();
           if (this.onCriticalBattery) this.onCriticalBattery();
+        }
+
+        // 电量 < 5%：强制停止所有耗电功能（含 GNSS）
+        if (battery.level < 0.05 && !battery.charging) {
+          console.warn('[GPS] 电量低于 5%，强制停止所有定位功能');
+          if (this._gnssListeningStarted) this.stopGnss();
+          // 如果 watch 还在跑（上面阈值没触发），也停掉
+          if (this.isWatching) {
+            this._autoStoppedByBattery = true;
+            this.stopWatching();
+            if (this.onCriticalBattery) this.onCriticalBattery();
+          }
         }
         // 充电时解锁省电模式并恢复追踪
         if (!this._lowBattery && this._powerSavingLocked && battery.charging) {
@@ -129,11 +231,24 @@ class GPSManager {
     if (next === this._powerSaving) return this._powerSaving;
     this._powerSaving = next;
     console.log(`[GPS] 省电模式: ${next ? '开启' : '关闭'}`);
+
+    // 调整处理间隔
+    this._gpsMinInterval = next ? this._gpsPowerSavingInterval : 5000;
+
+    // 省电模式下关闭 GNSS 卫星监听（节省 CPU + 电池）
+    if (next && this._gnssListeningStarted) {
+      console.log('[GPS] 省电模式：关闭 GNSS 卫星监听');
+      this.stopGnss();
+    } else if (!next && !this._gnssListeningStarted && this._gnssPlugin) {
+      // 退出省电且 GNSS 插件存在 → 尝试重新激活
+      // 由外部在适当时机调用 startGnss()
+    }
+
     if (this.isWatching) {
       this.stopWatching();
       if (next) {
-        // 省电模式：低精度 + 长超时 + 允许缓存
-        this.startWatching({ enableHighAccuracy: false, timeout: 15000, maximumAge: 15000 });
+        // 省电模式：低精度 + 长超时 + 允许缓存 + 宽松节流
+        this.startWatching({ enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 });
       } else {
         // 标准模式：高精度 + 短超时
         this.startWatching({ enableHighAccuracy: true, timeout: CONFIG.GPS_WATCH_TIMEOUT, maximumAge: 5000 });
@@ -589,6 +704,22 @@ class GPSManager {
           heading: position.coords.heading,
           timestamp: position.timestamp
         };
+
+        // 保存原始位置（滤波前）
+        this._rawPosition = { lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, speed: pos.speed, heading: pos.heading, timestamp: pos.timestamp };
+
+        // ── 卡尔曼滤波实时平滑 ──
+        if (this._useFilter && pos.accuracy > 0 && pos.accuracy < 200) {
+          const ts = pos.timestamp || now;
+          const acc = pos.accuracy || 10;
+          pos.lat = this._latFilter.update(pos.lat, acc, ts);
+          pos.lng = this._lngFilter.update(pos.lng, acc, ts);
+        } else {
+          // 精度太差或滤波关闭 → 重置滤波器
+          this._latFilter.reset();
+          this._lngFilter.reset();
+        }
+
         this.currentPosition = pos;
         this._resetTimeouts(); // 收到位置 → 重置超时计数
         if (this.onPositionChange) this.onPositionChange(pos);
@@ -646,6 +777,30 @@ class GPSManager {
    */
   getLastPosition() {
     return this.currentPosition;
+  }
+
+  /**
+   * 获取最近一次原始（未滤波）位置
+   */
+  get lastRawPosition() {
+    return this._rawPosition ? { ...this._rawPosition } : null;
+  }
+
+  /**
+   * 切换/设置卡尔曼滤波
+   * @param {boolean} [force] - 不传则切换
+   * @returns {boolean} 当前状态
+   */
+  toggleFilter(force) {
+    const next = force !== undefined ? force : !this._useFilter;
+    if (next === this._useFilter) return this._useFilter;
+    this._useFilter = next;
+    if (!next) {
+      this._latFilter.reset();
+      this._lngFilter.reset();
+    }
+    console.log(`[GPS] 漂移滤波: ${next ? '开启' : '关闭'}`);
+    return this._useFilter;
   }
 
   /**
