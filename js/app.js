@@ -500,8 +500,23 @@ class App {
     this._roomTeamCreateForm = document.getElementById('room-team-create-form');
     this._roomTeamNameInput = document.getElementById('room-team-name-input');
     this._roomTeamColorInput = document.getElementById('room-team-color-input');
+    this._roomTeamPresets = document.getElementById('room-team-presets');
     this._roomTeamCreateConfirm = document.getElementById('room-team-create-confirm');
     this._roomTeamList = document.getElementById('room-team-list');
+
+    // 队伍预设色板：点击设置取色框值并高亮，自定义取色时清除高亮
+    if (this._roomTeamPresets && this._roomTeamColorInput) {
+      this._roomTeamPresets.querySelectorAll('.room-team-preset').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const c = btn.dataset.color;
+          if (c) this._roomTeamColorInput.value = c;
+          this._updateTeamPresetActive(c);
+        });
+      });
+      this._roomTeamColorInput.addEventListener('input', () => {
+        this._updateTeamPresetActive(this._roomTeamColorInput.value);
+      });
+    }
 
     this._roomCreateBtn.addEventListener('click', () => this._roomCreate());
     this._roomJoinBtn.addEventListener('click', () => this._roomJoin());
@@ -3345,6 +3360,17 @@ class App {
   /**
    * 创建队伍
    */
+  /**
+   * 高亮当前选中的预设色（与取色框值匹配时），否则全部取消高亮
+   * @param {string} color 当前颜色（#RRGGBB）
+   */
+  _updateTeamPresetActive(color) {
+    if (!this._roomTeamPresets) return;
+    const norm = (color || '').toUpperCase();
+    this._roomTeamPresets.querySelectorAll('.room-team-preset').forEach((btn) => {
+      btn.classList.toggle('active', (btn.dataset.color || '').toUpperCase() === norm);
+    });
+  }
   _roomCreateTeam() {
     if (!this.roomManager || !this.roomManager.isConnected()) return;
     const name = (this._roomTeamNameInput.value || '').trim() || '我的队伍';
