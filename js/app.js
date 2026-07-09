@@ -1580,7 +1580,10 @@ class App {
       const dateStr = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
       link.download = `circlemap-activity-${dateStr}.png`;
       link.href = canvas.toDataURL('image/png');
+      link.style.display = 'none';
+      document.body.appendChild(link);
       link.click();
+      document.body.removeChild(link);
       Toast.show('✅ 活动报告已导出');
     } catch (e) {
       console.error('[Export] 报告导出失败:', e);
