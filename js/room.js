@@ -26,7 +26,8 @@ const ROOM_CONFIG = {
   POS_STILL_SPEED: 0.5,          // 低于此速度(m/s)视为静止 → 用最长间隔
   POS_FAST_SPEED: 3,             // 高于此速度(m/s)视为快速移动 → 用基准间隔
   HEARTBEAT_INTERVAL: 15000,     // 心跳保活间隔（ms），二进制 ping 维持在线 + 发报员选举
-  PRESENCE_INTERVAL: 30000,      // 在场广播间隔（ms），低频回填静态身份
+  PRESENCE_INTERVAL: 30000,       // 在场广播间隔（ms），低频回填静态身份
+  OFFLINE_GRACE_MS: 60000,        // 离线宽限（ms）：收到 offline 后不立即删除，宽限期内收到任意消息视为「没真走」
   NPC_POSITION_INTERVAL: 60000,  // NPC 队坐标发布间隔（ms），持续共享（1 分钟/次）
   CONNECT_TIMEOUT: 20000,        // MQTT connectTimeout（ms），等 CONNACK
   MAX_RETRY: 5,                  // 连续失败几次后切备用 Broker
@@ -93,6 +94,7 @@ class RoomManager {
     this._heartbeatTimer = null;    // 心跳定时器（setInterval）
     this._presenceTimer = null;     // 在场广播定时器（setInterval）
     this._npcTimer = null;          // NPC 队强制共享定时器（setInterval）
+    this._offlineTimers = {};       // 离线宽限定时器（id → setTimeout），防抖避免抖动/重加闪烁
     this._lastPosition = null;      // 最近一次 GPS 坐标
     this._lastSentPos = null;       // 最近一次实际下发的坐标（自适应位移判定用）
     this._lastSentSpeed = null;     // 最近一次下发时的速度（静止→移动 瞬间判定用）
@@ -189,12 +191,27 @@ class RoomManager {
     console.log('[Room] 正在连接 MQTT:', brokerUrl, 'clientId:', clientId);
 
     try {
+      // 遗嘱消息（Last-Will）：异常断开（刷新页面 / 关闭标签页 / 系统杀进程）时，
+      // Broker 会代发该离线通知，他人端走现有 offline 分支（见 _handleMessage）直接清掉幽灵标记。
+      // 正常 leaveRoom() 会先发显式 offline 再优雅断开，不会触发本遗嘱。
+      const willTopic = this._roomCode
+        ? `${ROOM_CONFIG.TOPIC_PREFIX}/${this._roomCode}/${this._deviceId}`
+        : null;
+
       this._client = mqtt.connect(brokerUrl, {
         clientId: clientId,
         clean: true,
         reconnectPeriod: ROOM_CONFIG.RECONNECT_DELAY,
         connectTimeout: ROOM_CONFIG.CONNECT_TIMEOUT,
         keepalive: 30,
+        ...(willTopic ? {
+          will: {
+            topic: willTopic,
+            payload: JSON.stringify({ id: this._deviceId, offline: true }),
+            qos: 1,
+            retain: false,
+          },
+        } : {}),
       });
 
       this._client.on('connect', () => {
@@ -387,6 +404,7 @@ class RoomManager {
       if (data.type === 'game_start') {
         // 房主已在 startGame() 本地处理，跳过自身回声避免重复初始化事件
         if (data.id === this._deviceId) return;
+        this._resetGameState();
         this._gameState = 'playing';
         this._gameStartTs = data.ts || Date.now();
         this._gameEvents = [{ type: 'game_start', ts: this._gameStartTs }];
@@ -433,20 +451,15 @@ class RoomManager {
         return;
       }
 
-      // 离线消息
+      // 离线消息（含 Broker 代发的遗嘱）：先进入宽限，避免网络抖动 / 刷新重加导致的闪烁
       if (data.offline) {
-        const player = this._players[data.id];
-        if (player) {
-          player.online = false;
-          if (this.onPlayerLeave) this.onPlayerLeave(data.id, player.name);
-          delete this._players[data.id];
-          if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
-        }
+        this._schedulePendingOffline(data.id);
         return;
       }
 
       // 在场消息：低频回填静态身份（name/color/role/caught 等）
       if (data.type === 'presence') {
+        this._cancelPendingOffline(data.id);
         if (data.id && data.id !== this._deviceId) {
           const existing = this._players[data.id];
           const player = existing ? { ...existing } : {
@@ -472,6 +485,7 @@ class RoomManager {
 
       // 加入消息（携带 name/color，触发 onPlayerJoin）
       if (data.id && data.id !== this._deviceId && data.join != null) {
+        this._cancelPendingOffline(data.id);
         const existing = this._players[data.id];
         const isNew = !existing;
         const player = existing ? { ...existing } : {
@@ -586,6 +600,7 @@ class RoomManager {
 
   _onPositionMsg(senderId, pos) {
     if (senderId === this._deviceId) return;
+    this._cancelPendingOffline(senderId);
     const existing = this._players[senderId];
     const isNew = !existing;
     const player = existing ? { ...existing } : {
@@ -613,6 +628,7 @@ class RoomManager {
 
   _onPingMsg(senderId, flags) {
     if (senderId === this._deviceId) return;
+    this._cancelPendingOffline(senderId);
     const existing = this._players[senderId];
     const isNew = !existing;
     const player = existing ? { ...existing } : {
@@ -838,7 +854,44 @@ class RoomManager {
     }, ROOM_CONFIG.NPC_POSITION_INTERVAL);
   }
 
+  /**
+   * 安排「待定离线」：收到 offline 后不立即删除，
+   * 宽限期内若同一设备再次发来任意消息则撤销（见 _cancelPendingOffline）；
+   * 仅当宽限期满仍无任何消息，才真正判定离线并清理（见 _expirePendingOffline）。
+   * @param {string} id 设备 ID
+   */
+  _schedulePendingOffline(id) {
+    if (!id || !this._players[id]) return; // 玩家本就不存在，无需处理
+    if (this._offlineTimers[id]) clearTimeout(this._offlineTimers[id]);
+    this._offlineTimers[id] = setTimeout(() => this._expirePendingOffline(id), ROOM_CONFIG.OFFLINE_GRACE_MS);
+  }
+
+  _expirePendingOffline(id) {
+    if (this._offlineTimers[id]) delete this._offlineTimers[id];
+    const p = this._players[id];
+    if (!p) return;
+    p.online = false;
+    if (this.onPlayerLeave) this.onPlayerLeave(id, p.name);
+    delete this._players[id];
+    if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+  }
+
+  _cancelPendingOffline(id) {
+    if (id && this._offlineTimers[id]) {
+      clearTimeout(this._offlineTimers[id]);
+      delete this._offlineTimers[id];
+    }
+  }
+
+  _clearOfflineTimers() {
+    Object.keys(this._offlineTimers).forEach((id) => {
+      clearTimeout(this._offlineTimers[id]);
+      delete this._offlineTimers[id];
+    });
+  }
+
   _stopPublishing() {
+    this._clearOfflineTimers();
     if (this._posTimer) {
       clearTimeout(this._posTimer);
       this._posTimer = null;
@@ -1026,12 +1079,29 @@ class RoomManager {
    */
   startGame() {
     if (!this._isHost) return;
-    if (this._gameState !== 'idle') return;
+    if (this._gameState === 'playing') return; // 进行中不允许重复开始；idle / finished 均可开新局
+    this._resetGameState();
     this._gameState = 'playing';
     this._gameStartTs = Date.now();
     this._gameEvents = [{ type: 'game_start', ts: this._gameStartTs }];
     this._publish({ type: 'game_start' });
     if (this.onGameStateChange) this.onGameStateChange('playing');
+  }
+
+  /**
+   * 重置单局状态（结束后再开新局用）：清掉被抓 / 角色 / 事件，玩家标记回归初始
+   */
+  _resetGameState() {
+    this._caughtPlayers = {};
+    this._playerRoles = {};
+    this._gameEvents = [];
+    this._gameStartTs = 0;
+    this._gameEndTs = 0;
+    Object.values(this._players).forEach((p) => {
+      p.caught = false;
+      p.caughtBy = null;
+      p.role = null;
+    });
   }
 
   /**
