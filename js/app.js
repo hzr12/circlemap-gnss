@@ -997,16 +997,14 @@ class App {
           return;
         }
         if (!location) return;
-        // 将插件 Location 格式转为标准 Position 格式后复用现有处理逻辑
+        // 将插件 Location 转为 app 内部的 {lat, lng, ...} 格式
         this._processBackgroundPosition({
-          coords: {
-            latitude: location.latitude,
-            longitude: location.longitude,
-            accuracy: location.accuracy,
-            speed: location.speed,
-            heading: location.bearing,
-            altitude: location.altitude,
-          },
+          lat: location.latitude,
+          lng: location.longitude,
+          accuracy: location.accuracy,
+          speed: location.speed,
+          heading: location.bearing,
+          altitude: location.altitude,
           timestamp: location.time,
         });
       });
