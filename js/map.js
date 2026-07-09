@@ -1074,6 +1074,7 @@ class MapManager {
    */
   _createPlayerIcon(color, name, opacity = 1) {
     const label = (name || '?').charAt(0).toUpperCase();
+    // 与"我的位置 / 标记对方"一致的同心圆点样式，颜色用队伍色；中心保留昵称首字便于辨认
     const svg = [
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">',
       '  <defs>',
@@ -1081,8 +1082,10 @@ class MapManager {
       '      <feDropShadow dx="0" dy="1" stdDeviation="3" flood-opacity="0.5"/>',
       '    </filter>',
       '  </defs>',
-      `  <circle cx="22" cy="22" r="16" fill="${color}" stroke="#fff" stroke-width="2.5" filter="url(#ps)" opacity="${opacity}"/>`,
-      `  <text x="22" y="22" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="14" font-weight="bold" font-family="Arial" opacity="${opacity}">${label}</text>`,
+      `  <circle cx="22" cy="22" r="20" fill="none" stroke="${color}" stroke-width="1.5" opacity="${(0.12 * opacity).toFixed(3)}"/>`,
+      `  <circle cx="22" cy="22" r="15" fill="none" stroke="${color}" stroke-width="2" opacity="${(0.28 * opacity).toFixed(3)}"/>`,
+      `  <circle cx="22" cy="22" r="9" fill="${color}" stroke="#fff" stroke-width="2.5" filter="url(#ps)" opacity="${opacity}"/>`,
+      `  <text x="22" y="22" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="11" font-weight="bold" font-family="Arial" opacity="${opacity}">${label}</text>`,
       '</svg>'
     ].join('\n');
     // btoa 仅支持 Latin1；昵称首字可能为中文，先按 UTF-8 转 Latin1 字节再编码
