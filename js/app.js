@@ -487,16 +487,36 @@ class App {
     this._roomStatus = document.getElementById('room-status-bar');
     this._roomConnDot = document.getElementById('room-conn-dot');
     this._roomPlayerCount = document.getElementById('room-player-count');
+    this._roomSharingBtn = document.getElementById('room-sharing-btn');
+
+    // 队伍
+    this._roomTeamsSection = document.getElementById('room-teams-section');
+    this._roomTeamCreateBtn = document.getElementById('room-team-create-btn');
+    this._roomTeamCreateForm = document.getElementById('room-team-create-form');
+    this._roomTeamNameInput = document.getElementById('room-team-name-input');
+    this._roomTeamColorInput = document.getElementById('room-team-color-input');
+    this._roomTeamCreateConfirm = document.getElementById('room-team-create-confirm');
+    this._roomTeamList = document.getElementById('room-team-list');
 
     this._roomCreateBtn.addEventListener('click', () => this._roomCreate());
     this._roomJoinBtn.addEventListener('click', () => this._roomJoin());
     this._roomLeaveBtn.addEventListener('click', () => this._roomLeave());
+    this._roomSharingBtn.addEventListener('click', () => this._roomToggleSharing());
     // 回车快速创建/加入
     this._roomNickInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this._roomCreate();
     });
     this._roomCodeInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this._roomJoin();
+    });
+
+    // 队伍事件
+    this._roomTeamCreateBtn.addEventListener('click', () => {
+      this._roomTeamCreateForm.classList.toggle('hidden');
+    });
+    this._roomTeamCreateConfirm.addEventListener('click', () => this._roomCreateTeam());
+    this._roomTeamNameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this._roomCreateTeam();
     });
   }
 
@@ -3123,6 +3143,137 @@ class App {
   }
 
   /**
+   * 切换定位共享开关
+   */
+  _roomToggleSharing() {
+    if (!this.roomManager) return;
+    const enabled = !this.roomManager.isSharingEnabled();
+    this.roomManager.setSharingEnabled(enabled);
+    this._updateSharingBtn();
+    this._updateRoomPlayerList();
+    Toast.show(enabled ? '📡 已开启定位共享' : '📡 已关闭定位共享，其他人将看不到你的位置');
+    if (!enabled) {
+      // 关闭共享时从地图移除自己的标记
+      this.mapManager.clearPlayerMarkers();
+      // 重绘他人标记
+      const myId = this.roomManager.getMyInfo().id;
+      Object.values(this.roomManager.getPlayers()).forEach((p) => {
+        if (p.id !== myId && p.online) {
+          this.mapManager.updatePlayerMarker(p.id, p.lat, p.lng, p.name, p.color);
+        }
+      });
+    }
+  }
+
+  _updateSharingBtn() {
+    if (!this._roomSharingBtn || !this.roomManager) return;
+    const sharing = this.roomManager.isSharingEnabled();
+    this._roomSharingBtn.textContent = sharing ? '📡 共享定位' : '📡 定位已关闭';
+    this._roomSharingBtn.classList.toggle('sharing-off', !sharing);
+  }
+
+  // ============================================================
+  //  队伍管理 UI
+  // ============================================================
+
+  /**
+   * 创建队伍
+   */
+  _roomCreateTeam() {
+    if (!this.roomManager || !this.roomManager.isConnected()) return;
+    const name = (this._roomTeamNameInput.value || '').trim() || '我的队伍';
+    const color = this._roomTeamColorInput.value;
+    try {
+      this.roomManager.createTeam(name, color);
+      this._roomTeamNameInput.value = '';
+      this._roomTeamCreateForm.classList.add('hidden');
+      this._updateTeamUI();
+      this._updateRoomPlayerList();
+      Toast.show(`🏳️ 已创建队伍：${name}`);
+    } catch (e) {
+      Toast.show('⚠️ 创建队伍失败');
+    }
+  }
+
+  /**
+   * 加入队伍
+   */
+  _roomJoinTeam(teamId) {
+    if (!this.roomManager) return;
+    const myTeamId = this.roomManager.getMyTeamId();
+    if (myTeamId) {
+      Toast.show('⚠️ 请先离开当前队伍');
+      return;
+    }
+    this.roomManager.joinTeam(teamId);
+    this._updateTeamUI();
+    this._updateRoomPlayerList();
+    Toast.show('🏳️ 已加入队伍');
+  }
+
+  /**
+   * 离开队伍
+   */
+  _roomLeaveTeam(teamId) {
+    if (!this.roomManager) return;
+    this.roomManager.leaveTeam(teamId);
+    this._updateTeamUI();
+    this._updateRoomPlayerList();
+    Toast.show('🚪 已离开队伍');
+  }
+
+  /**
+   * 更新队伍列表 UI
+   */
+  _updateTeamUI() {
+    if (!this._roomTeamList || !this.roomManager) return;
+    const teams = this.roomManager.getTeams();
+    const myTeamId = this.roomManager.getMyTeamId();
+    const myInfo = this.roomManager.getMyInfo();
+
+    if (!Object.keys(teams).length) {
+      this._roomTeamList.innerHTML = '<div class="room-team-empty">暂无队伍，点击上方创建</div>';
+      return;
+    }
+
+    let html = '';
+    Object.values(teams).forEach((team) => {
+      const members = this.roomManager.getTeamMembers(team.id);
+      const isMyTeam = team.id === myTeamId;
+      const isCreator = team.creatorId === myInfo.id;
+      let actionBtn = '';
+      if (isMyTeam) {
+        actionBtn = `<button class="room-btn mini danger" data-team-id="${team.id}" data-action="leave">离开</button>`;
+      } else if (!myTeamId) {
+        actionBtn = `<button class="room-btn mini primary" data-team-id="${team.id}" data-action="join">加入</button>`;
+      }
+
+      html += `<div class="room-team-card">
+        <div class="room-team-card-header">
+          <span class="room-team-dot" style="background:${team.color}"></span>
+          <span class="room-team-name">${this._escapeHtml(team.name)}</span>
+          <span class="room-team-meta">${members.length} 人${isCreator ? ' · 队长' : ''}</span>
+        </div>
+        <div class="room-team-members">
+          ${members.map(m => `<span class="room-team-member">${this._escapeHtml(m.name)}</span>`).join('')}
+        </div>
+        <div class="room-team-actions">${actionBtn}</div>
+      </div>`;
+    });
+    this._roomTeamList.innerHTML = html;
+
+    // 绑定队伍按钮事件（委托）
+    this._roomTeamList.querySelectorAll('[data-action]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const teamId = btn.dataset.teamId;
+        if (btn.dataset.action === 'join') this._roomJoinTeam(teamId);
+        else if (btn.dataset.action === 'leave') this._roomLeaveTeam(teamId);
+      });
+    });
+  }
+
+  /**
    * 绑定 RoomManager 事件回调
    */
   _bindRoomEvents() {
@@ -3130,20 +3281,49 @@ class App {
 
     this.roomManager.onPositionUpdate = (players) => {
       this._updateRoomPlayerList();
-      // 更新地图标记
-      const myId = this.roomManager.getMyInfo().id;
+      // 更新地图标记（发报员正常、跟随者不显示、分离者半透明）
+      const myInfo = this.roomManager.getMyInfo();
+      const myTeamId = this.roomManager.getMyTeamId();
+      const teams = this.roomManager.getTeams();
+      const broadcasterId = this.roomManager.getTeamBroadcasterId();
+
       this.mapManager.clearPlayerMarkers();
       Object.values(players).forEach((p) => {
-        if (p.id !== myId && p.online) {
-          this.mapManager.updatePlayerMarker(p.id, p.lat, p.lng, p.name, p.color);
+        if (p.id !== myInfo.id && p.online) {
+          // 跟随者（非发报员、未分离）无位置发布 → 不会出现在 players 里，但安全跳过
+          if (p.teamId && p.teamId === myTeamId && p.id !== broadcasterId && !p.teamSeparation) return;
+          const color = p.teamId && teams[p.teamId] ? teams[p.teamId].color : p.color;
+          const opacity = p.teamSeparation ? 0.5 : 1;
+          this.mapManager.updatePlayerMarker(p.id, p.lat, p.lng, p.name, color, opacity);
         }
       });
+    };
+
+    this.roomManager.onTeamUpdate = (teams, myTeamId) => {
+      this._updateTeamUI();
+      this._updateRoomPlayerList();
+      // 队伍变更后刷新地图标记
+      if (this.roomManager) {
+        const myInfo = this.roomManager.getMyInfo();
+        const players = this.roomManager.getPlayers();
+        const broadcasterId = this.roomManager.getTeamBroadcasterId();
+        this.mapManager.clearPlayerMarkers();
+        Object.values(players).forEach((p) => {
+          if (p.id !== myInfo.id && p.online) {
+            if (p.teamId && p.teamId === myTeamId && p.id !== broadcasterId && !p.teamSeparation) return;
+            const color = p.teamId && teams[p.teamId] ? teams[p.teamId].color : p.color;
+            const opacity = p.teamSeparation ? 0.5 : 1;
+            this.mapManager.updatePlayerMarker(p.id, p.lat, p.lng, p.name, color, opacity);
+          }
+        });
+      }
     };
 
     this.roomManager.onConnectionChange = (connected) => {
       if (this._roomConnDot) {
         this._roomConnDot.classList.toggle('online', connected);
       }
+      if (connected) this._updateSharingBtn();
     };
 
     this.roomManager.onRoomError = (msg) => {
@@ -3161,6 +3341,8 @@ class App {
       this._roomCodeValue.title = '点击复制房间码';
     }
     if (this._roomStatus) this._roomStatus.classList.remove('hidden');
+    if (this._roomTeamsSection) this._roomTeamsSection.classList.remove('hidden');
+    this._updateSharingBtn();
   }
 
   /**
@@ -3169,29 +3351,115 @@ class App {
   _updateRoomPlayerList() {
     if (!this._roomPlayerList || !this.roomManager) return;
     const players = this.roomManager.getPlayers();
+    const teams = this.roomManager.getTeams();
     const myInfo = this.roomManager.getMyInfo();
+    const mySharing = this.roomManager.isSharingEnabled();
+    const myTeamId = this.roomManager.getMyTeamId();
     const count = Object.values(players).filter(p => p.online).length + (this.roomManager.isConnected() ? 1 : 0);
     if (this._roomPlayerCount) this._roomPlayerCount.textContent = String(count);
 
-    let html = '';
-    // 自己
-    const myColor = myInfo.color;
-    html += `<div class="room-player-item">
-      <span class="room-player-dot" style="background:${myColor}"></span>
-      <span class="room-player-name self">${this._escapeHtml(myInfo.name)} (我)</span>
-      <span class="room-player-status online">在线</span>
-    </div>`;
-    // 他人
+    const broadcasterId = this.roomManager.getTeamBroadcasterId();
+    const amBroadcaster = this.roomManager.isTeamBroadcaster();
+    const amSeparated = this.roomManager.isTeamSeparated();
+
+    // 按队伍分组
+    const grouped = {}; // teamId → [{id, name, color, status...}]
+    const ungrouped = [];
+    const myself = {
+      id: myInfo.id,
+      name: this._escapeHtml(myInfo.name) + ' (我)',
+      color: myInfo.color,
+      teamId: myTeamId,
+      statusText: mySharing ? '在线' : '定位关闭',
+      statusClass: mySharing ? 'online' : 'sharing-off',
+      isSelf: true,
+      isBroadcaster: amBroadcaster,
+      teamSeparation: amSeparated,
+    };
     Object.values(players).forEach((p) => {
       if (p.id === myInfo.id) return;
-      const statusClass = p.online ? 'online' : '';
-      const statusText = p.online ? '在线' : '离线';
-      html += `<div class="room-player-item">
-        <span class="room-player-dot" style="background:${p.color}"></span>
-        <span class="room-player-name">${this._escapeHtml(p.name)}</span>
-        <span class="room-player-status ${statusClass}">${statusText}</span>
-      </div>`;
+      const entry = {
+        id: p.id,
+        name: this._escapeHtml(p.name),
+        color: p.teamId && teams[p.teamId] ? teams[p.teamId].color : p.color,
+        teamId: p.teamId,
+        statusText: p.online ? (p.sharing !== false ? '在线' : '定位关闭') : '离线',
+        statusClass: p.online ? (p.sharing !== false ? 'online' : 'sharing-off') : '',
+        isSelf: false,
+        isBroadcaster: p.teamBroadcaster === true,
+        teamSeparation: p.teamSeparation === true,
+      };
+      if (p.teamId && teams[p.teamId]) {
+        if (!grouped[p.teamId]) grouped[p.teamId] = [];
+        grouped[p.teamId].push(entry);
+      } else {
+        ungrouped.push(entry);
+      }
     });
+
+    let html = '';
+
+    // 自己的队伍分组
+    if (myTeamId && teams[myTeamId]) {
+      const team = teams[myTeamId];
+      html += `<div class="room-player-group">
+        <div class="room-player-group-label" style="color:${team.color}">
+          <span class="room-team-dot" style="background:${team.color}"></span>
+          ${this._escapeHtml(team.name)} (<span class="room-player-group-count">${1 + (grouped[myTeamId] ? grouped[myTeamId].length : 0)} 人</span>)
+        </div>
+        <div class="room-player-item">
+          <span class="room-player-dot" style="background:${myself.color}"></span>
+          <span class="room-player-name self">${myself.name}</span>
+          <span class="room-player-status ${myself.statusClass}">${myself.isBroadcaster ? '<span class="player-tag tag-broadcaster">📡 发报中</span> ' : myself.teamSeparation ? '<span class="player-tag tag-separated">已分离 ⚠</span> ' : ''}${myself.statusText}</span>
+        </div>`;
+      if (grouped[myTeamId]) {
+        grouped[myTeamId].forEach(p => {
+          html += `<div class="room-player-item">
+            <span class="room-player-dot" style="background:${p.color}"></span>
+            <span class="room-player-name">${p.name}</span>
+            <span class="room-player-status ${p.statusClass}">${p.isBroadcaster ? '<span class="player-tag tag-broadcaster">\ud83d\udce1 发报中</span> ' : p.teamSeparation ? '<span class="player-tag tag-separated">已分离 \u26a0</span> ' : ''}${p.statusText}</span>
+          </div>`;
+        });
+      }
+      html += `</div>`;
+      delete grouped[myTeamId]; // 已显示
+    } else {
+      // 自己无队伍，显示在"无队伍"区
+      ungrouped.unshift(myself);
+    }
+
+    // 其他队伍
+    Object.entries(grouped).forEach(([teamId, members]) => {
+      const team = teams[teamId];
+      if (!team) return;
+      html += `<div class="room-player-group">
+        <div class="room-player-group-label" style="color:${team.color}">
+          <span class="room-team-dot" style="background:${team.color}"></span>
+          ${this._escapeHtml(team.name)} (<span class="room-player-group-count">${members.length} 人</span>)
+        </div>`;
+      members.forEach(p => {
+        html += `<div class="room-player-item">
+          <span class="room-player-dot" style="background:${p.color}"></span>
+          <span class="room-player-name">${p.name}</span>
+          <span class="room-player-status ${p.statusClass}">${p.isBroadcaster ? '<span class="player-tag tag-broadcaster">\ud83d\udce1 发报中</span> ' : p.teamSeparation ? '<span class="player-tag tag-separated">已分离 \u26a0</span> ' : ''}${p.statusText}</span>
+        </div>`;
+      });
+      html += `</div>`;
+    });
+
+    // 无队伍玩家
+    if (ungrouped.length > 0) {
+      html += `<div class="room-player-group">
+        <div class="room-player-group-label room-player-group-label-none">⚪ 无队伍（<span class="room-player-group-count">${ungrouped.length} 人</span>）</div>`;
+      ungrouped.forEach(p => {
+        html += `<div class="room-player-item">
+          <span class="room-player-dot" style="background:${p.color}"></span>
+          <span class="room-player-name${p.isSelf ? ' self' : ''}">${p.name}</span>
+          <span class="room-player-status ${p.statusClass}">${p.isBroadcaster ? '<span class="player-tag tag-broadcaster">\ud83d\udce1 发报中</span> ' : p.teamSeparation ? '<span class="player-tag tag-separated">已分离 \u26a0</span> ' : ''}${p.statusText}</span>
+        </div>`;
+      });
+      html += `</div>`;
+    }
 
     if (Object.keys(players).length === 0 && this.roomManager.isConnected()) {
       html = `<div class="room-empty">等待队友加入...</div>`;
@@ -3206,6 +3474,8 @@ class App {
     this._roomJoined = false;
     if (this._roomCodeDisplay) this._roomCodeDisplay.classList.add('hidden');
     if (this._roomStatus) this._roomStatus.classList.add('hidden');
+    if (this._roomTeamsSection) this._roomTeamsSection.classList.add('hidden');
+    this._roomTeamCreateForm.classList.add('hidden');
     this._roomFormCreate.classList.remove('hidden');
     this._roomFormJoin.classList.remove('hidden');
     if (this._roomPlayerCount) this._roomPlayerCount.textContent = '0';
