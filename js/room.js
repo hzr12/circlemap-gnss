@@ -64,16 +64,28 @@ class RoomManager {
     this._color = '#FF6B6B';
     this._connected = false;
 
-    /** @type {Object.<string, {id:string, name:string, color:string, lat:number, lng:number, acc:number, speed:number, bearing:number, ts:number, online:boolean}>} */
+    /** @type {Object.<string, {id:string, name:string, color:string, lat:number, lng:number, acc:number, speed:number, bearing:number, ts:number, online:boolean, sharing:boolean, teamId:string|null, teamBroadcaster:boolean, teamSeparation:boolean}>} */
     this._players = {};
+
+    /** @type {Object.<string, {id:string, name:string, color:string, creatorId:string}>} */
+    this._teams = {};
+    this._myTeamId = null;
+
+    // 队伍发报员模式
+    this._teamBroadcasterId = null;  // 当前发报员 deviceId
+    this._lastBroadcastTs = 0;       // 上次收到发报心跳的时间戳
+    this._myAmBroadcaster = false;   // 我是不是发报员
+    this._teamSeparation = false;    // 我是否从发报员分离
 
     this._publishTimer = null;
     this._lastPosition = null;
+    this._sharingEnabled = true;
 
     // 回调钩子
     this.onPositionUpdate = null;   // (players) → void
     this.onPlayerJoin = null;       // (playerId, nickname) → void
     this.onPlayerLeave = null;      // (playerId, nickname) → void
+    this.onTeamUpdate = null;       // (teams, myTeamId) → void
     this.onRoomError = null;        // (msg) → void
     this.onConnectionChange = null; // (connected) → void
   }
@@ -214,6 +226,55 @@ class RoomManager {
     try {
       const data = JSON.parse(raw);
 
+      // === 队伍控制消息 ===
+      if (data.type === 'team_create') {
+        this._teams[data.teamId] = {
+          id: data.teamId,
+          name: data.teamName,
+          color: data.teamColor,
+          creatorId: data.id,
+        };
+        if (this._players[data.id]) {
+          this._players[data.id].teamId = data.teamId;
+        }
+        if (this.onTeamUpdate) this.onTeamUpdate({ ...this._teams }, this._myTeamId);
+        if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+        return;
+      }
+
+      if (data.type === 'team_join') {
+        if (this._players[data.id]) {
+          this._players[data.id].teamId = data.teamId;
+        }
+        if (this.onTeamUpdate) this.onTeamUpdate({ ...this._teams }, this._myTeamId);
+        if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+        return;
+      }
+
+      if (data.type === 'team_leave') {
+        if (this._players[data.id]) {
+          this._players[data.id].teamId = null;
+        }
+        if (this.onTeamUpdate) this.onTeamUpdate({ ...this._teams }, this._myTeamId);
+        if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+        return;
+      }
+
+      if (data.type === 'team_kick') {
+        const team = this._teams[data.teamId];
+        if (team && team.creatorId === data.id) {
+          if (this._players[data.targetId]) {
+            this._players[data.targetId].teamId = null;
+          }
+          if (data.targetId === this._deviceId) {
+            this._myTeamId = null;
+          }
+          if (this.onTeamUpdate) this.onTeamUpdate({ ...this._teams }, this._myTeamId);
+          if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+        }
+        return;
+      }
+
       // 离线消息
       if (data.offline) {
         const player = this._players[data.id];
@@ -226,26 +287,55 @@ class RoomManager {
         return;
       }
 
-      // 位置/加入消息
-      if (data.id && data.id !== this._deviceId && data.lat != null && data.lng != null) {
-        const isNew = !this._players[data.id];
-        this._players[data.id] = {
-          id: data.id,
-          name: data.name || '未知',
-          color: data.color || '#888',
-          lat: data.lat,
-          lng: data.lng,
-          acc: data.acc || 0,
-          speed: data.speed || 0,
-          bearing: data.bearing || 0,
-          ts: data.ts || Date.now(),
-          online: true,
-        };
+      // 位置/加入/心跳消息
+      if (data.id && data.id !== this._deviceId) {
+        const existing = this._players[data.id];
+        const isNew = !existing;
 
-        if (isNew && this.onPlayerJoin) {
-          this.onPlayerJoin(data.id, data.name || '未知');
+        if (isNew || data.ping || data.join != null || data.lat != null) {
+          // 构造玩家条目（保留旧位置当新消息无坐标时）
+          const player = {
+            id: data.id,
+            name: data.name || (existing ? existing.name : '未知'),
+            color: data.color || (existing ? existing.color : '#888'),
+            ts: data.ts || Date.now(),
+            online: true,
+            sharing: data.sharing !== false,
+            teamId: data.teamId || (existing ? existing.teamId : null),
+            teamBroadcaster: data.teamBroadcaster === true,
+            teamSeparation: data.teamSeparation === true,
+          };
+
+          if (data.lat != null && data.lng != null) {
+            player.lat = data.lat;
+            player.lng = data.lng;
+            player.acc = data.acc || 0;
+            player.speed = data.speed || 0;
+            player.bearing = data.bearing || 0;
+          } else if (existing) {
+            // 保留旧位置，但清空速度（不再移动）
+            player.lat = existing.lat;
+            player.lng = existing.lng;
+            player.acc = existing.acc || 0;
+            player.speed = 0;
+            player.bearing = existing.bearing || 0;
+          }
+
+          this._players[data.id] = player;
+
+          // 追踪同队发报员
+          if (player.teamId === this._myTeamId && data.teamBroadcaster) {
+            // 别人在发报 → 我退为跟随者
+            this._teamBroadcasterId = data.id;
+            this._myAmBroadcaster = false;
+            this._lastBroadcastTs = Date.now();
+          }
+
+          if (isNew && this.onPlayerJoin) {
+            this.onPlayerJoin(data.id, data.name || '未知');
+          }
+          if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
         }
-        if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
       }
     } catch (e) {
       console.warn('[Room] 消息解析失败:', e);
@@ -322,6 +412,13 @@ class RoomManager {
     this._roomCode = null;
     this._players = {};
     this._lastPosition = null;
+    this._teams = {};
+    this._myTeamId = null;
+    // 重置发报员状态
+    this._teamBroadcasterId = null;
+    this._lastBroadcastTs = 0;
+    this._myAmBroadcaster = false;
+    this._teamSeparation = false;
   }
 
   /**
@@ -344,43 +441,76 @@ class RoomManager {
   _publish(data) {
     if (!this._client || !this._connected || !this._roomCode) return;
     const topic = `${ROOM_CONFIG.TOPIC_PREFIX}/${this._roomCode}/${this._deviceId}`;
-    this._client.publish(topic, JSON.stringify({
+    const msg = {
       ...data,
       id: this._deviceId,
       name: this._nickname,
       color: this._color,
       ts: Date.now(),
-    }), { qos: 1, retain: false });
+    };
+    if (this._myTeamId) msg.teamId = this._myTeamId;
+    if (this._myAmBroadcaster) msg.teamBroadcaster = true;
+    if (this._teamSeparation) msg.teamSeparation = true;
+    this._client.publish(topic, JSON.stringify(msg), { qos: 1, retain: false });
   }
 
   /**
-   * 更新并发布位置
+   * 设置是否共享定位
+   */
+  setSharingEnabled(enabled) {
+    this._sharingEnabled = enabled;
+    if (!enabled) {
+      // 关闭共享时清除缓存的最后位置，心跳不再带坐标
+      this._lastPosition = null;
+    } else {
+      // 恢复共享时发一条通知告知在线
+      this._publish({ ping: true });
+    }
+  }
+
+  isSharingEnabled() {
+    return this._sharingEnabled;
+  }
+
+  /**
+   * 更新并发布位置（受 sharingEnabled + 发报员模式控制）
    */
   publishPosition(lat, lng, acc, speed, bearing) {
+    if (!this._sharingEnabled) return;
     this._lastPosition = { lat, lng, acc, speed, bearing };
+
+    // 队伍发报员模式：非发报员且未分离 → 不传坐标（留给心跳定时器掌控）
+    if (this._myTeamId && !this._myAmBroadcaster && !this._teamSeparation) return;
+
     this._publish({
       lat,
       lng,
       acc: acc || 0,
       speed: speed || 0,
       bearing: bearing || 0,
+      sharing: true,
     });
   }
 
   /**
-   * 启动定时发布（APP 端不需要，只在外部主动调用 publishPosition）
+   * 启动定时发布
    */
   _startPublishing() {
-    // 定期发送在线心跳（避免被 bridge 丢弃）
     this._stopPublishing();
     this._publishTimer = setInterval(() => {
-      if (this._lastPosition) {
+      // 每次心跳前确认发报员角色
+      this._preparePublish();
+
+      // 发报员 / 分离成员 / 无队伍 → 正常传位置
+      if (this._sharingEnabled && this._lastPosition && (this._myAmBroadcaster || this._teamSeparation || !this._myTeamId)) {
         this._publish({
           ...this._lastPosition,
           ping: true,
+          sharing: true,
         });
       } else {
-        this._publish({ ping: true });
+        // 不共享定位 / 非发报员跟随者 → 只发纯心跳
+        this._publish({ ping: true, sharing: this._sharingEnabled });
       }
     }, ROOM_CONFIG.POSITION_INTERVAL);
   }
@@ -407,6 +537,7 @@ class RoomManager {
       id: this._deviceId,
       name: this._nickname,
       color: this._color,
+      teamId: this._myTeamId,
     };
   }
 
@@ -431,6 +562,201 @@ class RoomManager {
     return Object.values(this._players).filter(p => p.online).length;
   }
 
+  // ============================================================
+  //  队伍管理
+  // ============================================================
+
+  /**
+   * 创建队伍
+   * @param {string} teamName
+   * @param {string} teamColor
+   * @returns {string} teamId
+   */
+  createTeam(teamName, teamColor) {
+    const teamId = 't' + Math.random().toString(36).slice(2, 8);
+    this._myTeamId = teamId;
+    this._teams[teamId] = {
+      id: teamId,
+      name: teamName,
+      color: teamColor,
+      creatorId: this._deviceId,
+    };
+    this._publish({
+      type: 'team_create',
+      teamId,
+      teamName,
+      teamColor,
+    });
+    if (this.onTeamUpdate) this.onTeamUpdate({ ...this._teams }, this._myTeamId);
+    return teamId;
+  }
+
+  /**
+   * 加入队伍
+   */
+  joinTeam(teamId) {
+    if (!this._teams[teamId]) return;
+    this._myTeamId = teamId;
+    this._publish({ type: 'team_join', teamId });
+    if (this.onTeamUpdate) this.onTeamUpdate({ ...this._teams }, this._myTeamId);
+  }
+
+  /**
+   * 离开队伍
+   * @param {string} [teamId] 缺省时离开当前队伍
+   */
+  leaveTeam(teamId) {
+    const targetId = teamId || this._myTeamId;
+    if (!targetId) return;
+    this._myTeamId = null;
+    this._publish({ type: 'team_leave', teamId: targetId });
+    if (this.onTeamUpdate) this.onTeamUpdate({ ...this._teams }, this._myTeamId);
+  }
+
+  /**
+   * 踢出队伍（仅房主可操作）
+   */
+  kickFromTeam(teamId, targetId) {
+    this._publish({ type: 'team_kick', teamId, targetId });
+  }
+
+  /**
+   * 获取所有队伍元数据
+   */
+  getTeams() {
+    return { ...this._teams };
+  }
+
+  /**
+   * 获取自己的队伍 ID
+   */
+  getMyTeamId() {
+    return this._myTeamId;
+  }
+
+  /**
+   * 获取指定队伍的在线成员
+   */
+  getTeamMembers(teamId) {
+    return Object.values(this._players).filter(p => p.teamId === teamId && p.online);
+  }
+
+  // ============================================================
+  //  队伍发报员模式
+  // ============================================================
+
+  /**
+   * 每次心跳前的发报准备：检查超时 → 选举 → 分离检测
+   */
+  _preparePublish() {
+    if (!this._myTeamId) return;
+
+    // 1. 发报员超时检测（连续 3 个心跳周期无广播 → 重选）
+    if (this._teamBroadcasterId && Date.now() - this._lastBroadcastTs > ROOM_CONFIG.POSITION_INTERVAL * 3) {
+      this._teamBroadcasterId = null;
+      this._myAmBroadcaster = false;
+    }
+
+    // 2. 无发报员 → 选举
+    if (!this._teamBroadcasterId) {
+      this._electBroadcaster();
+    }
+
+    // 3. 跟随者 → 分离检测
+    if (this._teamBroadcasterId && this._teamBroadcasterId !== this._deviceId) {
+      this._checkSeparation();
+    }
+  }
+
+  /**
+   * 选举发报员：队伍内精度最低的成员担任
+   * 每个客户端独立计算，因规则确定，结果一致
+   */
+  _electBroadcaster() {
+    const candidates = [];
+
+    // 其他在线队友（需有坐标）
+    Object.values(this._players).forEach(p => {
+      if (p.teamId === this._myTeamId && p.online && p.lat != null) {
+        candidates.push({ id: p.id, acc: p.acc != null ? p.acc : 999 });
+      }
+    });
+
+    // 自己（如果有位置）
+    if (this._lastPosition) {
+      candidates.push({ id: this._deviceId, acc: this._lastPosition.acc != null ? this._lastPosition.acc : 999 });
+    }
+
+    if (candidates.length === 0) return;
+
+    // 精度越低（数值越小）越优先，平局按 deviceId 排序
+    candidates.sort((a, b) => {
+      if (a.acc !== b.acc) return a.acc - b.acc;
+      return a.id < b.id ? -1 : 1;
+    });
+
+    const bestId = candidates[0].id;
+    this._teamBroadcasterId = bestId;
+    this._myAmBroadcaster = (bestId === this._deviceId);
+    this._lastBroadcastTs = Date.now();
+  }
+
+  /**
+   * 分离检测：跟随者与发报员的距离是否 > 300m
+   * 带 100m 回滞，防止频繁切换
+   */
+  _checkSeparation() {
+    if (!this._lastPosition || !this._teamBroadcasterId) {
+      this._teamSeparation = false;
+      return;
+    }
+
+    // 我自己就是发报员 → 不需要检测
+    if (this._teamBroadcasterId === this._deviceId) {
+      this._teamSeparation = false;
+      return;
+    }
+
+    const broadcaster = this._players[this._teamBroadcasterId];
+    if (!broadcaster || broadcaster.lat == null) {
+      this._teamSeparation = false;
+      return;
+    }
+
+    const dist = calcDistance(
+      this._lastPosition.lat, this._lastPosition.lng,
+      broadcaster.lat, broadcaster.lng
+    );
+
+    // 回滞：300m 进入分离，100m 回到跟随
+    if (this._teamSeparation) {
+      this._teamSeparation = dist > 100;
+    } else {
+      this._teamSeparation = dist > 300;
+    }
+  }
+
+  /**
+   * 获取当前发报员 ID
+   */
+  getTeamBroadcasterId() {
+    return this._teamBroadcasterId;
+  }
+
+  /**
+   * 我是否是发报员
+   */
+  isTeamBroadcaster() {
+    return this._myAmBroadcaster;
+  }
+
+  /**
+   * 我是否从发报员分离
+   */
+  isTeamSeparated() {
+    return this._teamSeparation;
+  }
+
   /**
    * 销毁实例，清理所有资源
    */
@@ -438,5 +764,11 @@ class RoomManager {
     this.leaveRoom();
     this._disconnect();
     this._players = {};
+    this._teams = {};
+    this._myTeamId = null;
+    this._teamBroadcasterId = null;
+    this._lastBroadcastTs = 0;
+    this._myAmBroadcaster = false;
+    this._teamSeparation = false;
   }
 }
