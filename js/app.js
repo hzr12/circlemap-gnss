@@ -565,7 +565,8 @@ class App {
 
     // —— 赛后统计 ————
     this._roomStatsModal = document.getElementById('room-stats-modal');
-    this._roomStatsClose = document.getElementById('room-stats-close');
+    this._roomStatsClose = document.getElementById('room-stats-close-btn');
+    this._roomStatsBackdrop = document.getElementById('room-stats-backdrop');
     this._roomStatsContent = document.getElementById('room-stats-content');
 
     // 游戏按钮事件
@@ -573,9 +574,9 @@ class App {
     this._roomGameEndBtn.addEventListener('click', () => this._roomEndGame());
     this._roomGameAssignBtn.addEventListener('click', () => this._roomAssignRole());
     this._roomGameRandomBtn.addEventListener('click', () => this._roomRandomAssign());
-    this._roomStatsClose.addEventListener('click', () => {
-      this._roomStatsModal.classList.remove('visible');
-    });
+    const closeStats = () => this._roomStatsModal.classList.remove('visible');
+    if (this._roomStatsClose) this._roomStatsClose.addEventListener('click', closeStats);
+    if (this._roomStatsBackdrop) this._roomStatsBackdrop.addEventListener('click', closeStats);
   }
 
   /**
