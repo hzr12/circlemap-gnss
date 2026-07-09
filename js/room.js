@@ -22,7 +22,7 @@ const ROOM_CONFIG = {
   ROOM_CODE_LEN: 6,
   RECONNECT_DELAY: 5000,         // 重连间隔（ms）
   POSITION_INTERVAL: 10000,      // 坐标发布基准间隔（ms）；自适应下限（移动时不短于它）
-  POSITION_INTERVAL_MAX: 30000,  // 自适应：静止时的下发间隔上限
+  POSITION_INTERVAL_MAX: 15000,  // 自适应：静止时的下发间隔上限（到点后最多 15s 发一次）
   POS_STILL_SPEED: 0.5,          // 低于此速度(m/s)视为静止 → 用最长间隔
   POS_FAST_SPEED: 3,             // 高于此速度(m/s)视为快速移动 → 用基准间隔
   HEARTBEAT_INTERVAL: 15000,     // 心跳保活间隔（ms），二进制 ping 维持在线 + 发报员选举
@@ -98,7 +98,7 @@ class RoomManager {
     this._lastPosition = null;      // 最近一次 GPS 坐标
     this._lastSentPos = null;       // 最近一次实际下发的坐标（自适应位移判定用）
     this._lastSentSpeed = null;     // 最近一次下发时的速度（静止→移动 瞬间判定用）
-    this._sharingEnabled = true;
+    this._sharingEnabled = false;     // 默认关闭，游戏开始时自动开启并锁定
 
     // 位置共享（静默/共享交替）
     this._burstEnabled = false;
@@ -773,6 +773,11 @@ class RoomManager {
     return sinceSent >= this._computePositionInterval();
   }
 
+  /** 立即补发一次当前位置（游戏开始 / 到点进入共享阶段时调用） */
+  flushPositionNow() {
+    if (this._shouldSendPosition()) this._publishPosition();
+  }
+
   _positionTick() {
     this._preparePublish();
     if (this._shouldSendPosition()) {
@@ -948,6 +953,9 @@ class RoomManager {
     this._burstPhaseEnd = Date.now() + duration * 60 * 1000;
 
     if (this.onBurstPhaseChange) this.onBurstPhaseChange(phase, this._burstPhaseEnd);
+
+    // 进入共享阶段立即发 1 次（到点不延迟）
+    if (phase === 'sharing' && this._shouldSendPosition()) this._publishPosition();
 
     if (this._burstTimer) clearTimeout(this._burstTimer);
     this._burstTimer = setTimeout(() => {
