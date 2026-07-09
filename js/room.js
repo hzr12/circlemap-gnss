@@ -833,8 +833,12 @@ class RoomManager {
       if (this._shouldSendPosition()) this._publishPosition();   // 首点
     } else if (transition) {
       this._publishPosition();                                    // 起步即时反映
+    } else if (this._lastSentPos) {
+      // 真实位移（超过阈值）立即下发，消除持续移动/慢走时的发报延迟；静止抖动 <阈值 不触发
+      const moved = calcDistance(this._lastPosition, this._lastSentPos);
+      if (moved > CONFIG.MIN_DISPLACEMENT_M && this._shouldSendPosition()) this._publishPosition();
     }
-    // 其余交给自适应 _positionTick
+    // 其余交给自适应 _positionTick（静止时按最长间隔保活）
   }
 
   /**
