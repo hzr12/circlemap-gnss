@@ -10,12 +10,20 @@
 const ROOM_CONFIG = {
   // 主用 EMQX 国内节点（腾讯云上海，免注册）
   BROKER_URL: 'wss://broker-cn.emqx.io:8084/mqtt',
-  // 备用 HiveMQ 公共 Broker
-  BROKER_FALLBACK_URL: 'wss://broker.mqtt-dashboard.com:8884/mqtt',
+  // 备用 Broker 链（按序尝试）：HiveMQ 公共 Broker → Eclipse Mosquitto 公共测试服务
+  // 注意：test.mosquitto.org 的加密 WebSocket(8081)在其配置中已被注释禁用，
+  //       仅 8080 明文 ws 可用；在 https/本地页面下浏览器会因混合内容拦截 ws://，
+  //       故该备用仅在 file:// 直开或 http:// 页面下才真正可达。
+  BROKER_FALLBACKS: [
+    'wss://broker.mqtt-dashboard.com:8884/mqtt',
+    'ws://test.mosquitto.org:8080/',
+  ],
   TOPIC_PREFIX: 'circlemap',
   ROOM_CODE_LEN: 6,
   RECONNECT_DELAY: 5000,         // 重连间隔（ms）
-  POSITION_INTERVAL: 5000,       // 位置发布间隔（ms）
+  POSITION_INTERVAL: 10000,      // 坐标发布间隔（ms），游戏内位置时效
+  HEARTBEAT_INTERVAL: 15000,     // 心跳保活间隔（ms），仅发轻量 ping 维持在线状态
+  NPC_POSITION_INTERVAL: 60000,  // NPC 队坐标发布间隔（ms），持续共享（1 分钟/次）
   CONNECT_TIMEOUT: 20000,        // MQTT connectTimeout（ms），等 CONNACK
   MAX_RETRY: 5,                  // 连续失败几次后切备用 Broker
   PLAYER_COLORS: [
@@ -78,6 +86,7 @@ class RoomManager {
     this._teamSeparation = false;    // 我是否从发报员分离
 
     this._publishTimer = null;
+    this._npcTimer = null;
     this._lastPosition = null;
     this._sharingEnabled = true;
 
@@ -154,15 +163,17 @@ class RoomManager {
       // 生成短 Client ID（< 23 字符，兼容 MQTT 3.1.1）
       const shortId = 'cm' + Math.random().toString(36).slice(2, 10);
 
-      // 尝试主用 Broker；失败时自动尝试备用
-      this._tryConnect(ROOM_CONFIG.BROKER_URL, shortId, resolve, reject);
+      // 尝试主用 Broker；失败时按 BROKER_FALLBACKS 顺序依次尝试
+      this._tryConnect(ROOM_CONFIG.BROKER_URL, ROOM_CONFIG.BROKER_FALLBACKS.slice(), shortId, resolve, reject);
     });
   }
 
   /**
-   * 尝试连接指定 Broker
+   * 尝试连接指定 Broker（失败时按 fallbacks 数组依次尝试下一个）
+   * @param {string} brokerUrl 当前要连接的 Broker URL
+   * @param {string[]} fallbacks 剩余备用 Broker URL 列表（会被 shift 消费）
    */
-  _tryConnect(brokerUrl, clientId, resolve, reject) {
+  _tryConnect(brokerUrl, fallbacks, clientId, resolve, reject) {
     const discarded = { current: false };
     let errCount = 0;
     let lastErr = null;
@@ -210,16 +221,17 @@ class RoomManager {
         if (errCount >= ROOM_CONFIG.MAX_RETRY) {
           discarded.current = true;
 
-          if (!ROOM_CONFIG.BROKER_FALLBACK_URL || brokerUrl === ROOM_CONFIG.BROKER_FALLBACK_URL) {
+          if (!fallbacks || fallbacks.length === 0) {
             reject(new Error(this._formatMqttError(err, `已尝试所有 Broker，连续失败 ${ROOM_CONFIG.MAX_RETRY} 次`)));
             return;
           }
 
-          // 主用失败后给出明确提示再切备用（只提示一次，避免刷屏）
+          // 当前 Broker 失败后给出明确提示再切下一个备用（只提示一次，避免刷屏）
+          const next = fallbacks.shift();
           if (this.onRoomError) this.onRoomError(this._formatMqttError(err) + '，正在尝试备用服务器…');
-          console.log(`[Room] 主用 Broker 连续失败 ${ROOM_CONFIG.MAX_RETRY} 次，切换到备用:`, ROOM_CONFIG.BROKER_FALLBACK_URL);
+          console.log(`[Room] 当前 Broker 连续失败 ${ROOM_CONFIG.MAX_RETRY} 次，切换到备用:`, next);
           this._disconnect();
-          this._tryConnect(ROOM_CONFIG.BROKER_FALLBACK_URL, clientId, resolve, reject);
+          this._tryConnect(next, fallbacks, clientId, resolve, reject);
         }
       });
 
@@ -228,11 +240,12 @@ class RoomManager {
       });
 
     } catch (e) {
-      // 连接抛出同步异常 → 尝试备用
-      if (ROOM_CONFIG.BROKER_FALLBACK_URL && brokerUrl !== ROOM_CONFIG.BROKER_FALLBACK_URL) {
-        console.log('[Room] 主用 Broker 异常，尝试备用:', ROOM_CONFIG.BROKER_FALLBACK_URL);
+      // 连接抛出同步异常 → 尝试下一个备用
+      if (fallbacks && fallbacks.length > 0) {
+        const next = fallbacks.shift();
+        console.log('[Room] 当前 Broker 异常，尝试备用:', next);
         this._disconnect();
-        this._tryConnect(ROOM_CONFIG.BROKER_FALLBACK_URL, clientId, resolve, reject);
+        this._tryConnect(next, fallbacks, clientId, resolve, reject);
       } else {
         reject(new Error(this._formatMqttError(e)));
       }
@@ -289,6 +302,7 @@ class RoomManager {
           name: data.teamName,
           color: data.teamColor,
           creatorId: data.id,
+          isNpc: data.isNpc === true,
         };
         if (this._players[data.id]) {
           this._players[data.id].teamId = data.teamId;
@@ -348,6 +362,8 @@ class RoomManager {
 
       // === 游戏状态消息 ===
       if (data.type === 'game_start') {
+        // 房主已在 startGame() 本地处理，跳过自身回声避免重复初始化事件
+        if (data.id === this._deviceId) return;
         this._gameState = 'playing';
         this._gameStartTs = data.ts || Date.now();
         this._gameEvents = [{ type: 'game_start', ts: this._gameStartTs }];
@@ -356,6 +372,8 @@ class RoomManager {
       }
 
       if (data.type === 'game_end') {
+        // 房主已在 endGame() 本地处理，跳过自身回声避免重复 push 事件
+        if (data.id === this._deviceId) return;
         this._gameState = 'finished';
         this._gameEndTs = data.ts || Date.now();
         this._gameEvents.push({ type: 'game_end', ts: this._gameEndTs });
@@ -366,6 +384,8 @@ class RoomManager {
       }
 
       if (data.type === 'role_assign') {
+        // 房主已在 assignRole() 本地处理，跳过自身回声
+        if (data.id === this._deviceId) return;
         this._playerRoles[data.targetId] = data.role;
         if (this._players[data.targetId]) {
           this._players[data.targetId].role = data.role;
@@ -375,6 +395,8 @@ class RoomManager {
       }
 
       if (data.type === 'player_caught') {
+        // 房主已在 catchPlayer() 本地 push 事件，跳过自身回声避免时间线重复
+        if (data.id === this._deviceId) return;
         const targetId = data.targetId;
         const ghostId = data.ghostId;
         this._caughtPlayers[targetId] = { caughtBy: ghostId, ts: data.ts || Date.now() };
@@ -418,6 +440,7 @@ class RoomManager {
             teamBroadcaster: data.teamBroadcaster === true,
             teamSeparation: data.teamSeparation === true,
             spectator: data.spectator === true,
+            isNpc: (this._teams[data.teamId] && this._teams[data.teamId].isNpc) || data.isNpc === true,
             role: data.role || this._playerRoles[data.id] || null,
             caught: data.caught === true || (this._caughtPlayers[data.id] != null),
             caughtBy: data.caughtBy || (this._caughtPlayers[data.id] ? this._caughtPlayers[data.id].caughtBy : null),
@@ -459,25 +482,6 @@ class RoomManager {
     } catch (e) {
       console.warn('[Room] 消息解析失败:', e);
     }
-  }
-
-  /**
-   * 创建房间（兼容旧接口 — 非观战模式）
-   * @param {string} nickname
-   * @returns {Promise<string>} 房间码
-   */
-  async createRoom(nickname) {
-    return this._createRoomInternal(nickname);
-  }
-
-  /**
-   * 加入已有房间（兼容旧接口 — 非观战模式）
-   * @param {string} roomCode
-   * @param {string} nickname
-   * @returns {Promise<void>}
-   */
-  async joinRoom(roomCode, nickname) {
-    return this._joinRoomInternal(roomCode, nickname);
   }
 
   /**
@@ -554,6 +558,11 @@ class RoomManager {
     if (this._myAmBroadcaster) msg.teamBroadcaster = true;
     if (this._teamSeparation) msg.teamSeparation = true;
     if (this._isSpectator) msg.spectator = true;
+    if (this._isNpcTeam()) msg.isNpc = true;
+    // 游戏状态随位置消息广播，保证迟到/漏收的玩家也能同步角色与被抓状态
+    const myRole = this._playerRoles[this._deviceId];
+    if (myRole) msg.role = myRole;
+    if (this._caughtPlayers[this._deviceId] != null) msg.caught = true;
     this._client.publish(topic, JSON.stringify(msg), { qos: 1, retain: false });
   }
 
@@ -579,12 +588,13 @@ class RoomManager {
    * 更新并发布位置（受 sharingEnabled + 发报员模式控制）
    */
   publishPosition(lat, lng, acc, speed, bearing) {
-    // 观战模式 / 位置共享静默期 → 不发布位置
     if (this._isSpectator) return;
-    if (this._burstEnabled && this._burstPhase === 'silent') return;
-    if (!this._sharingEnabled) return;
+    // NPC 队：忽略静默期与共享开关，持续共享
+    const npc = this._isNpcTeam();
+    if (this._burstEnabled && this._burstPhase === 'silent' && !npc) return;
+    if (!this._sharingEnabled && !npc) return;
     this._lastPosition = { lat, lng, acc, speed, bearing };
-
+    if (npc) return; // NPC 不在 GPS 回调即时发，交由 _npcTimer 按 60s 节奏统一发
     // 队伍发报员模式：非发报员且未分离 → 不传坐标（留给心跳定时器掌控）
     if (this._myTeamId && !this._myAmBroadcaster && !this._teamSeparation) return;
 
@@ -600,18 +610,18 @@ class RoomManager {
 
   /**
    * 启动定时发布
+   * - 坐标定时器（POSITION_INTERVAL=5s）：仅在有坐标可共享时发送，保证游戏内位置时效
+   * - 心跳定时器（HEARTBEAT_INTERVAL=30s）：仅发轻量 ping 维持在线状态，与坐标解耦
    */
   _startPublishing() {
     this._stopPublishing();
+    // 坐标发布（不含纯心跳）
     this._publishTimer = setInterval(() => {
-      // 每次心跳前确认发报员角色
+      // 每次发送前确认发报员角色
       this._preparePublish();
 
-      // 观战模式 → 只发纯心跳
-      if (this._isSpectator) {
-        this._publish({ ping: true, sharing: false, spectator: true });
-        return;
-      }
+      // 观战模式 / NPC 队：不发坐标（NPC 由 _npcTimer 按 60s 发）
+      if (this._isSpectator || this._isNpcTeam()) return;
 
       // 位置共享静默期 → 不发坐标
       const canSharePosition = this._sharingEnabled && this._lastPosition &&
@@ -623,17 +633,39 @@ class RoomManager {
           ping: true,
           sharing: true,
         });
+      }
+      // 非坐标场景不发 ping，交由 _heartbeatTimer 统一保活
+    }, ROOM_CONFIG.POSITION_INTERVAL);
+
+    // 心跳保活（15s 一次轻量 ping）
+    this._heartbeatTimer = setInterval(() => {
+      if (this._isSpectator) {
+        this._publish({ ping: true, sharing: false, spectator: true });
       } else {
-        // 不共享定位 / 非发报员跟随者 → 只发纯心跳
         this._publish({ ping: true, sharing: this._sharingEnabled });
       }
-    }, ROOM_CONFIG.POSITION_INTERVAL);
+    }, ROOM_CONFIG.HEARTBEAT_INTERVAL);
+
+    // NPC 队强制持续共享（固定 60s，绕过共享开关/静默期/发报员模式）
+    this._npcTimer = setInterval(() => {
+      if (this._isNpcTeam() && this._lastPosition) {
+        this._publish({ ...this._lastPosition, ping: true, sharing: true });
+      }
+    }, ROOM_CONFIG.NPC_POSITION_INTERVAL);
   }
 
   _stopPublishing() {
     if (this._publishTimer) {
       clearInterval(this._publishTimer);
       this._publishTimer = null;
+    }
+    if (this._heartbeatTimer) {
+      clearInterval(this._heartbeatTimer);
+      this._heartbeatTimer = null;
+    }
+    if (this._npcTimer) {
+      clearInterval(this._npcTimer);
+      this._npcTimer = null;
     }
   }
 
@@ -850,8 +882,8 @@ class RoomManager {
    */
   randomAssignRoles(ghostCount = 1) {
     if (!this._isHost) return;
-    // 排除观战者
-    const candidates = Object.values(this._players).filter(p => p.online && !p.spectator);
+    // 排除观战者与 NPC（NPC 不参与鬼抓人）
+    const candidates = Object.values(this._players).filter(p => p.online && !p.spectator && !p.isNpc);
     if (candidates.length < 2) return;
 
     // 洗牌
@@ -872,6 +904,8 @@ class RoomManager {
   catchPlayer(targetId, ghostId) {
     if (!this._isHost) return;
     if (this._caughtPlayers[targetId]) return; // 已抓过
+    const tgt = this._players[targetId];
+    if (tgt && tgt.isNpc) return; // NPC 不可被抓
     this._caughtPlayers[targetId] = { caughtBy: ghostId, ts: Date.now() };
     this._gameEvents.push({ type: 'player_caught', playerId: targetId, ghostId, ts: Date.now() });
     if (this._players[targetId]) {
@@ -888,14 +922,19 @@ class RoomManager {
    */
   _buildGameStats() {
     const duration = this._gameEndTs - this._gameStartTs;
-    // 角色统计
+    // 角色统计（基于 _playerRoles，已包含房主自身）
     const roles = {};
     for (const [id, role] of Object.entries(this._playerRoles)) {
+      // NPC 不参与统计（含 NPC 队房主自身——自身不在 _players 中，需单独判定）
+      const npc = (this._players[id] && this._players[id].isNpc) || (id === this._deviceId && this._isNpcTeam());
+      if (npc) continue;
       if (!roles[role]) roles[role] = [];
       const p = this._players[id];
+      // 房主自身不在 _players 中，用昵称兜底
+      const name = p ? p.name : (id === this._deviceId ? this._nickname : '未知');
       roles[role].push({
         id,
-        name: p ? p.name : '未知',
+        name,
         caught: this._caughtPlayers[id] != null,
         caughtBy: this._caughtPlayers[id] ? this._caughtPlayers[id].caughtBy : null,
         caughtTs: this._caughtPlayers[id] ? this._caughtPlayers[id].ts : null,
@@ -923,7 +962,8 @@ class RoomManager {
       endTs: this._gameEndTs,
       duration,
       durationStr: this._formatDuration(duration),
-      playerCount: Object.keys(this._players).length,
+      // 玩家数：其他玩家（排除 NPC）+ 房主自身（非 NPC 队时计入）
+      playerCount: Object.values(this._players).filter(p => !p.isNpc).length + (this._isNpcTeam() ? 0 : 1),
       roles,
       timeline,
       survivors: hunters.length,
@@ -966,6 +1006,7 @@ class RoomManager {
       name: this._nickname,
       color: this._color,
       teamId: this._myTeamId,
+      isNpc: this._isNpcTeam(),
     };
   }
 
@@ -1000,21 +1041,39 @@ class RoomManager {
    * @param {string} teamColor
    * @returns {string} teamId
    */
-  createTeam(teamName, teamColor) {
+  /**
+   * 我是否在 NPC 队（持续位置共享，不受共享开关/静默期/发报员模式限制）
+   */
+  _isNpcTeam() {
+    return !!(this._myTeamId && this._teams[this._myTeamId] && this._teams[this._myTeamId].isNpc);
+  }
+
+  /**
+   * 公开：我是否在 NPC 队
+   */
+  isNpcTeam() {
+    return this._isNpcTeam();
+  }
+
+  createTeam(teamName, teamColor, isNpc) {
     const teamId = 't' + Math.random().toString(36).slice(2, 8);
     this._myTeamId = teamId;
+    const npc = isNpc === true;
     this._teams[teamId] = {
       id: teamId,
       name: teamName,
       color: teamColor,
       creatorId: this._deviceId,
+      isNpc: npc,
     };
     this._publish({
       type: 'team_create',
       teamId,
       teamName,
       teamColor,
+      isNpc: npc,
     });
+    this._startPublishing(); // 重新评估发布定时器（NPC 队启用 60s 强制共享）
     if (this.onTeamUpdate) this.onTeamUpdate({ ...this._teams }, this._myTeamId);
     return teamId;
   }
@@ -1026,6 +1085,7 @@ class RoomManager {
     if (!this._teams[teamId]) return;
     this._myTeamId = teamId;
     this._publish({ type: 'team_join', teamId });
+    this._startPublishing(); // 重新评估发布定时器（可能加入 NPC 队）
     if (this.onTeamUpdate) this.onTeamUpdate({ ...this._teams }, this._myTeamId);
   }
 
@@ -1038,11 +1098,12 @@ class RoomManager {
     if (!targetId) return;
     this._myTeamId = null;
     this._publish({ type: 'team_leave', teamId: targetId });
+    this._startPublishing(); // 停止 NPC 强制共享定时器
     if (this.onTeamUpdate) this.onTeamUpdate({ ...this._teams }, this._myTeamId);
   }
 
   /**
-   * 踢出队伍（仅房主可操作）
+   * 踢出队伍（仅队伍创建者可操作，接收端校验 team.creatorId）
    */
   kickFromTeam(teamId, targetId) {
     this._publish({ type: 'team_kick', teamId, targetId });
@@ -1097,7 +1158,7 @@ class RoomManager {
   }
 
   /**
-   * 选举发报员：队伍内精度最低的成员担任
+   * 选举发报员：队伍内定位精度最高（acc 最小）的成员担任
    * 每个客户端独立计算，因规则确定，结果一致
    */
   _electBroadcaster() {
@@ -1117,7 +1178,7 @@ class RoomManager {
 
     if (candidates.length === 0) return;
 
-    // 精度越低（数值越小）越优先，平局按 deviceId 排序
+    // 精度最高（acc 最小）优先，平局按 deviceId 排序
     candidates.sort((a, b) => {
       if (a.acc !== b.acc) return a.acc - b.acc;
       return a.id < b.id ? -1 : 1;
