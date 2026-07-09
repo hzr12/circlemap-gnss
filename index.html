@@ -17,7 +17,7 @@
   <link rel="stylesheet" href="css/toast-modal.css?t=20260706v52">
   <link rel="stylesheet" href="css/onboarding.css?t=20260706v52">
   <link rel="stylesheet" href="css/responsive.css?t=20260709v1">
-  <link rel="stylesheet" href="css/room.css?t=20260709v5">
+  <link rel="stylesheet" href="css/room.css?t=20260709v7">
 </head>
 <body>
   <div id="map">
@@ -128,6 +128,11 @@
             <input type="text" id="room-nick-input" class="room-input" placeholder="输入昵称（可选）" maxlength="12" enterkeyhint="done">
             <button class="room-btn primary" id="room-create-btn">创建房间</button>
           </div>
+          <div class="room-form-row" style="margin-top:4px">
+            <label class="room-spectator-check">
+              <input type="checkbox" id="room-spectator-check"> 👁 观战模式（不共享位置）
+            </label>
+          </div>
         </div>
 
         <!-- 加入房间表单 -->
@@ -158,6 +163,43 @@
           <div class="room-status-row">
             <button class="room-btn sharing-btn" id="room-sharing-btn">📡 共享定位</button>
             <button class="room-btn danger" id="room-leave-btn">离开</button>
+          </div>
+        </div>
+
+        <!-- 游戏倒计时 -->
+        <div class="room-section-block hidden" id="room-timer-section">
+          <div class="room-form" id="room-timer-set">
+            <div class="room-form-row">
+              <span class="field-label">⏱ 游戏开始</span>
+              <input type="time" id="room-timer-input" class="room-timer-input">
+              <button class="room-btn mini primary" id="room-timer-set-btn">设定</button>
+              <button class="room-btn mini danger hidden" id="room-timer-abort-btn">取消</button>
+            </div>
+          </div>
+          <div class="room-burst-phase hidden" id="room-timer-countdown">
+            <span style="font-size:12px;color:var(--accent-1)">⏱ 距游戏开始 <span id="room-timer-value">--:--</span></span>
+          </div>
+        </div>
+
+        <!-- 位置共享 -->
+        <div class="room-section-block hidden" id="room-burst-section">
+          <div class="room-form">
+            <div class="room-form-row">
+              <span class="field-label">📍 位置共享</span>
+              <label class="room-burst-toggle">
+                <input type="checkbox" id="room-burst-enable">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="room-burst-config-row" id="room-burst-config">
+              <span class="field-label" style="font-size:11px">静默</span>
+              <input type="number" id="room-burst-silent" class="room-burst-input" value="25" min="1" max="240">
+              <span style="font-size:11px;color:var(--text-tertiary)">分</span>
+              <span class="field-label" style="font-size:11px">共享</span>
+              <input type="number" id="room-burst-share" class="room-burst-input" value="5" min="1" max="60">
+              <span style="font-size:11px;color:var(--text-tertiary)">分</span>
+            </div>
+            <div class="room-burst-phase" id="room-burst-phase">未激活</div>
           </div>
         </div>
 
@@ -380,14 +422,14 @@
   <script src="js/toast.js?t=20260703v22"></script>
   <script src="js/storage.js?t=20260703v22"></script>
   <script src="js/trail.js?t=20260703v22"></script>
-  <script src="js/map.js?t=20260709v26"></script>
+  <script src="js/map.js?t=20260709v27"></script>
   <script src="js/gps.js?t=20260707v27"></script>
 
   <!-- MQTT（多人位置共享） -->
   <script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
-  <script src="js/room.js?t=20260709v6"></script>
+  <script src="js/room.js?t=20260709v8"></script>
 
-<script src="js/app.js?t=20260709v64"></script>
+<script src="js/app.js?t=20260709v67"></script>
 
 <!-- 功能提示浮层（逐个显示在对应功能旁） -->
 <div id="hint-tooltip" class="hint-tooltip" style="display:none">

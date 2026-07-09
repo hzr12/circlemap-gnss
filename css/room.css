@@ -212,6 +212,12 @@
 .room-player-status.sharing-off {
   color: var(--text-tertiary);
 }
+.room-player-status.stale {
+  color: #f59e0b;
+}
+.room-player-status.spectator {
+  color: #8888ff;
+}
 
 /* 空状态 */
 .room-empty {
@@ -418,6 +424,123 @@
 .tag-separated {
   background: rgba(255, 159, 67, 0.15);
   color: #ff9f43;
+}
+
+/* ============================================
+   观战 / 位置共享 / 倒计时 样式
+   ============================================ */
+
+/* 观战模式复选框 */
+.room-spectator-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.room-spectator-check input {
+  accent-color: var(--accent-1);
+}
+
+/* 通用区块 */
+.room-section-block {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.room-section-block.visible {
+  display: flex;
+}
+
+/* 倒计时输入 */
+.room-timer-input {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  padding: 6px 10px;
+  outline: none;
+  flex: 1;
+  max-width: 120px;
+}
+
+/* 位置共享切换 */
+.room-burst-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+.room-burst-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  margin: 0;
+}
+.room-burst-toggle .toggle-slider {
+  width: 40px;
+  height: 22px;
+  background: var(--bg-hover);
+  border-radius: 11px;
+  transition: background 0.2s;
+  border: 1px solid var(--border-color);
+}
+.room-burst-toggle .toggle-slider::after {
+  content: '';
+  display: block;
+  width: 16px;
+  height: 16px;
+  background: var(--text-secondary);
+  border-radius: 50%;
+  margin: 2px;
+  transition: transform 0.2s, background 0.2s;
+}
+.room-burst-toggle input:checked + .toggle-slider {
+  background: var(--accent-1);
+  border-color: var(--accent-1);
+}
+.room-burst-toggle input:checked + .toggle-slider::after {
+  transform: translateX(18px);
+  background: #fff;
+}
+
+.room-burst-config-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.room-burst-input {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 4px 6px;
+  width: 50px;
+  outline: none;
+  text-align: center;
+}
+.room-burst-input:focus {
+  border-color: var(--accent-1);
+}
+
+.room-burst-phase {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  padding: 2px 0;
+}
+
+/* 观战标签 */
+.tag-spectator {
+  background: rgba(136, 136, 255, 0.15);
+  color: #8888ff;
 }
 
 /* ============================================
