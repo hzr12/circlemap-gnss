@@ -21,8 +21,12 @@ const ROOM_CONFIG = {
   TOPIC_PREFIX: 'circlemap',
   ROOM_CODE_LEN: 6,
   RECONNECT_DELAY: 5000,         // 重连间隔（ms）
-  POSITION_INTERVAL: 10000,      // 坐标发布间隔（ms），游戏内位置时效
-  HEARTBEAT_INTERVAL: 15000,     // 心跳保活间隔（ms），仅发轻量 ping 维持在线状态
+  POSITION_INTERVAL: 10000,      // 坐标发布基准间隔（ms）；自适应下限（移动时不短于它）
+  POSITION_INTERVAL_MAX: 30000,  // 自适应：静止时的下发间隔上限
+  POS_STILL_SPEED: 0.5,          // 低于此速度(m/s)视为静止 → 用最长间隔
+  POS_FAST_SPEED: 3,             // 高于此速度(m/s)视为快速移动 → 用基准间隔
+  HEARTBEAT_INTERVAL: 15000,     // 心跳保活间隔（ms），二进制 ping 维持在线 + 发报员选举
+  PRESENCE_INTERVAL: 30000,      // 在场广播间隔（ms），低频回填静态身份
   NPC_POSITION_INTERVAL: 60000,  // NPC 队坐标发布间隔（ms），持续共享（1 分钟/次）
   CONNECT_TIMEOUT: 20000,        // MQTT connectTimeout（ms），等 CONNACK
   MAX_RETRY: 5,                  // 连续失败几次后切备用 Broker
@@ -85,9 +89,13 @@ class RoomManager {
     this._myAmBroadcaster = false;   // 我是不是发报员
     this._teamSeparation = false;    // 我是否从发报员分离
 
-    this._publishTimer = null;
-    this._npcTimer = null;
-    this._lastPosition = null;
+    this._posTimer = null;          // 自适应位置定时器（setTimeout 自调度）
+    this._heartbeatTimer = null;    // 心跳定时器（setInterval）
+    this._presenceTimer = null;     // 在场广播定时器（setInterval）
+    this._npcTimer = null;          // NPC 队强制共享定时器（setInterval）
+    this._lastPosition = null;      // 最近一次 GPS 坐标
+    this._lastSentPos = null;       // 最近一次实际下发的坐标（自适应位移判定用）
+    this._lastSentSpeed = null;     // 最近一次下发时的速度（静止→移动 瞬间判定用）
     this._sharingEnabled = true;
 
     // 位置共享（静默/共享交替）
@@ -236,7 +244,7 @@ class RoomManager {
       });
 
       this._client.on('message', (topic, payload) => {
-        this._handleMessage(topic, payload.toString());
+        this._handleMessage(topic, payload);
       });
 
     } catch (e) {
@@ -291,9 +299,24 @@ class RoomManager {
   /**
    * 处理接收到的 MQTT 消息
    */
-  _handleMessage(topic, raw) {
+  _handleMessage(topic, payload) {
     try {
-      const data = JSON.parse(raw);
+      // 从 topic 提取发送者 deviceId：circlemap/<room>/<id>[/pos|/ping]
+      const parts = topic.split('/');
+      const senderId = parts[2];
+
+      // 二进制坐标（…/<id>/pos）
+      if (topic.endsWith('/pos')) {
+        this._onPositionMsg(senderId, this._decodePos(payload));
+        return;
+      }
+      // 二进制心跳（…/<id>/ping）
+      if (topic.endsWith('/ping')) {
+        this._onPingMsg(senderId, this._decodePing(payload));
+        return;
+      }
+
+      const data = JSON.parse(payload.toString());
 
       // === 队伍控制消息 ===
       if (data.type === 'team_create') {
@@ -422,62 +445,51 @@ class RoomManager {
         return;
       }
 
-      // 位置/加入/心跳消息
-      if (data.id && data.id !== this._deviceId) {
-        const existing = this._players[data.id];
-        const isNew = !existing;
-
-        if (isNew || data.ping || data.join != null || data.lat != null) {
-          // 构造玩家条目（保留旧位置当新消息无坐标时）
-          const player = {
-            id: data.id,
-            name: data.name || (existing ? existing.name : '未知'),
-            color: data.color || (existing ? existing.color : '#888'),
-            ts: data.ts || Date.now(),
-            online: true,
-            sharing: data.sharing !== false,
-            teamId: data.teamId || (existing ? existing.teamId : null),
-            teamBroadcaster: data.teamBroadcaster === true,
-            teamSeparation: data.teamSeparation === true,
-            spectator: data.spectator === true,
-            isNpc: (this._teams[data.teamId] && this._teams[data.teamId].isNpc) || data.isNpc === true,
-            role: data.role || this._playerRoles[data.id] || null,
-            caught: data.caught === true || (this._caughtPlayers[data.id] != null),
-            caughtBy: data.caughtBy || (this._caughtPlayers[data.id] ? this._caughtPlayers[data.id].caughtBy : null),
+      // 在场消息：低频回填静态身份（name/color/role/caught 等）
+      if (data.type === 'presence') {
+        if (data.id && data.id !== this._deviceId) {
+          const existing = this._players[data.id];
+          const player = existing ? { ...existing } : {
+            id: data.id, name: data.name || '未知', color: data.color || '#888',
+            online: true, sharing: true, teamId: null, teamBroadcaster: false,
+            teamSeparation: false, spectator: false, isNpc: false,
+            role: null, caught: false, caughtBy: null,
           };
-
-          if (data.lat != null && data.lng != null) {
-            player.lat = data.lat;
-            player.lng = data.lng;
-            player.acc = data.acc || 0;
-            player.speed = data.speed || 0;
-            player.bearing = data.bearing || 0;
-            player.lastPosUpdate = Date.now();
-          } else if (existing) {
-            // 保留旧位置，但清空速度（不再移动）
-            player.lat = existing.lat;
-            player.lng = existing.lng;
-            player.acc = existing.acc || 0;
-            player.speed = 0;
-            player.bearing = existing.bearing || 0;
-            player.lastPosUpdate = existing.lastPosUpdate || 0;
-          }
-
+          player.id = data.id;
+          player.name = data.name || player.name || '未知';
+          player.color = data.color || player.color || '#888';
+          player.teamId = data.teamId || player.teamId || null;
+          player.spectator = data.spectator === true;
+          player.isNpc = (this._teams[player.teamId] && this._teams[player.teamId].isNpc) || data.isNpc === true;
+          player.role = data.role || this._playerRoles[data.id] || player.role || null;
+          player.caught = data.caught === true || (this._caughtPlayers[data.id] != null) || player.caught || false;
+          player.caughtBy = data.caughtBy || (this._caughtPlayers[data.id] ? this._caughtPlayers[data.id].caughtBy : (player.caughtBy || null));
           this._players[data.id] = player;
-
-          // 追踪同队发报员
-          if (player.teamId === this._myTeamId && data.teamBroadcaster) {
-            // 别人在发报 → 我退为跟随者
-            this._teamBroadcasterId = data.id;
-            this._myAmBroadcaster = false;
-            this._lastBroadcastTs = Date.now();
-          }
-
-          if (isNew && this.onPlayerJoin) {
-            this.onPlayerJoin(data.id, data.name || '未知');
-          }
           if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
         }
+        return;
+      }
+
+      // 加入消息（携带 name/color，触发 onPlayerJoin）
+      if (data.id && data.id !== this._deviceId && data.join != null) {
+        const existing = this._players[data.id];
+        const isNew = !existing;
+        const player = existing ? { ...existing } : {
+          id: data.id, name: data.name || '未知', color: data.color || '#888',
+          online: true, sharing: true, teamId: null, teamBroadcaster: false,
+          teamSeparation: false, spectator: false, isNpc: false,
+          role: null, caught: false, caughtBy: null,
+        };
+        player.id = data.id;
+        player.name = data.name || player.name || '未知';
+        player.color = data.color || player.color || '#888';
+        player.online = true;
+        if (data.teamId) player.teamId = data.teamId;
+        player.isNpc = (this._teams[player.teamId] && this._teams[player.teamId].isNpc) || false;
+        this._players[data.id] = player;
+        if (isNew && this.onPlayerJoin) this.onPlayerJoin(data.id, player.name);
+        if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+        return;
       }
     } catch (e) {
       console.warn('[Room] 消息解析失败:', e);
@@ -499,7 +511,7 @@ class RoomManager {
     // 取消订阅
     if (this._client && this._roomCode) {
       try {
-        this._client.unsubscribe(`${ROOM_CONFIG.TOPIC_PREFIX}/${this._roomCode}/+`);
+        this._client.unsubscribe(`${ROOM_CONFIG.TOPIC_PREFIX}/${this._roomCode}/#`);
       } catch (e) { /* 静默 */ }
     }
 
@@ -532,7 +544,7 @@ class RoomManager {
    */
   _subscribeRoom(roomCode) {
     if (!this._client) return;
-    const topic = `${ROOM_CONFIG.TOPIC_PREFIX}/${roomCode}/+`;
+    const topic = `${ROOM_CONFIG.TOPIC_PREFIX}/${roomCode}/#`;
     this._client.subscribe(topic, { qos: 1 }, (err) => {
       if (err) {
         console.error('[Room] 订阅失败:', err);
@@ -566,6 +578,198 @@ class RoomManager {
     this._client.publish(topic, JSON.stringify(msg), { qos: 1, retain: false });
   }
 
+  // ============================================================
+  //  接收：坐标 / 心跳（二进制）
+  // ============================================================
+
+  _onPositionMsg(senderId, pos) {
+    if (senderId === this._deviceId) return;
+    const existing = this._players[senderId];
+    const isNew = !existing;
+    const player = existing ? { ...existing } : {
+      id: senderId, name: '未知', color: '#888', online: true, sharing: true,
+      teamId: null, teamBroadcaster: false, teamSeparation: false,
+      spectator: false, isNpc: false, role: null, caught: false, caughtBy: null,
+    };
+    player.id = senderId;
+    player.ts = pos.ts || Date.now();
+    player.online = true;
+    player.lat = pos.lat;
+    player.lng = pos.lng;
+    player.acc = pos.acc || 0;
+    player.speed = pos.speed || 0;
+    player.bearing = pos.bearing || 0;
+    player.lastPosUpdate = Date.now();
+    player.isNpc = (this._teams[player.teamId] && this._teams[player.teamId].isNpc) || false;
+    player.role = this._playerRoles[senderId] || player.role || null;
+    player.caught = (this._caughtPlayers[senderId] != null) || player.caught || false;
+    player.caughtBy = this._caughtPlayers[senderId] ? this._caughtPlayers[senderId].caughtBy : (player.caughtBy || null);
+    this._players[senderId] = player;
+    if (isNew && this.onPlayerJoin) this.onPlayerJoin(senderId, player.name);
+    if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+  }
+
+  _onPingMsg(senderId, flags) {
+    if (senderId === this._deviceId) return;
+    const existing = this._players[senderId];
+    const isNew = !existing;
+    const player = existing ? { ...existing } : {
+      id: senderId, name: '未知', color: '#888', online: true, sharing: true,
+      teamId: null, teamBroadcaster: false, teamSeparation: false,
+      spectator: false, isNpc: false, role: null, caught: false, caughtBy: null,
+    };
+    player.id = senderId;
+    player.online = true;
+    player.sharing = flags.sharing;
+    player.spectator = flags.spectator;
+    player.teamBroadcaster = flags.teamBroadcaster;
+    player.teamSeparation = flags.teamSeparation;
+    // 队伍发报员选举（原 pos 分支逻辑迁移）
+    if (player.teamId === this._myTeamId && flags.teamBroadcaster) {
+      this._teamBroadcasterId = senderId;
+      this._myAmBroadcaster = false;
+      this._lastBroadcastTs = Date.now();
+    }
+    this._players[senderId] = player;
+    if (isNew && this.onPlayerJoin) this.onPlayerJoin(senderId, player.name);
+    if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+  }
+
+  // ============================================================
+  //  二进制编解码（零依赖，DataView）
+  // ============================================================
+
+  _asDataView(payload) {
+    if (typeof Buffer !== 'undefined' && Buffer.isBuffer(payload)) {
+      return new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    }
+    if (payload instanceof ArrayBuffer) return new DataView(payload);
+    if (payload instanceof Uint8Array) {
+      return new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    }
+    return new DataView(payload.buffer || payload);
+  }
+
+  // 位置包 21 字节：lat/lng Int32(×1e6)，acc Uint32(米)，speed Uint16(×100)，brg Uint16(×100)，ts Uint32(秒)，flags Uint8
+  _encodePos(p) {
+    const buf = new ArrayBuffer(21);
+    const dv = new DataView(buf);
+    dv.setInt32(0, Math.round(p.lat * 1e6), true);
+    dv.setInt32(4, Math.round(p.lng * 1e6), true);
+    dv.setUint32(8, Math.max(0, Math.min(0xFFFFFFFF, Math.round(p.acc || 0))), true);
+    dv.setUint16(12, Math.max(0, Math.min(65535, Math.round((p.speed || 0) * 100))), true);
+    dv.setUint16(14, Math.max(0, Math.min(65535, Math.round((p.bearing || 0) * 100))), true);
+    dv.setUint32(16, Math.floor((p.ts || Date.now()) / 1000), true);
+    dv.setUint8(20, 1);
+    return new Uint8Array(buf);
+  }
+
+  _decodePos(payload) {
+    const dv = this._asDataView(payload);
+    return {
+      lat: dv.getInt32(0, true) / 1e6,
+      lng: dv.getInt32(4, true) / 1e6,
+      acc: dv.getUint32(8, true),
+      speed: dv.getUint16(12, true) / 100,
+      bearing: dv.getUint16(14, true) / 100,
+      ts: dv.getUint32(16, true) * 1000,
+    };
+  }
+
+  // 心跳包 1 字节：bit0 sharing / bit1 teamBroadcaster / bit2 teamSeparation / bit3 spectator
+  _encodePing(flags) {
+    const buf = new ArrayBuffer(1);
+    const dv = new DataView(buf);
+    let b = 0;
+    if (flags.sharing) b |= 1;
+    if (flags.teamBroadcaster) b |= 2;
+    if (flags.teamSeparation) b |= 4;
+    if (flags.spectator) b |= 8;
+    dv.setUint8(0, b);
+    return new Uint8Array(buf);
+  }
+
+  _decodePing(payload) {
+    const dv = this._asDataView(payload);
+    const b = dv.getUint8(0);
+    return {
+      sharing: !!(b & 1),
+      teamBroadcaster: !!(b & 2),
+      teamSeparation: !!(b & 4),
+      spectator: !!(b & 8),
+    };
+  }
+
+  _publishPosition() {
+    if (!this._client || !this._connected || !this._roomCode || !this._lastPosition) return;
+    const p = this._lastPosition;
+    const topic = `${ROOM_CONFIG.TOPIC_PREFIX}/${this._roomCode}/${this._deviceId}/pos`;
+    const bytes = this._encodePos({
+      lat: p.lat, lng: p.lng, acc: p.acc, speed: p.speed, bearing: p.bearing, ts: Date.now(),
+    });
+    this._client.publish(topic, bytes, { qos: 1, retain: false, binary: true });
+    this._lastSentPos = { lat: p.lat, lng: p.lng, bearing: p.bearing, ts: Date.now() };
+    this._lastSentSpeed = p.speed;
+  }
+
+  _publishPing() {
+    if (!this._client || !this._connected || !this._roomCode) return;
+    const topic = `${ROOM_CONFIG.TOPIC_PREFIX}/${this._roomCode}/${this._deviceId}/ping`;
+    const bytes = this._encodePing({
+      sharing: this._isSpectator ? false : this._sharingEnabled,
+      teamBroadcaster: this._myAmBroadcaster,
+      teamSeparation: this._teamSeparation,
+      spectator: this._isSpectator,
+    });
+    this._client.publish(topic, bytes, { qos: 1, retain: false, binary: true });
+  }
+
+  _publishPresence() {
+    // 静态身份低频回填；字段由 _publish 自动注入 id/name/color/teamId/isNpc/role/caught
+    this._publish({ type: 'presence' });
+  }
+
+  // ============================================================
+  //  自适应位置下发
+  // ============================================================
+
+  _computePositionInterval() {
+    const speed = (this._lastPosition && this._lastPosition.speed) || 0; // m/s
+    const min = ROOM_CONFIG.POSITION_INTERVAL;       // 移动时最短间隔（=原基准，不更短以免增带宽）
+    const max = ROOM_CONFIG.POSITION_INTERVAL_MAX;   // 静止时最长间隔
+    const still = ROOM_CONFIG.POS_STILL_SPEED;
+    const fast = ROOM_CONFIG.POS_FAST_SPEED;
+    if (speed <= still) return max;                   // 基本静止 → 最长间隔
+    if (speed >= fast) return min;                    // 快速移动 → 基准间隔
+    // 0.5~3 m/s：在 [min, max] 间线性插值（始终 ≥ 原基准 10s）
+    return Math.round(min + (max - min) * (1 - (speed - still) / (fast - still)));
+  }
+
+  _shouldSendPosition() {
+    if (this._isSpectator || this._isNpcTeam()) return false;
+    const canShare = this._sharingEnabled && this._lastPosition &&
+      (!this._burstEnabled || this._burstPhase === 'sharing');
+    if (!canShare) return false;
+    if (!(this._myAmBroadcaster || this._teamSeparation || !this._myTeamId)) return false;
+    const sinceSent = this._lastSentPos ? Date.now() - this._lastSentPos.ts : Infinity;
+    return sinceSent >= this._computePositionInterval();
+  }
+
+  _positionTick() {
+    this._preparePublish();
+    if (this._shouldSendPosition()) {
+      this._publishPosition();
+    }
+  }
+
+  _schedulePositionTick() {
+    const interval = this._computePositionInterval();
+    this._posTimer = setTimeout(() => {
+      this._positionTick();
+      this._schedulePositionTick();
+    }, interval);
+  }
+
   /**
    * 设置是否共享定位
    */
@@ -574,9 +778,10 @@ class RoomManager {
     if (!enabled) {
       // 关闭共享时清除缓存的最后位置，心跳不再带坐标
       this._lastPosition = null;
+      this._lastSentPos = null;
     } else {
-      // 恢复共享时发一条通知告知在线
-      this._publish({ ping: true });
+      // 恢复共享时发一条心跳通知告知在线
+      this._publishPing();
     }
   }
 
@@ -595,17 +800,14 @@ class RoomManager {
     if (!this._sharingEnabled && !npc) return;
     this._lastPosition = { lat, lng, acc, speed, bearing };
     if (npc) return; // NPC 不在 GPS 回调即时发，交由 _npcTimer 按 60s 节奏统一发
-    // 队伍发报员模式：非发报员且未分离 → 不传坐标（留给心跳定时器掌控）
-    if (this._myTeamId && !this._myAmBroadcaster && !this._teamSeparation) return;
-
-    this._publish({
-      lat,
-      lng,
-      acc: acc || 0,
-      speed: speed || 0,
-      bearing: bearing || 0,
-      sharing: true,
-    });
+    // 静止→移动 的瞬间立即下发，让他人及时看到起步（仅触发一次，不持续增频）
+    const transition = this._lastSentPos && (this._lastSentSpeed || 0) <= ROOM_CONFIG.POS_STILL_SPEED && speed > ROOM_CONFIG.POS_STILL_SPEED;
+    if (!this._lastSentPos) {
+      if (this._shouldSendPosition()) this._publishPosition();   // 首点
+    } else if (transition) {
+      this._publishPosition();                                    // 起步即时反映
+    }
+    // 其余交给自适应 _positionTick
   }
 
   /**
@@ -615,53 +817,37 @@ class RoomManager {
    */
   _startPublishing() {
     this._stopPublishing();
-    // 坐标发布（不含纯心跳）
-    this._publishTimer = setInterval(() => {
-      // 每次发送前确认发报员角色
-      this._preparePublish();
-
-      // 观战模式 / NPC 队：不发坐标（NPC 由 _npcTimer 按 60s 发）
-      if (this._isSpectator || this._isNpcTeam()) return;
-
-      // 位置共享静默期 → 不发坐标
-      const canSharePosition = this._sharingEnabled && this._lastPosition &&
-        (!this._burstEnabled || this._burstPhase === 'sharing');
-
-      if (canSharePosition && (this._myAmBroadcaster || this._teamSeparation || !this._myTeamId)) {
-        this._publish({
-          ...this._lastPosition,
-          ping: true,
-          sharing: true,
-        });
-      }
-      // 非坐标场景不发 ping，交由 _heartbeatTimer 统一保活
-    }, ROOM_CONFIG.POSITION_INTERVAL);
-
-    // 心跳保活（15s 一次轻量 ping）
+    // 自适应位置发布（自调度 setTimeout，间隔随速度浮动）
+    this._schedulePositionTick();
+    // 心跳保活（15s，二进制 ping 维持在线 + 发报员选举）
     this._heartbeatTimer = setInterval(() => {
-      if (this._isSpectator) {
-        this._publish({ ping: true, sharing: false, spectator: true });
-      } else {
-        this._publish({ ping: true, sharing: this._sharingEnabled });
-      }
+      this._preparePublish();
+      this._publishPing();
     }, ROOM_CONFIG.HEARTBEAT_INTERVAL);
-
-    // NPC 队强制持续共享（固定 60s，绕过共享开关/静默期/发报员模式）
+    // 在场广播（30s，JSON 低频回填静态身份）
+    this._presenceTimer = setInterval(() => {
+      this._publishPresence();
+    }, ROOM_CONFIG.PRESENCE_INTERVAL);
+    // NPC 队强制持续共享（60s，二进制 pos，绕过共享开关/静默期/发报员模式）
     this._npcTimer = setInterval(() => {
       if (this._isNpcTeam() && this._lastPosition) {
-        this._publish({ ...this._lastPosition, ping: true, sharing: true });
+        this._publishPosition();
       }
     }, ROOM_CONFIG.NPC_POSITION_INTERVAL);
   }
 
   _stopPublishing() {
-    if (this._publishTimer) {
-      clearInterval(this._publishTimer);
-      this._publishTimer = null;
+    if (this._posTimer) {
+      clearTimeout(this._posTimer);
+      this._posTimer = null;
     }
     if (this._heartbeatTimer) {
       clearInterval(this._heartbeatTimer);
       this._heartbeatTimer = null;
+    }
+    if (this._presenceTimer) {
+      clearInterval(this._presenceTimer);
+      this._presenceTimer = null;
     }
     if (this._npcTimer) {
       clearInterval(this._npcTimer);
@@ -1267,8 +1453,13 @@ class RoomManager {
     this._gameState = 'idle';
     this._playerRoles = {};
     this._caughtPlayers = {};
-    this._gameEvents = [];
-    this._gameStartTs = 0;
-    this._gameEndTs = 0;
+      this._gameEvents = [];
+      this._gameStartTs = 0;
+      this._gameEndTs = 0;
+    }
   }
-}
+
+  // 仅用于 Node 测试桩（浏览器中 module 未定义，无副作用）
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { RoomManager, ROOM_CONFIG };
+  }
