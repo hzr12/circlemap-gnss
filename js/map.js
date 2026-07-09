@@ -1066,7 +1066,7 @@ class MapManager {
   /**
    * 创建玩家标记图标（圆点 + 名称标签）
    */
-  _createPlayerIcon(color, name) {
+  _createPlayerIcon(color, name, opacity = 1) {
     const label = (name || '?').charAt(0).toUpperCase();
     const svg = [
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">',
@@ -1075,8 +1075,8 @@ class MapManager {
       '      <feDropShadow dx="0" dy="1" stdDeviation="3" flood-opacity="0.5"/>',
       '    </filter>',
       '  </defs>',
-      `  <circle cx="22" cy="22" r="16" fill="${color}" stroke="#fff" stroke-width="2.5" filter="url(#ps)"/>`,
-      `  <text x="22" y="22" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="14" font-weight="bold" font-family="Arial">${label}</text>`,
+      `  <circle cx="22" cy="22" r="16" fill="${color}" stroke="#fff" stroke-width="2.5" filter="url(#ps)" opacity="${opacity}"/>`,
+      `  <text x="22" y="22" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="14" font-weight="bold" font-family="Arial" opacity="${opacity}">${label}</text>`,
       '</svg>'
     ].join('\n');
     const dataUri = 'data:image/svg+xml;base64,' + btoa(svg);
@@ -1097,19 +1097,24 @@ class MapManager {
    * @param {string} name 昵称
    * @param {string} color 主题色
    */
-  updatePlayerMarker(id, lat, lng, name, color) {
+  updatePlayerMarker(id, lat, lng, name, color, opacity = 1) {
     if (!this.map) return;
     const latLng = new qq.maps.LatLng(lat, lng);
     if (this.playerMarkers[id]) {
       this.playerMarkers[id].setPosition(latLng);
+      if (opacity !== this.playerMarkers[id]._lastOpacity) {
+        this.playerMarkers[id].setIcon(this._createPlayerIcon(color, name, opacity));
+        this.playerMarkers[id]._lastOpacity = opacity;
+      }
     } else {
       this.playerMarkers[id] = new qq.maps.Marker({
         position: latLng,
         map: this.map,
         draggable: false,
-        icon: this._createPlayerIcon(color, name),
+        icon: this._createPlayerIcon(color, name, opacity),
         title: name || '玩家',
       });
+      this.playerMarkers[id]._lastOpacity = opacity;
     }
   }
 
