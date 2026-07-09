@@ -151,6 +151,9 @@ class App {
     // 电池监控
     this._initBattery();
 
+    // 清理可能残留的原生后台定位（来自上一次进程被杀未完全清理）
+    this._stopStaleBg();
+
     // 进入页面后自动启动持续 GPS 追踪
     this._startWatching();
 
@@ -950,6 +953,19 @@ class App {
   }
 
   /* ── 后台定位（pagehide → 60s polling + wakeLock） ── */
+
+  /**
+   * 清理可能残留的原生后台定位服务
+   * 用于 app 启动时：如果上次划掉任务后服务未完全清理，在此停止
+   */
+  async _stopStaleBg() {
+    if (!this._hasNativeBgPlugin()) return;
+    try {
+      await Capacitor.Plugins.BackgroundGeolocation.stop();
+    } catch (e) {
+      // 静默：没有活跃的 watcher 时 stop() 会抛错，忽略
+    }
+  }
 
   /**
    * 检查 Capacitor 原生后台定位插件是否可用
