@@ -74,6 +74,16 @@ jobs:
         working-directory: native
         run: npx cap sync android
 
+      - name: 配置前台服务（后台保活定位）
+        working-directory: native
+        run: |
+          chmod +x scripts/setup-foreground-service.sh
+          ./scripts/setup-foreground-service.sh
+          echo "=== 验证 AndroidManifest.xml ==="
+          grep -E "FOREGROUND_SERVICE|WAKE_LOCK|POST_NOTIFICATIONS" android/app/src/main/AndroidManifest.xml
+          echo "=== 验证通知图标 ==="
+          ls -la android/app/src/main/res/drawable/ic_notification.xml
+
       - name: 覆盖 User-Agent（桌面版 UA 测试瓦片差异）
         run: |
           cp native/ua-override/MainActivity.java native/android/app/src/main/java/com/hzr/circlemap/MainActivity.java
