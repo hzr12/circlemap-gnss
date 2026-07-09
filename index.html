@@ -203,6 +203,26 @@
           </div>
         </div>
 
+        <!-- 游戏控制 -->
+        <div class="room-section-block hidden" id="room-game-section">
+          <div class="room-form">
+            <div class="room-form-row">
+              <span class="field-label">🕹️ 游戏</span>
+              <span class="room-game-host-badge hidden" id="room-game-host-badge">👑 房主</span>
+            </div>
+            <div class="room-game-status-row">
+              <span id="room-game-status">⏳ 等待开始</span>
+              <span id="room-game-role-display" class="room-game-role"></span>
+            </div>
+            <div class="room-game-buttons">
+              <button class="room-btn primary mini" id="room-game-start-btn">🎮 开始游戏</button>
+              <button class="room-btn danger mini hidden" id="room-game-end-btn">🏁 结束游戏</button>
+              <button class="room-btn mini" id="room-game-assign-btn">👻 换鬼</button>
+              <button class="room-btn mini" id="room-game-random-btn">🎲 随机分配</button>
+            </div>
+          </div>
+        </div>
+
         <!-- 队伍区域 -->
         <div class="room-teams hidden" id="room-teams-section">
           <div class="room-teams-header">
@@ -411,6 +431,18 @@
     </div>
   </div>
 
+  <!-- 赛后统计浮层 -->
+  <div class="room-stats-modal" id="room-stats-modal">
+    <div class="room-stats-backdrop" id="room-stats-close"></div>
+    <div class="room-stats-panel">
+      <div class="room-stats-header">
+        <span>🏁 赛后统计</span>
+        <button class="room-stats-close-btn" id="room-stats-close">✕</button>
+      </div>
+      <div class="room-stats-content" id="room-stats-content"></div>
+    </div>
+  </div>
+
   <!-- Tencent Map API -->
   <script charset="utf-8" src="https://map.qq.com/api/js?v=2.exp&key=OB4BZ-D4W3U-B7VVO-4PJWW-6TKDJ-WPB77&libraries=geometry,convertor"></script>
 
@@ -427,9 +459,9 @@
 
   <!-- MQTT（多人位置共享） -->
   <script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
-  <script src="js/room.js?t=20260709v8"></script>
+  <script src="js/room.js?t=20260709v9"></script>
 
-<script src="js/app.js?t=20260709v67"></script>
+<script src="js/app.js?t=20260709v68"></script>
 
 <!-- 功能提示浮层（逐个显示在对应功能旁） -->
 <div id="hint-tooltip" class="hint-tooltip" style="display:none">

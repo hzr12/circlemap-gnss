@@ -631,3 +631,235 @@
     padding: 8px 10px;
   }
 }
+
+/* ============================================
+   游戏控制
+   ============================================ */
+.room-game-host-badge {
+  display: inline-block;
+  font-size: 11px;
+  color: #FFD700;
+  background: rgba(255, 215, 0, 0.15);
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-left: auto;
+}
+.room-game-host-badge.hidden {
+  display: none;
+}
+
+.room-game-status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.room-game-role {
+  font-weight: 600;
+  font-size: 14px;
+}
+.room-game-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* 角色标签 */
+.player-tag {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-right: 3px;
+  vertical-align: middle;
+}
+.tag-ghost {
+  background: rgba(180, 100, 255, 0.2);
+  color: #c084fc;
+}
+.tag-hunter {
+  background: rgba(100, 180, 255, 0.2);
+  color: #60a5fa;
+}
+.tag-caught {
+  background: rgba(255, 160, 50, 0.2);
+  color: #fb923c;
+}
+
+/* 赛后统计浮层 */
+.room-stats-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+}
+.room-stats-modal.visible {
+  display: flex;
+}
+.room-stats-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+.room-stats-panel {
+  position: relative;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  max-width: 380px;
+  width: calc(100% - 32px);
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 20px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3);
+}
+.room-stats-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+.room-stats-close-btn {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px;
+  line-height: 1;
+}
+.room-stats-close-btn:hover {
+  color: var(--text-primary);
+}
+.room-stats-content {
+  font-size: 14px;
+}
+
+/* 统计内容 */
+.stats-winner {
+  text-align: center;
+  font-size: 20px;
+  font-weight: 700;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  margin-bottom: 14px;
+}
+.stats-winner-ghost {
+  background: rgba(180, 100, 255, 0.15);
+  color: #c084fc;
+}
+.stats-winner-hunter {
+  background: rgba(100, 180, 255, 0.15);
+  color: #60a5fa;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.stats-item {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  text-align: center;
+}
+.stats-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+}
+.stats-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.stats-section {
+  margin-bottom: 12px;
+}
+.stats-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+.stats-role-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.stats-role-tag {
+  display: inline-block;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: var(--bg-input);
+}
+.stats-hunter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+.stats-caught-badge {
+  font-size: 11px;
+  color: #fb923c;
+}
+.stats-survive-badge {
+  font-size: 11px;
+  color: #4ade80;
+}
+
+/* 事件时间线 */
+.stats-timeline {
+  margin-top: 10px;
+}
+.stats-timeline-item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 13px;
+}
+.stats-timeline-item:last-child {
+  border-bottom: none;
+}
+.stats-time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent-1);
+  min-width: 40px;
+}
+.stats-event {
+  color: var(--text-primary);
+  flex: 1;
+}
+
+/* 移动端适应 */
+@media (max-width: 480px) {
+  .room-stats-panel {
+    max-width: 100%;
+    width: 100%;
+    max-height: 100vh;
+    height: 100%;
+    border-radius: 0;
+  }
+  .room-game-buttons {
+    flex-direction: column;
+  }
+  .room-game-buttons .room-btn {
+    width: 100%;
+  }
+}
