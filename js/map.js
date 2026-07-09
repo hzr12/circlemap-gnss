@@ -33,6 +33,7 @@ class MapManager {
     this.ctx = null;
     this.center = null;         // 当前标记位置（用于下一个圆）
     this.mode = 'click';
+    this.onMapClick = null;        // 点击地图回调（多人模式：设为我的共享位置）
     this.circles = [];          // {id, center:{lat,lng}, maxRadius, interval}
     this.selectedCircleId = null;
     this._idCounter = Date.now(); // #3 时间戳起始 + 递增，避免碰撞
@@ -116,6 +117,7 @@ class MapManager {
       }
 
       this.setCenter({ lat: event.latLng.getLat(), lng: event.latLng.getLng() });
+      if (this.onMapClick) this.onMapClick({ lat: event.latLng.getLat(), lng: event.latLng.getLng() });
     });
 
     // #13 — 长按地图触发回调（用于手动设位置或快速创建圆）
