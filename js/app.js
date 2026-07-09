@@ -50,6 +50,7 @@ class App {
     this._isBackground = false;       // 是否在后台模式（pagehide 后 60s polling）
     this._bgLocateInterval = null;    // 后台轮询定位定时器
     this._wakeLock = null;            // 屏幕唤醒锁引用
+    this._fgServiceStarted = false;   // 前台服务是否已启动
     this._recentFixes = [];           // 最近定位记录（最多 10 条）
     this._speedHistory = [];          // 速度历史 [{x: 秒, y: m/s}]
     this._speedChart = null;          // Chart.js 实例
@@ -958,6 +959,12 @@ class App {
     this._isBackground = true;
     console.log('[Background] 进入后台定位模式');
 
+    // 首次进入后台提示电池优化
+    this._checkBatteryOptHint();
+
+    // 启动 Android 前台服务（保活进程）
+    this._startForegroundService();
+
     // 省电模式下不尝试 wakeLock（避免无谓唤醒）
     if (!this.gpsManager.isPowerSaving) {
       this._requestWakeLock();
@@ -985,6 +992,7 @@ class App {
       this._bgLocateInterval = null;
     }
     this._releaseWakeLock();
+    this._stopForegroundService();
     console.log('[Background] 退出后台定位模式');
   }
 
@@ -1044,6 +1052,12 @@ class App {
         }
       }
 
+      // 更新前台服务通知（显示位置信息）
+      this._updateForegroundNotification(
+        convPos.lat, convPos.lng,
+        pos.accuracy, pos.speed
+      );
+
       // 后台不更新 UI，但保存状态
       this._saveState();
     } catch (e) {
@@ -1082,6 +1096,119 @@ class App {
     }
     this._wakeLock = null;
     console.log('[WakeLock] 已释放唤醒锁');
+  }
+
+  /* ── 前台服务（Android 保活） ─────────────────────── */
+
+  /**
+   * 检查是否在 Capacitor Android 原生环境
+   */
+  _isNativeAndroid() {
+    return typeof Capacitor !== 'undefined'
+      && Capacitor.isNativePlatform
+      && Capacitor.isNativePlatform();
+  }
+
+  /**
+   * 首次进入后台时提示电池优化（仅提示一次）
+   */
+  _checkBatteryOptHint() {
+    if (!this._isNativeAndroid()) return;
+    try {
+      const key = '_battery_opt_hint_shown';
+      if (localStorage.getItem(key)) return;
+      localStorage.setItem(key, '1');
+      // 延迟显示，避免切入后台瞬间 Toast 堆叠
+      setTimeout(() => {
+        Toast.show('🔋 建议：系统设置 → 应用 → 省电策略 → 设为「无限制」以保证后台定位', 6000);
+      }, 2000);
+    } catch (e) { /* 静默 */ }
+  }
+
+  /**
+   * 启动 Android 前台服务（常驻通知栏，防止进程被杀）
+   * 仅在 Capacitor Android 原生环境下生效
+   */
+  async _startForegroundService() {
+    if (!this._isNativeAndroid() || this._fgServiceStarted) return;
+    try {
+      const fs = Capacitor.Plugins.ForegroundService;
+      if (!fs) return;
+
+      // 先创建通知渠道（Android 8+ 必需）
+      if (fs.createNotificationChannel) {
+        await fs.createNotificationChannel({
+          id: 'bg_location',
+          name: '后台定位',
+          description: '正在后台追踪位置',
+          importance: 1, // IMPORTANCE_LOW — 低优先级，不弹窗
+        });
+      }
+
+      await fs.startForegroundService({
+        id: 1001,
+        title: '鬼抓人雷达',
+        body: '正在后台追踪位置…',
+        smallIcon: 'ic_notification',
+        notificationChannelId: 'bg_location',
+        serviceType: 'location',  // Android 14+ 前台服务类型
+        silent: true,
+      });
+
+      this._fgServiceStarted = true;
+      console.log('[ForegroundService] 已启动');
+    } catch (e) {
+      console.warn('[ForegroundService] 启动失败:', e.message);
+    }
+  }
+
+  /**
+   * 停止 Android 前台服务
+   */
+  async _stopForegroundService() {
+    if (!this._isNativeAndroid() || !this._fgServiceStarted) return;
+    try {
+      const fs = Capacitor.Plugins.ForegroundService;
+      if (!fs) return;
+
+      await fs.stopForegroundService();
+      this._fgServiceStarted = false;
+      console.log('[ForegroundService] 已停止');
+    } catch (e) {
+      console.warn('[ForegroundService] 停止失败:', e.message);
+    }
+  }
+
+  /**
+   * 更新前台服务通知内容（显示当前定位信息）
+   */
+  async _updateForegroundNotification(lat, lng, accuracy, speed) {
+    if (!this._isNativeAndroid() || !this._fgServiceStarted) return;
+    try {
+      const fs = Capacitor.Plugins.ForegroundService;
+      if (!fs || !fs.updateForegroundService) return;
+
+      let body = '正在后台追踪位置…';
+      if (lat != null && lng != null) {
+        body = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+        if (speed != null && speed > 0) {
+          body += ` · ${(speed * 3.6).toFixed(1)} km/h`;
+        }
+        if (accuracy != null) {
+          body += ` · ±${accuracy.toFixed(0)}m`;
+        }
+      }
+
+      await fs.updateForegroundService({
+        id: 1001,
+        title: '鬼抓人雷达',
+        body: body,
+        smallIcon: 'ic_notification',
+        notificationChannelId: 'bg_location',
+      });
+    } catch (e) {
+      // 静默失败（更新通知不是关键路径）
+    }
   }
 
   /* ── 速度曲线 ─────────────────────────────────────── */
