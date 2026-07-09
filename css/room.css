@@ -419,3 +419,92 @@
   background: rgba(255, 159, 67, 0.15);
   color: #ff9f43;
 }
+
+/* ============================================
+   移动端适配 — 窄屏优化
+   ============================================ */
+@media (max-width: 480px) {
+  /* 房间表单行 — 换行防止按钮溢出 */
+  .room-form-row {
+    flex-wrap: wrap;
+  }
+  .room-form-row .room-input {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+  .room-form-row .room-btn {
+    flex: 1 1 auto;
+  }
+
+  /* 表单内 padding 缩小以节省空间 */
+  .room-form {
+    padding: 10px;
+  }
+
+  /* 房间码输入框缩小 */
+  .room-code-input {
+    font-size: 16px;
+    letter-spacing: 3px;
+    padding: 8px 10px;
+  }
+
+  /* 房间按钮缩小 */
+  .room-btn {
+    padding: 7px 12px;
+    font-size: 12px;
+  }
+  .room-btn.sharing-btn {
+    padding: 8px 12px;
+    font-size: 13px;
+    flex: 1;
+  }
+  .room-btn.danger {
+    padding: 8px 14px;
+    font-size: 13px;
+  }
+  .room-btn.mini {
+    padding: 5px 8px;
+    font-size: 11px;
+  }
+
+  /* 房间状态栏换行 */
+  .room-status-row {
+    flex-wrap: wrap;
+  }
+  .room-status-row:last-child {
+    gap: 6px;
+  }
+
+  /* 队伍创建行换行 */
+  .room-team-create-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .room-team-create-row .room-input {
+    flex: 1 1 100%;
+  }
+
+  /* 参与者列表缩小 */
+  .room-player-list {
+    max-height: 150px;
+  }
+  .room-player-item {
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+
+  /* 房间码展示区缩小 */
+  .room-code-value {
+    font-size: 24px;
+    letter-spacing: 4px;
+    padding: 2px 8px;
+  }
+  .room-code-display {
+    padding: 12px;
+  }
+
+  /* 队伍卡片缩小 */
+  .room-team-card {
+    padding: 8px 10px;
+  }
+}
