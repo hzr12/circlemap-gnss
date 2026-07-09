@@ -296,8 +296,13 @@
 }
 .room-team-create-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+.room-team-create-row .room-input {
+  flex: 1 1 auto;
+  min-width: 120px;
 }
 /* 预设色板（对齐主题强调色风格，横向排列） */
 .room-team-presets {
@@ -305,8 +310,6 @@
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  flex: 1 1 100%;
-}
   flex: 1 1 100%;
 }
 .room-team-preset {
@@ -333,6 +336,19 @@
 }
 .room-team-preset:active {
   transform: scale(0.9);
+}
+.room-team-npc-opt {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex: 1 1 100%;
+  margin-top: 2px;
+}
+.room-team-npc-opt input {
+  accent-color: #34d399;
 }
 
 /* 队伍卡片列表 */
@@ -703,6 +719,10 @@
 .tag-caught {
   background: rgba(255, 160, 50, 0.2);
   color: #fb923c;
+}
+.tag-npc {
+  background: rgba(120, 220, 160, 0.2);
+  color: #34d399;
 }
 
 /* 赛后统计浮层 */
