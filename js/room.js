@@ -332,6 +332,11 @@ class RoomManager {
         this._onPingMsg(senderId, this._decodePing(payload));
         return;
       }
+      // 二进制在场（…/<id>/presence）
+      if (topic.endsWith('/presence')) {
+        this._onPresenceMsg(senderId, this._decodePresence(payload));
+        return;
+      }
 
       const data = JSON.parse(payload.toString());
 
@@ -454,32 +459,6 @@ class RoomManager {
       // 离线消息（含 Broker 代发的遗嘱）：先进入宽限，避免网络抖动 / 刷新重加导致的闪烁
       if (data.offline) {
         this._schedulePendingOffline(data.id);
-        return;
-      }
-
-      // 在场消息：低频回填静态身份（name/color/role/caught 等）
-      if (data.type === 'presence') {
-        this._cancelPendingOffline(data.id);
-        if (data.id && data.id !== this._deviceId) {
-          const existing = this._players[data.id];
-          const player = existing ? { ...existing } : {
-            id: data.id, name: data.name || '未知', color: data.color || '#888',
-            online: true, sharing: true, teamId: null, teamBroadcaster: false,
-            teamSeparation: false, spectator: false, isNpc: false,
-            role: null, caught: false, caughtBy: null,
-          };
-          player.id = data.id;
-          player.name = data.name || player.name || '未知';
-          player.color = data.color || player.color || '#888';
-          player.teamId = data.teamId || player.teamId || null;
-          player.spectator = data.spectator === true;
-          player.isNpc = (this._teams[player.teamId] && this._teams[player.teamId].isNpc) || data.isNpc === true;
-          player.role = data.role || this._playerRoles[data.id] || player.role || null;
-          player.caught = data.caught === true || (this._caughtPlayers[data.id] != null) || player.caught || false;
-          player.caughtBy = data.caughtBy || (this._caughtPlayers[data.id] ? this._caughtPlayers[data.id].caughtBy : (player.caughtBy || null));
-          this._players[data.id] = player;
-          if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
-        }
         return;
       }
 
@@ -653,6 +632,30 @@ class RoomManager {
     if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
   }
 
+  // 在场消息：低频回填静态身份（name/color/teamId/spectator/isNpc/role/caught）
+  _onPresenceMsg(senderId, p) {
+    if (senderId === this._deviceId) return;
+    this._cancelPendingOffline(senderId);
+    const existing = this._players[senderId];
+    const player = existing ? { ...existing } : {
+      id: senderId, name: p.name || '未知', color: p.color || '#888',
+      online: true, sharing: true, teamId: null, teamBroadcaster: false,
+      teamSeparation: false, spectator: false, isNpc: false,
+      role: null, caught: false, caughtBy: null,
+    };
+    player.id = senderId;
+    player.name = p.name || player.name || '未知';
+    player.color = p.color || player.color || '#888';
+    player.teamId = p.teamId || player.teamId || null;
+    player.spectator = p.spectator === true;
+    player.isNpc = (this._teams[player.teamId] && this._teams[player.teamId].isNpc) || p.isNpc === true;
+    player.role = p.role || this._playerRoles[senderId] || player.role || null;
+    player.caught = p.caught === true || (this._caughtPlayers[senderId] != null) || player.caught || false;
+    player.caughtBy = this._caughtPlayers[senderId] ? this._caughtPlayers[senderId].caughtBy : (player.caughtBy || null);
+    this._players[senderId] = player;
+    if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+  }
+
   // ============================================================
   //  二进制编解码（零依赖，DataView）
   // ============================================================
@@ -718,6 +721,55 @@ class RoomManager {
     };
   }
 
+  // 在场包：1 字节 flags + 三段变长字符串（name/color/teamId，各 1 字节长度前缀 + UTF-8）
+  // flags bit0 旁观 / bit1 NPC / bit2 被抓 / bit3 有角色 / bit4 角色为鬼（其余保留）
+  _encodePresence(p) {
+    const nameU = new TextEncoder().encode(p.name || '');
+    const colorU = new TextEncoder().encode(p.color || '');
+    const teamU = new TextEncoder().encode(p.teamId || '');
+    const buf = new ArrayBuffer(1 + 1 + nameU.length + 1 + colorU.length + 1 + teamU.length);
+    const dv = new DataView(buf);
+    const u8 = new Uint8Array(buf);
+    let f = 0;
+    if (p.spectator) f |= 1;
+    if (p.isNpc) f |= 2;
+    if (p.caught) f |= 4;
+    if (p.role) f |= 8;
+    if (p.role === 'ghost') f |= 16;
+    let o = 0;
+    dv.setUint8(o, f); o += 1;
+    u8[o] = nameU.length; o += 1; u8.set(nameU, o); o += nameU.length;
+    u8[o] = colorU.length; o += 1; u8.set(colorU, o); o += colorU.length;
+    u8[o] = teamU.length; o += 1; u8.set(teamU, o); o += teamU.length;
+    return u8;
+  }
+
+  _decodePresence(payload) {
+    const dv = this._asDataView(payload);
+    const u8 = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+    let o = 0;
+    const f = u8[o]; o += 1;
+    const readStr = () => {
+      const len = u8[o]; o += 1;
+      const s = new TextDecoder().decode(u8.subarray(o, o + len));
+      o += len;
+      return s;
+    };
+    const name = readStr();
+    const color = readStr();
+    const teamLen = u8[o]; o += 1;
+    const teamId = teamLen ? new TextDecoder().decode(u8.subarray(o, o + teamLen)) : null;
+    o += teamLen;
+    const hasRole = !!(f & 8);
+    return {
+      name, color, teamId,
+      spectator: !!(f & 1),
+      isNpc: !!(f & 2),
+      caught: !!(f & 4),
+      role: hasRole ? ((f & 16) ? 'ghost' : 'hunter') : null,
+    };
+  }
+
   _publishPosition() {
     if (!this._client || !this._connected || !this._roomCode || !this._lastPosition) return;
     const p = this._lastPosition;
@@ -743,8 +795,19 @@ class RoomManager {
   }
 
   _publishPresence() {
-    // 静态身份低频回填；字段由 _publish 自动注入 id/name/color/teamId/isNpc/role/caught
-    this._publish({ type: 'presence' });
+    // 静态身份低频回填（二进制，像 pos/ping）：name/color/teamId/spectator/isNpc/role/caught
+    if (!this._client || !this._connected || !this._roomCode) return;
+    const topic = `${ROOM_CONFIG.TOPIC_PREFIX}/${this._roomCode}/${this._deviceId}/presence`;
+    const bytes = this._encodePresence({
+      name: this._nickname,
+      color: this._color,
+      teamId: this._myTeamId,
+      spectator: this._isSpectator,
+      isNpc: this._isNpcTeam(),
+      role: this._playerRoles[this._deviceId] || null,
+      caught: this._caughtPlayers[this._deviceId] != null,
+    });
+    this._client.publish(topic, bytes, { qos: 1, retain: false, binary: true });
   }
 
   // ============================================================
