@@ -49,6 +49,7 @@ class App {
     this._restoringView = false;      // 从后台恢复时不飞地图
     this._isBackground = false;       // 是否在后台模式（pagehide 后 60s polling）
     this._bgLocateInterval = null;    // 后台轮询定位定时器
+    this._nativeBgStarted = false;    // 原生后台定位插件是否已启动（@capgo/background-geolocation）
     this._wakeLock = null;            // 屏幕唤醒锁引用
     this._recentFixes = [];           // 最近定位记录（最多 10 条）
     this._speedHistory = [];          // 速度历史 [{x: 秒, y: m/s}]
@@ -951,7 +952,77 @@ class App {
   /* ── 后台定位（pagehide → 60s polling + wakeLock） ── */
 
   /**
-   * 进入后台定位模式：停止连续 watch，改为 60s 单次定位
+   * 检查 Capacitor 原生后台定位插件是否可用
+   */
+  _hasNativeBgPlugin() {
+    return typeof Capacitor !== 'undefined'
+      && Capacitor.isNativePlatform()
+      && Capacitor.Plugins
+      && Capacitor.Plugins.BackgroundGeolocation;
+  }
+
+  /**
+   * 启动 @capgo/background-geolocation 原生后台定位
+   * 插件在 native 层独立运行，不依赖 WebView JS 存活
+   */
+  async _startNativeBackgroundTracking() {
+    try {
+      const plugin = Capacitor.Plugins.BackgroundGeolocation;
+      console.log('[Background] 启动原生后台定位插件');
+      await plugin.start({
+        backgroundMessage: '正在后台追踪位置，关闭以省电',
+        backgroundTitle: 'Circlemap 定位中',
+        distanceFilter: 10,
+        requestPermissions: true,
+        stale: false,
+      }, (location, error) => {
+        if (error) {
+          console.log('[Background] 原生定位错误:', error.code, error.message);
+          return;
+        }
+        if (!location) return;
+        // 将插件 Location 格式转为标准 Position 格式后复用现有处理逻辑
+        this._processBackgroundPosition({
+          coords: {
+            latitude: location.latitude,
+            longitude: location.longitude,
+            accuracy: location.accuracy,
+            speed: location.speed,
+            heading: location.bearing,
+            altitude: location.altitude,
+          },
+          timestamp: location.time,
+        });
+      });
+      this._nativeBgStarted = true;
+      // 通知栏显示插件自己的通知（无需额外处理）
+    } catch (e) {
+      console.log('[Background] 原生定位插件启动失败:', e.message);
+      this._nativeBgStarted = false;
+      // 降级到 JS 60s 轮询
+      this._fallbackBackgroundLocate();
+    }
+  }
+
+  /**
+   * 停止 @capgo/background-geolocation 原生后台定位
+   */
+  async _stopNativeBackgroundTracking() {
+    try {
+      const plugin = Capacitor.Plugins.BackgroundGeolocation;
+      await plugin.stop();
+      console.log('[Background] 原生后台定位已停止');
+    } catch (e) {
+      // 静默
+    }
+    this._nativeBgStarted = false;
+  }
+
+  /**
+   * 进入后台定位模式
+   *
+   * 优先使用原生后台定位插件（Android），
+   * 降级到 WebView 60s JS 轮询（Web 端 / 插件不可用）
    */
   _enterBackgroundMode() {
     if (this._isBackground) return;
@@ -963,10 +1034,20 @@ class App {
       this._requestWakeLock();
     }
 
-    // 立即做一次后台定位
-    this._backgroundLocate();
+    // 优先使用原生后台定位插件（独立于 WebView 存活）
+    if (this._hasNativeBgPlugin()) {
+      this._startNativeBackgroundTracking();
+    } else {
+      // Web 端 / 插件不可用 → 降级到 JS 60s 轮询
+      this._fallbackBackgroundLocate();
+    }
+  }
 
-    // 每 60s 做一次
+  /**
+   * 降级方案：JS 60s 轮询（Web 端或原生插件不可用时）
+   */
+  _fallbackBackgroundLocate() {
+    this._backgroundLocate();
     this._bgLocateInterval = setInterval(() => {
       this._backgroundLocate();
     }, 60000);
@@ -976,14 +1057,19 @@ class App {
    * 退出后台定位模式，清理资源
    */
   _exitBackgroundMode() {
-    if (!this._isBackground && !this._bgLocateInterval && !this._wakeLock) {
-      // 确保清理
-    }
     this._isBackground = false;
+
+    // 停止原生后台定位（如果已启动）
+    if (this._nativeBgStarted) {
+      this._stopNativeBackgroundTracking();
+    }
+
+    // 停止 JS 轮询
     if (this._bgLocateInterval) {
       clearInterval(this._bgLocateInterval);
       this._bgLocateInterval = null;
     }
+
     this._releaseWakeLock();
     console.log('[Background] 退出后台定位模式');
   }

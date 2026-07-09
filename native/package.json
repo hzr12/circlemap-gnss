@@ -13,6 +13,7 @@
     "@capacitor/core": "^8.0.0",
     "@capacitor/filesystem": "^8.1.2",
     "@capacitor/share": "^8.0.1",
+    "@capgo/background-geolocation": "^8.3.0",
     "gnss-data-plugin": "file:./gnss-plugin"
   },
   "devDependencies": {

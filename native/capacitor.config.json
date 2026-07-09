@@ -4,11 +4,13 @@
   "webDir": "web",
   "server": {
     "hostname": "localhost",
-    "androidScheme": "https"
+    "androidScheme": "https",
+    "androidUseLegacyBridge": true
   },
   "plugins": {
     "GnssData": {},
     "Filesystem": {},
-    "Share": {}
+    "Share": {},
+    "BackgroundGeolocation": {}
   }
 }

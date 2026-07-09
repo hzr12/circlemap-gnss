@@ -74,6 +74,14 @@ jobs:
         working-directory: native
         run: npx cap sync android
 
+      - name: 配置原生后台定位（@capgo/background-geolocation）
+        working-directory: native
+        run: |
+          chmod +x scripts/setup-background-location.sh
+          ./scripts/setup-background-location.sh
+          echo "=== 验证通知图标 ==="
+          ls -la android/app/src/main/res/drawable/ic_tracking.xml
+
       - name: 覆盖 User-Agent（桌面版 UA 测试瓦片差异）
         run: |
           cp native/ua-override/MainActivity.java native/android/app/src/main/java/com/hzr/circlemap/MainActivity.java
@@ -95,7 +103,7 @@ jobs:
           echo "--- app/build.gradle dependencies ---"
           grep -A2 "gnss-data-plugin" android/app/build.gradle || echo "(checking insert location)"
 
-      - name: 确保 Manifest 包含定位权限
+      - name: 确保 Manifest 包含定位权限（后备）
         working-directory: native
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
@@ -103,9 +111,9 @@ jobs:
             sed -i '/<\/manifest>/i \ \ \ \ <uses-feature android:name="android.hardware.location.gps" />' "$MANIFEST"
             echo "+ 已添加 GPS feature"
           fi
-          if ! grep -q "ACCESS_FINE_LOCATION" "$MANIFEST"; then
-            sed -i '/<\/manifest>/i \ \ \ \ <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />' "$MANIFEST"
-            echo "+ 已添加 ACCESS_FINE_LOCATION"
+          if ! grep -q "ACCESS_BACKGROUND_LOCATION" "$MANIFEST"; then
+            sed -i '/<\/manifest>/i \ \ \ \ <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />' "$MANIFEST"
+            echo "+ 已添加 ACCESS_BACKGROUND_LOCATION"
           fi
 
       - name: 构建调试版 APK
