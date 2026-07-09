@@ -47,6 +47,7 @@ class MapManager {
     this._targetPos = null;    // 对方位置坐标
     this.targetCircle = null;  // 对方精度范围圈
     this._myPos = null;        // 我的位置（Canvas 标注用）
+    this.playerMarkers = {};   // 多人位置标记 {deviceId: qq.maps.Marker}
 
     // 回调钩子
     this.onCenterChange = null;
@@ -1060,6 +1061,78 @@ class MapManager {
     }
   }
 
+  // ----- 多人位置标记 -----
+
+  /**
+   * 创建玩家标记图标（圆点 + 名称标签）
+   */
+  _createPlayerIcon(color, name) {
+    const label = (name || '?').charAt(0).toUpperCase();
+    const svg = [
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">',
+      '  <defs>',
+      '    <filter id="ps" x="-20%" y="-20%" width="140%" height="140%">',
+      '      <feDropShadow dx="0" dy="1" stdDeviation="3" flood-opacity="0.5"/>',
+      '    </filter>',
+      '  </defs>',
+      `  <circle cx="22" cy="22" r="16" fill="${color}" stroke="#fff" stroke-width="2.5" filter="url(#ps)"/>`,
+      `  <text x="22" y="22" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="14" font-weight="bold" font-family="Arial">${label}</text>`,
+      '</svg>'
+    ].join('\n');
+    const dataUri = 'data:image/svg+xml;base64,' + btoa(svg);
+    return new qq.maps.MarkerImage(
+      dataUri,
+      new qq.maps.Size(44, 44),
+      new qq.maps.Point(0, 0),
+      new qq.maps.Point(22, 22),
+      new qq.maps.Size(44, 44)
+    );
+  }
+
+  /**
+   * 更新/添加玩家标记
+   * @param {string} id 设备ID
+   * @param {number} lat
+   * @param {number} lng
+   * @param {string} name 昵称
+   * @param {string} color 主题色
+   */
+  updatePlayerMarker(id, lat, lng, name, color) {
+    if (!this.map) return;
+    const latLng = new qq.maps.LatLng(lat, lng);
+    if (this.playerMarkers[id]) {
+      this.playerMarkers[id].setPosition(latLng);
+    } else {
+      this.playerMarkers[id] = new qq.maps.Marker({
+        position: latLng,
+        map: this.map,
+        draggable: false,
+        icon: this._createPlayerIcon(color, name),
+        title: name || '玩家',
+      });
+    }
+  }
+
+  /**
+   * 移除玩家标记
+   */
+  removePlayerMarker(id) {
+    if (this.playerMarkers[id]) {
+      this.playerMarkers[id].setMap(null);
+      delete this.playerMarkers[id];
+    }
+  }
+
+  /**
+   * 清除所有玩家标记
+   */
+  clearPlayerMarkers() {
+    Object.keys(this.playerMarkers).forEach((id) => {
+      this.playerMarkers[id].setMap(null);
+    });
+    this.playerMarkers = {};
+  }
+
   destroy() {
     this.clearTrail();
 
@@ -1104,6 +1177,7 @@ class MapManager {
       this.targetCircle = null;
     }
 
+    this.clearPlayerMarkers();
     this._myPos = null;
     this._targetPos = null;
     this._offCanvas = null;

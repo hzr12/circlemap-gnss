@@ -86,6 +86,10 @@ class App {
     this._onboardingStep = 0;         // 引导当前步骤
     this._onboardingActive = false;   // 引导是否正在显示
     this._processQueue = Promise.resolve(); // GPS 位置处理串行队列
+
+    // 多人房间
+    this.roomManager = null;
+    this._roomJoined = false;
   }
 
   /**
@@ -467,6 +471,33 @@ class App {
       const ok = await copyText(text);
       if (ok) Toast.show('✅ 已复制坐标');
     });
+
+    // —— 多人房间 ——
+    this._roomSection = document.getElementById('room-section');
+    this._roomCreateBtn = document.getElementById('room-create-btn');
+    this._roomJoinBtn = document.getElementById('room-join-btn');
+    this._roomLeaveBtn = document.getElementById('room-leave-btn');
+    this._roomNickInput = document.getElementById('room-nick-input');
+    this._roomCodeInput = document.getElementById('room-code-input');
+    this._roomCodeDisplay = document.getElementById('room-code-display');
+    this._roomCodeValue = document.getElementById('room-code-value');
+    this._roomPlayerList = document.getElementById('room-player-list');
+    this._roomFormCreate = document.getElementById('room-form-create');
+    this._roomFormJoin = document.getElementById('room-form-join');
+    this._roomStatus = document.getElementById('room-status-bar');
+    this._roomConnDot = document.getElementById('room-conn-dot');
+    this._roomPlayerCount = document.getElementById('room-player-count');
+
+    this._roomCreateBtn.addEventListener('click', () => this._roomCreate());
+    this._roomJoinBtn.addEventListener('click', () => this._roomJoin());
+    this._roomLeaveBtn.addEventListener('click', () => this._roomLeave());
+    // 回车快速创建/加入
+    this._roomNickInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this._roomCreate();
+    });
+    this._roomCodeInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this._roomJoin();
+    });
   }
 
   /**
@@ -503,6 +534,11 @@ class App {
     // 显示/隐藏点击提示
     const clickHint = document.getElementById('clickHint');
     clickHint.classList.toggle('hidden', mode === 'input');
+
+    // 显示/隐藏多人房间区
+    if (this._roomSection) {
+      this._roomSection.classList.toggle('visible', mode === 'room');
+    }
   }
 
   /**
@@ -1851,6 +1887,17 @@ class App {
     }
     this._updateStatusBar(true); // 刷新状态条（含 elapsed 时间）
     this._updateInfo();
+
+    // 多人房间：发送位置
+    if (this.roomManager && this.roomManager.isConnected()) {
+      this.roomManager.publishPosition(
+        pos.lat, pos.lng,
+        pos.accuracy || 0,
+        this._lastSpeed || 0,
+        pos.heading || 0
+      );
+    }
+
     // 更新对方距离
     if (this._targetPos) {
       const dist = calcDistance(convPos, this._targetPos);
@@ -3007,10 +3054,182 @@ class App {
     }
   }
 
+  /* ============= 多人房间 ============= */
+
+  /**
+   * 创建房间
+   */
+  async _roomCreate() {
+    const nick = (this._roomNickInput.value || '').trim() || '玩家' + Math.random().toString(36).slice(2, 5);
+    Toast.show('🔄 正在创建房间...');
+    try {
+      this.roomManager = new RoomManager();
+      this._bindRoomEvents();
+      const code = await this.roomManager.createRoom(nick);
+      this._roomJoined = true;
+      this._showRoomCode(code);
+      this._roomFormCreate.classList.add('hidden');
+      this._roomFormJoin.classList.add('hidden');
+      this._updateRoomPlayerList();
+      Toast.show(`✅ 房间已创建：${code}，分享给队友`);
+    } catch (e) {
+      console.error('[Room] 创建失败:', e);
+      Toast.show('⚠️ 房间创建失败：' + (e.message || '连接超时'));
+      this._roomCleanup();
+    }
+  }
+
+  /**
+   * 加入房间
+   */
+  async _roomJoin() {
+    const code = (this._roomCodeInput.value || '').trim().toUpperCase();
+    if (!code || code.length < 4) {
+      Toast.show('⚠️ 请输入有效的房间码');
+      return;
+    }
+    const nick = '玩家' + Math.random().toString(36).slice(2, 5);
+    Toast.show('🔄 正在加入房间...');
+    try {
+      this.roomManager = new RoomManager();
+      this._bindRoomEvents();
+      await this.roomManager.joinRoom(code, nick);
+      this._roomJoined = true;
+      this._showRoomCode(code);
+      this._roomFormCreate.classList.add('hidden');
+      this._roomFormJoin.classList.add('hidden');
+      this._updateRoomPlayerList();
+      Toast.show(`✅ 已加入房间：${code}`);
+    } catch (e) {
+      console.error('[Room] 加入失败:', e);
+      Toast.show('⚠️ 加入失败：' + (e.message || '连接超时'));
+      this._roomCleanup();
+    }
+  }
+
+  /**
+   * 离开房间
+   */
+  _roomLeave() {
+    if (this.roomManager) {
+      this.roomManager.leaveRoom();
+      this.roomManager.destroy();
+      this.roomManager = null;
+    }
+    this._roomJoined = false;
+    this.mapManager.clearPlayerMarkers();
+    this._roomCleanup();
+    Toast.show('🚪 已离开房间');
+  }
+
+  /**
+   * 绑定 RoomManager 事件回调
+   */
+  _bindRoomEvents() {
+    if (!this.roomManager) return;
+
+    this.roomManager.onPositionUpdate = (players) => {
+      this._updateRoomPlayerList();
+      // 更新地图标记
+      const myId = this.roomManager.getMyInfo().id;
+      this.mapManager.clearPlayerMarkers();
+      Object.values(players).forEach((p) => {
+        if (p.id !== myId && p.online) {
+          this.mapManager.updatePlayerMarker(p.id, p.lat, p.lng, p.name, p.color);
+        }
+      });
+    };
+
+    this.roomManager.onConnectionChange = (connected) => {
+      if (this._roomConnDot) {
+        this._roomConnDot.classList.toggle('online', connected);
+      }
+    };
+
+    this.roomManager.onRoomError = (msg) => {
+      Toast.show('⚠️ ' + msg);
+    };
+  }
+
+  /**
+   * 显示房间码
+   */
+  _showRoomCode(code) {
+    if (this._roomCodeDisplay) this._roomCodeDisplay.classList.remove('hidden');
+    if (this._roomCodeValue) {
+      this._roomCodeValue.textContent = code;
+      this._roomCodeValue.title = '点击复制房间码';
+    }
+    if (this._roomStatus) this._roomStatus.classList.remove('hidden');
+  }
+
+  /**
+   * 更新参与者列表
+   */
+  _updateRoomPlayerList() {
+    if (!this._roomPlayerList || !this.roomManager) return;
+    const players = this.roomManager.getPlayers();
+    const myInfo = this.roomManager.getMyInfo();
+    const count = Object.values(players).filter(p => p.online).length + (this.roomManager.isConnected() ? 1 : 0);
+    if (this._roomPlayerCount) this._roomPlayerCount.textContent = String(count);
+
+    let html = '';
+    // 自己
+    const myColor = myInfo.color;
+    html += `<div class="room-player-item">
+      <span class="room-player-dot" style="background:${myColor}"></span>
+      <span class="room-player-name self">${this._escapeHtml(myInfo.name)} (我)</span>
+      <span class="room-player-status online">在线</span>
+    </div>`;
+    // 他人
+    Object.values(players).forEach((p) => {
+      if (p.id === myInfo.id) return;
+      const statusClass = p.online ? 'online' : '';
+      const statusText = p.online ? '在线' : '离线';
+      html += `<div class="room-player-item">
+        <span class="room-player-dot" style="background:${p.color}"></span>
+        <span class="room-player-name">${this._escapeHtml(p.name)}</span>
+        <span class="room-player-status ${statusClass}">${statusText}</span>
+      </div>`;
+    });
+
+    if (Object.keys(players).length === 0 && this.roomManager.isConnected()) {
+      html = `<div class="room-empty">等待队友加入...</div>`;
+    }
+    this._roomPlayerList.innerHTML = html;
+  }
+
+  /**
+   * 清理房间 UI 到初始状态
+   */
+  _roomCleanup() {
+    this._roomJoined = false;
+    if (this._roomCodeDisplay) this._roomCodeDisplay.classList.add('hidden');
+    if (this._roomStatus) this._roomStatus.classList.add('hidden');
+    this._roomFormCreate.classList.remove('hidden');
+    this._roomFormJoin.classList.remove('hidden');
+    if (this._roomPlayerCount) this._roomPlayerCount.textContent = '0';
+    this._roomPlayerList.innerHTML = '<div class="room-empty">尚未加入房间</div>';
+    if (this._roomConnDot) this._roomConnDot.classList.remove('online');
+  }
+
+  _escapeHtml(str) {
+    const div = document.createElement('div');
+    div.appendChild(document.createTextNode(str));
+    return div.innerHTML;
+  }
+
   /**
    * 销毁应用，清理所有定时器和事件监听器
    */
   destroy() {
+    if (this.roomManager) {
+      this.roomManager.destroy();
+      this.roomManager = null;
+    }
+    if (this.mapManager) {
+      this.mapManager.clearPlayerMarkers();
+    }
     this.gpsManager.destroy(); // 停止 GPS + GNSS + 电池监控
     // 清理 Chart.js 实例（必须显式销毁，否则会泄漏 canvas 引用 + 动画帧）
     if (this._speedChart) {
