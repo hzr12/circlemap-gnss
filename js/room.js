@@ -768,7 +768,10 @@ class RoomManager {
     const canShare = this._sharingEnabled && this._lastPosition &&
       (!this._burstEnabled || this._burstPhase === 'sharing');
     if (!canShare) return false;
-    if (!(this._myAmBroadcaster || this._teamSeparation || !this._myTeamId)) return false;
+    // 游戏中（鬼抓人）取消发报员压制：每人各自广播，保证所有人互相可见
+    const broadcasterOk = this._gameState === 'playing' ||
+      this._myAmBroadcaster || this._teamSeparation || !this._myTeamId;
+    if (!broadcasterOk) return false;
     const sinceSent = this._lastSentPos ? Date.now() - this._lastSentPos.ts : Infinity;
     return sinceSent >= this._computePositionInterval();
   }
@@ -817,11 +820,12 @@ class RoomManager {
    */
   publishPosition(lat, lng, acc, speed, bearing) {
     if (this._isSpectator) return;
+    // 始终缓存最新坐标：即便共享关闭也记录，便于游戏开始立即补发（发送仍受共享开关控制）
+    this._lastPosition = { lat, lng, acc, speed, bearing };
     // NPC 队：忽略静默期与共享开关，持续共享
     const npc = this._isNpcTeam();
     if (this._burstEnabled && this._burstPhase === 'silent' && !npc) return;
     if (!this._sharingEnabled && !npc) return;
-    this._lastPosition = { lat, lng, acc, speed, bearing };
     if (npc) return; // NPC 不在 GPS 回调即时发，交由 _npcTimer 按 60s 节奏统一发
     // 静止→移动 的瞬间立即下发，让他人及时看到起步（仅触发一次，不持续增频）
     const transition = this._lastSentPos && (this._lastSentSpeed || 0) <= ROOM_CONFIG.POS_STILL_SPEED && speed > ROOM_CONFIG.POS_STILL_SPEED;
