@@ -81,6 +81,21 @@ class RoomManager {
     this._lastPosition = null;
     this._sharingEnabled = true;
 
+    // 位置共享（静默/共享交替）
+    this._burstEnabled = false;
+    this._burstSilentMin = 25;       // 静默时长（分钟）
+    this._burstShareMin = 5;         // 共享时长（分钟）
+    this._burstPhase = 'silent';     // 'silent' | 'sharing'
+    this._burstPhaseEnd = 0;         // 当前阶段结束时间戳
+    this._burstTimer = null;
+
+    // 观战模式
+    this._isSpectator = false;
+
+    // 游戏开始倒计时
+    this._gameStartAt = 0;           // 游戏开始时间戳，0=未设置
+    this._gameTimerAborted = false;
+
     // 回调钩子
     this.onPositionUpdate = null;   // (players) → void
     this.onPlayerJoin = null;       // (playerId, nickname) → void
@@ -88,6 +103,9 @@ class RoomManager {
     this.onTeamUpdate = null;       // (teams, myTeamId) → void
     this.onRoomError = null;        // (msg) → void
     this.onConnectionChange = null; // (connected) → void
+    this.onBurstPhaseChange = null; // (phase, phaseEnd) → void
+    this.onGameTimerUpdate = null;  // (startAt) → void
+    this.onGameTimerAborted = null; // () → void
   }
 
   /**
@@ -275,6 +293,21 @@ class RoomManager {
         return;
       }
 
+      // 游戏倒计时消息
+      if (data.type === 'game_timer_set') {
+        this._gameStartAt = data.startAt;
+        this._gameTimerAborted = false;
+        if (this.onGameTimerUpdate) this.onGameTimerUpdate(data.startAt);
+        return;
+      }
+
+      if (data.type === 'game_timer_abort') {
+        this._gameStartAt = 0;
+        this._gameTimerAborted = true;
+        if (this.onGameTimerAborted) this.onGameTimerAborted();
+        return;
+      }
+
       // 离线消息
       if (data.offline) {
         const player = this._players[data.id];
@@ -304,6 +337,7 @@ class RoomManager {
             teamId: data.teamId || (existing ? existing.teamId : null),
             teamBroadcaster: data.teamBroadcaster === true,
             teamSeparation: data.teamSeparation === true,
+            spectator: data.spectator === true,
           };
 
           if (data.lat != null && data.lng != null) {
@@ -312,6 +346,7 @@ class RoomManager {
             player.acc = data.acc || 0;
             player.speed = data.speed || 0;
             player.bearing = data.bearing || 0;
+            player.lastPosUpdate = Date.now();
           } else if (existing) {
             // 保留旧位置，但清空速度（不再移动）
             player.lat = existing.lat;
@@ -319,6 +354,7 @@ class RoomManager {
             player.acc = existing.acc || 0;
             player.speed = 0;
             player.bearing = existing.bearing || 0;
+            player.lastPosUpdate = existing.lastPosUpdate || 0;
           }
 
           this._players[data.id] = player;
@@ -343,50 +379,22 @@ class RoomManager {
   }
 
   /**
-   * 创建房间
+   * 创建房间（兼容旧接口 — 非观战模式）
    * @param {string} nickname
    * @returns {Promise<string>} 房间码
    */
   async createRoom(nickname) {
-    this._nickname = nickname || '玩家';
-    this._color = _pickColor(this._deviceId);
-    this._roomCode = _generateRoomCode();
-
-    await this._connect();
-    this._subscribeRoom(this._roomCode);
-    this._startPublishing();
-
-    // 发布加入消息
-    this._publish({
-      join: true,
-      name: this._nickname,
-      color: this._color,
-    });
-
-    return this._roomCode;
+    return this._createRoomInternal(nickname);
   }
 
   /**
-   * 加入已有房间
+   * 加入已有房间（兼容旧接口 — 非观战模式）
    * @param {string} roomCode
    * @param {string} nickname
    * @returns {Promise<void>}
    */
   async joinRoom(roomCode, nickname) {
-    this._nickname = nickname || '玩家';
-    this._color = _pickColor(this._deviceId);
-    this._roomCode = roomCode.toUpperCase();
-
-    await this._connect();
-    this._subscribeRoom(this._roomCode);
-    this._startPublishing();
-
-    // 发布加入消息
-    this._publish({
-      join: true,
-      name: this._nickname,
-      color: this._color,
-    });
+    return this._joinRoomInternal(roomCode, nickname);
   }
 
   /**
@@ -409,6 +417,7 @@ class RoomManager {
     }
 
     this._stopPublishing();
+    this.stopBurstCycle();
     this._roomCode = null;
     this._players = {};
     this._lastPosition = null;
@@ -419,6 +428,9 @@ class RoomManager {
     this._lastBroadcastTs = 0;
     this._myAmBroadcaster = false;
     this._teamSeparation = false;
+    this._isSpectator = false;
+    this._gameStartAt = 0;
+    this._gameTimerAborted = false;
   }
 
   /**
@@ -451,6 +463,7 @@ class RoomManager {
     if (this._myTeamId) msg.teamId = this._myTeamId;
     if (this._myAmBroadcaster) msg.teamBroadcaster = true;
     if (this._teamSeparation) msg.teamSeparation = true;
+    if (this._isSpectator) msg.spectator = true;
     this._client.publish(topic, JSON.stringify(msg), { qos: 1, retain: false });
   }
 
@@ -476,6 +489,9 @@ class RoomManager {
    * 更新并发布位置（受 sharingEnabled + 发报员模式控制）
    */
   publishPosition(lat, lng, acc, speed, bearing) {
+    // 观战模式 / 位置共享静默期 → 不发布位置
+    if (this._isSpectator) return;
+    if (this._burstEnabled && this._burstPhase === 'silent') return;
     if (!this._sharingEnabled) return;
     this._lastPosition = { lat, lng, acc, speed, bearing };
 
@@ -501,8 +517,17 @@ class RoomManager {
       // 每次心跳前确认发报员角色
       this._preparePublish();
 
-      // 发报员 / 分离成员 / 无队伍 → 正常传位置
-      if (this._sharingEnabled && this._lastPosition && (this._myAmBroadcaster || this._teamSeparation || !this._myTeamId)) {
+      // 观战模式 → 只发纯心跳
+      if (this._isSpectator) {
+        this._publish({ ping: true, sharing: false, spectator: true });
+        return;
+      }
+
+      // 位置共享静默期 → 不发坐标
+      const canSharePosition = this._sharingEnabled && this._lastPosition &&
+        (!this._burstEnabled || this._burstPhase === 'sharing');
+
+      if (canSharePosition && (this._myAmBroadcaster || this._teamSeparation || !this._myTeamId)) {
         this._publish({
           ...this._lastPosition,
           ping: true,
@@ -521,6 +546,137 @@ class RoomManager {
       this._publishTimer = null;
     }
   }
+
+  // ============================================================
+  //  位置共享（静默/共享交替）
+  // ============================================================
+
+  /**
+   * 启动位置共享周期
+   * @param {number} silentMin 静默时长（分钟）
+   * @param {number} shareMin 共享时长（分钟）
+   */
+  startBurstCycle(silentMin, shareMin) {
+    this.stopBurstCycle();
+    this._burstEnabled = true;
+    this._burstSilentMin = Math.max(1, silentMin || 25);
+    this._burstShareMin = Math.max(1, shareMin || 5);
+    this._enterBurstPhase('silent');
+  }
+
+  /**
+   * 停止位置共享，恢复连续共享
+   */
+  stopBurstCycle() {
+    this._burstEnabled = false;
+    this._burstPhase = 'silent';
+    this._burstPhaseEnd = 0;
+    if (this._burstTimer) {
+      clearTimeout(this._burstTimer);
+      this._burstTimer = null;
+    }
+    if (this.onBurstPhaseChange) this.onBurstPhaseChange(null, 0);
+  }
+
+  /** 进入位置共享下一阶段 */
+  _enterBurstPhase(phase) {
+    this._burstPhase = phase;
+    const duration = phase === 'silent' ? this._burstSilentMin : this._burstShareMin;
+    this._burstPhaseEnd = Date.now() + duration * 60 * 1000;
+
+    if (this.onBurstPhaseChange) this.onBurstPhaseChange(phase, this._burstPhaseEnd);
+
+    if (this._burstTimer) clearTimeout(this._burstTimer);
+    this._burstTimer = setTimeout(() => {
+      const next = phase === 'silent' ? 'sharing' : 'silent';
+      this._enterBurstPhase(next);
+    }, duration * 60 * 1000);
+  }
+
+  isBurstEnabled() { return this._burstEnabled; }
+  getBurstPhase() { return this._burstPhase; }
+  getBurstPhaseEnd() { return this._burstPhaseEnd; }
+
+  // ============================================================
+  //  观战模式
+  // ============================================================
+
+  isSpectator() { return this._isSpectator; }
+
+  /**
+   * 创建房间（支持观战模式）
+   */
+  async createRoom(nickname, spectator) {
+    this._isSpectator = spectator === true;
+    const code = await this._createRoomInternal(nickname);
+    return code;
+  }
+
+  /**
+   * 加入房间（支持观战模式）
+   */
+  async joinRoom(roomCode, nickname, spectator) {
+    this._isSpectator = spectator === true;
+    await this._joinRoomInternal(roomCode, nickname);
+  }
+
+  // 将原有 createRoom/joinRoom 逻辑拆为内部方法
+  async _createRoomInternal(nickname) {
+    this._nickname = nickname || '玩家';
+    this._color = _pickColor(this._deviceId);
+    this._roomCode = _generateRoomCode();
+
+    await this._connect();
+    this._subscribeRoom(this._roomCode);
+    this._startPublishing();
+
+    // 发布加入消息
+    this._publish({ join: true, name: this._nickname, color: this._color });
+    return this._roomCode;
+  }
+
+  async _joinRoomInternal(roomCode, nickname) {
+    this._nickname = nickname || '玩家';
+    this._color = _pickColor(this._deviceId);
+    this._roomCode = roomCode.toUpperCase();
+
+    await this._connect();
+    this._subscribeRoom(this._roomCode);
+    this._startPublishing();
+
+    // 发布加入消息
+    this._publish({ join: true, name: this._nickname, color: this._color });
+  }
+
+  // ============================================================
+  //  游戏开始倒计时
+  // ============================================================
+
+  /**
+   * 设置游戏开始时间（任何玩家可设，覆盖上一次）
+   * @param {number} startAt 开始时间戳（Date.now() + 秒数*1000）
+   */
+  setGameTimer(startAt) {
+    this._gameStartAt = startAt;
+    this._gameTimerAborted = false;
+    this._publish({ type: 'game_timer_set', startAt });
+    if (this.onGameTimerUpdate) this.onGameTimerUpdate(startAt);
+  }
+
+  /**
+   * 取消游戏倒计时
+   */
+  abortGameTimer() {
+    this._gameStartAt = 0;
+    this._gameTimerAborted = true;
+    this._publish({ type: 'game_timer_abort' });
+    if (this.onGameTimerAborted) this.onGameTimerAborted();
+  }
+
+  getGameStartAt() { return this._gameStartAt; }
+  isGameTimerAborted() { return this._gameTimerAborted; }
+
+  // ============================================================
 
   /**
    * 获取当前房间所有玩家
@@ -763,6 +919,7 @@ class RoomManager {
   destroy() {
     this.leaveRoom();
     this._disconnect();
+    this.stopBurstCycle();
     this._players = {};
     this._teams = {};
     this._myTeamId = null;
@@ -770,5 +927,8 @@ class RoomManager {
     this._lastBroadcastTs = 0;
     this._myAmBroadcaster = false;
     this._teamSeparation = false;
+    this._isSpectator = false;
+    this._gameStartAt = 0;
+    this._gameTimerAborted = false;
   }
 }
