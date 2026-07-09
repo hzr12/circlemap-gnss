@@ -502,6 +502,7 @@ class App {
     this._roomTeamSelectedColor = '#4ECDC4';
     this._roomTeamPresets = document.getElementById('room-team-presets');
     this._roomTeamCreateConfirm = document.getElementById('room-team-create-confirm');
+    this._roomTeamNpcCheckbox = document.getElementById('room-team-npc-checkbox');
     this._roomTeamList = document.getElementById('room-team-list');
 
     // 队伍预设色板：点击即选中并高亮（无原生取色框）
@@ -3326,6 +3327,10 @@ class App {
    */
   _roomToggleSharing() {
     if (!this.roomManager) return;
+    if (this.roomManager.isNpcTeam()) {
+      Toast.show('👾 NPC 队持续共享，无法关闭');
+      return;
+    }
     const enabled = !this.roomManager.isSharingEnabled();
     this.roomManager.setSharingEnabled(enabled);
     this._updateSharingBtn();
@@ -3347,7 +3352,15 @@ class App {
   _updateSharingBtn() {
     if (!this._roomSharingBtn || !this.roomManager) return;
     const sharing = this.roomManager.isSharingEnabled();
-    this._roomSharingBtn.textContent = sharing ? '📡 共享定位' : '📡 定位已关闭';
+    const npc = this.roomManager.isNpcTeam();
+    if (npc) {
+      this._roomSharingBtn.textContent = '👾 NPC 持续共享中';
+      this._roomSharingBtn.classList.add('sharing-off');
+      this._roomSharingBtn.disabled = true;
+      return;
+    }
+    this._roomSharingBtn.disabled = false;
+    this._roomSharingBtn.textContent = sharing ? '📍 共享定位' : '⚠ 定位已关闭';
     this._roomSharingBtn.classList.toggle('sharing-off', !sharing);
   }
 
@@ -3373,13 +3386,16 @@ class App {
     if (!this.roomManager || !this.roomManager.isConnected()) return;
     const name = (this._roomTeamNameInput.value || '').trim() || '我的队伍';
     const color = this._roomTeamSelectedColor;
+    const isNpc = this._roomTeamNpcCheckbox ? this._roomTeamNpcCheckbox.checked : false;
     try {
-      this.roomManager.createTeam(name, color);
+      this.roomManager.createTeam(name, color, isNpc);
       this._roomTeamNameInput.value = '';
+      if (this._roomTeamNpcCheckbox) this._roomTeamNpcCheckbox.checked = false;
       this._roomTeamCreateForm.classList.add('hidden');
       this._updateTeamUI();
       this._updateRoomPlayerList();
-      Toast.show(`🏳️ 已创建队伍：${name}`);
+      this._updateSharingBtn();
+      Toast.show(isNpc ? `👾 已创建 NPC 队（持续共享）：${name}` : `🏳️ 已创建队伍：${name}`);
     } catch (e) {
       Toast.show('⚠️ 创建队伍失败');
     }
@@ -3616,12 +3632,16 @@ class App {
 
     // 游戏进行中的可见性规则
     if (gameState === 'playing') {
-      // 鬼看到所有人，人(猎人)只看到鬼
-      if (myRole !== 'ghost') {
-        if (p.role !== 'ghost') return; // 猎人看不到其他猎人
+      const isSpectator = this.roomManager.isSpectator();
+      // NPC 中性信标：对所有人始终可见，不受角色隐藏规则限制
+      if (!p.isNpc) {
+        // 观战者可见所有人（含其他猎人）
+        if (!isSpectator && myRole !== 'ghost') {
+          if (p.role !== 'ghost') return; // 猎人看不到其他猎人
+        }
+        // 被抓的人不显示位置（观战者仍可见，便于复盘）
+        if (!isSpectator && p.caught && p.role !== 'ghost') return;
       }
-      // 被抓的人不显示位置
-      if (p.caught && p.role !== 'ghost') return;
     }
 
     const teams = this.roomManager.getTeams();
@@ -3680,6 +3700,7 @@ class App {
       teamId: myTeamId,
       spectator: this.roomManager.isSpectator(),
       role: this.roomManager.getPlayerRole(myInfo.id),
+      isNpc: this.roomManager.isNpcTeam(),
       caught: this.roomManager.isPlayerCaught(myInfo.id),
       statusText: this.roomManager.isSpectator() ? '观战中' : (mySharing ? '在线' : '定位关闭'),
       statusClass: this.roomManager.isSpectator() ? 'spectator' : (mySharing ? 'online' : 'sharing-off'),
@@ -3804,7 +3825,9 @@ class App {
   _getPlayerTagsHtml(p) {
     let tags = '';
     const gameState = this.roomManager ? this.roomManager.getGameState() : 'idle';
-    if (p.spectator) {
+    if (p.isNpc) {
+      tags += '<span class="player-tag tag-npc">👾 NPC</span> ';
+    } else if (p.spectator) {
       tags += '<span class="player-tag tag-spectator">👁 观战</span> ';
     } else if (p.role === 'ghost') {
       tags += '<span class="player-tag tag-ghost">👻 鬼</span> ';
@@ -3912,6 +3935,10 @@ class App {
       this._roomTimerCountdown.classList.remove('hidden');
       this._roomTimerSetFrm.classList.add('hidden');
       Toast.show('🎮 游戏开始！');
+      // 倒计时归零时，房主自动开局（非房主的 startGame 会被 isHost 守卫拦截）
+      if (this.roomManager.isHost() && this.roomManager.getGameState() === 'idle') {
+        this.roomManager.startGame();
+      }
       // 到 0 后自动清除定时器
       if (this._timerInterval) {
         clearInterval(this._timerInterval);
@@ -3979,7 +4006,7 @@ class App {
     if (!this.roomManager || !this.roomManager.isHost()) return;
     // 简单循环分配：选择下一个未分配/猎人的玩家设为鬼
     const players = this.roomManager.getPlayers();
-    const candidates = Object.values(players).filter(p => p.online && !p.spectator);
+    const candidates = Object.values(players).filter(p => p.online && !p.spectator && !p.isNpc);
     if (candidates.length < 2) { Toast.show('⚠️ 至少需要 2 名玩家'); return; }
     const ghost = candidates.find(p => p.role === 'ghost');
     if (ghost) {
@@ -4000,7 +4027,7 @@ class App {
     if (!this.roomManager || !this.roomManager.isHost()) return;
     this.roomManager.randomAssignRoles(1);
     const players = this.roomManager.getPlayers();
-    const ghost = Object.values(players).find(p => p.role === 'ghost');
+    const ghost = Object.values(players).find(p => p.role === 'ghost' && !p.isNpc);
     Toast.show(`🎲 随机分配完成！${ghost ? '👻 鬼是 ' + ghost.name : ''}`);
   }
 
@@ -4087,7 +4114,7 @@ class App {
         </div>
         <div class="stats-item">
           <div class="stats-label">🫳 被抓</div>
-          <div class="stats-value">${stats.totalCaught}/${stats.playerCount - 1}</div>
+          <div class="stats-value">${stats.totalCaught}/${stats.playerCount}</div>
         </div>
         <div class="stats-item">
           <div class="stats-label">✅ 幸存</div>
