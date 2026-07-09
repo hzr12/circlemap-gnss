@@ -1083,7 +1083,11 @@ class MapManager {
       `  <text x="22" y="22" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="14" font-weight="bold" font-family="Arial" opacity="${opacity}">${label}</text>`,
       '</svg>'
     ].join('\n');
-    const dataUri = 'data:image/svg+xml;base64,' + btoa(svg);
+    // btoa 仅支持 Latin1；昵称首字可能为中文，先按 UTF-8 转 Latin1 字节再编码
+    const bytes = new TextEncoder().encode(svg);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    const dataUri = 'data:image/svg+xml;base64,' + btoa(bin);
     return new qq.maps.MarkerImage(
       dataUri,
       new qq.maps.Size(44, 44),
