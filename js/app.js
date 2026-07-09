@@ -1575,16 +1575,25 @@ class App {
       ctx.fillText('Circlemap · 鬼抓人地图雷达', W - 24 * S, H - 16 * S);
       ctx.textAlign = 'left';
 
-      // ── 导出 PNG ──
-      const link = document.createElement('a');
+      // ── 导出 PNG（使用 Blob + ObjectURL，避免 Data URL 大小限制） ──
       const dateStr = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
-      link.download = `circlemap-activity-${dateStr}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.style.display = 'none';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      Toast.show('✅ 活动报告已导出');
+      const filename = `circlemap-activity-${dateStr}.png`;
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          Toast.show('⚠️ 导出失败：无法生成图片');
+          return;
+        }
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.download = filename;
+        link.href = url;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        Toast.show(`✅ 已导出：${filename}（查看系统下载文件夹）`);
+      }, 'image/png');
     } catch (e) {
       console.error('[Export] 报告导出失败:', e);
       Toast.show('⚠️ 导出报告失败');
