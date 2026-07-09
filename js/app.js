@@ -499,23 +499,21 @@ class App {
     this._roomTeamCreateBtn = document.getElementById('room-team-create-btn');
     this._roomTeamCreateForm = document.getElementById('room-team-create-form');
     this._roomTeamNameInput = document.getElementById('room-team-name-input');
-    this._roomTeamColorInput = document.getElementById('room-team-color-input');
+    this._roomTeamSelectedColor = '#4ECDC4';
     this._roomTeamPresets = document.getElementById('room-team-presets');
     this._roomTeamCreateConfirm = document.getElementById('room-team-create-confirm');
     this._roomTeamList = document.getElementById('room-team-list');
 
-    // 队伍预设色板：点击设置取色框值并高亮，自定义取色时清除高亮
-    if (this._roomTeamPresets && this._roomTeamColorInput) {
+    // 队伍预设色板：点击即选中并高亮（无原生取色框）
+    if (this._roomTeamPresets) {
       this._roomTeamPresets.querySelectorAll('.room-team-preset').forEach((btn) => {
         btn.addEventListener('click', () => {
           const c = btn.dataset.color;
-          if (c) this._roomTeamColorInput.value = c;
+          if (c) this._roomTeamSelectedColor = c;
           this._updateTeamPresetActive(c);
         });
       });
-      this._roomTeamColorInput.addEventListener('input', () => {
-        this._updateTeamPresetActive(this._roomTeamColorInput.value);
-      });
+      this._updateTeamPresetActive(this._roomTeamSelectedColor);
     }
 
     this._roomCreateBtn.addEventListener('click', () => this._roomCreate());
@@ -3374,7 +3372,7 @@ class App {
   _roomCreateTeam() {
     if (!this.roomManager || !this.roomManager.isConnected()) return;
     const name = (this._roomTeamNameInput.value || '').trim() || '我的队伍';
-    const color = this._roomTeamColorInput.value;
+    const color = this._roomTeamSelectedColor;
     try {
       this.roomManager.createTeam(name, color);
       this._roomTeamNameInput.value = '';
