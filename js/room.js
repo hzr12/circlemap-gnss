@@ -165,6 +165,7 @@ class RoomManager {
   _tryConnect(brokerUrl, clientId, resolve, reject) {
     const discarded = { current: false };
     let errCount = 0;
+    let lastErr = null;
 
     console.log('[Room] 正在连接 MQTT:', brokerUrl, 'clientId:', clientId);
 
@@ -172,7 +173,6 @@ class RoomManager {
       this._client = mqtt.connect(brokerUrl, {
         clientId: clientId,
         clean: true,
-        protocolVersion: 5,              // 使用 MQTT 5.0（无 client ID 长度限制）
         reconnectPeriod: ROOM_CONFIG.RECONNECT_DELAY,
         connectTimeout: ROOM_CONFIG.CONNECT_TIMEOUT,
         keepalive: 30,
@@ -204,16 +204,19 @@ class RoomManager {
       this._client.on('error', (err) => {
         if (discarded.current) return;
         errCount++;
-        console.error(`[Room] MQTT 错误 (${errCount}/${ROOM_CONFIG.MAX_RETRY}):`, err.message);
+        lastErr = err;
+        console.error(`[Room] MQTT 错误 (${errCount}/${ROOM_CONFIG.MAX_RETRY}):`, err && err.message);
 
         if (errCount >= ROOM_CONFIG.MAX_RETRY) {
           discarded.current = true;
 
           if (!ROOM_CONFIG.BROKER_FALLBACK_URL || brokerUrl === ROOM_CONFIG.BROKER_FALLBACK_URL) {
-            reject(new Error(`MQTT 连接失败（已尝试所有 Broker，连续失败 ${ROOM_CONFIG.MAX_RETRY} 次）`));
+            reject(new Error(this._formatMqttError(err, `已尝试所有 Broker，连续失败 ${ROOM_CONFIG.MAX_RETRY} 次`)));
             return;
           }
 
+          // 主用失败后给出明确提示再切备用（只提示一次，避免刷屏）
+          if (this.onRoomError) this.onRoomError(this._formatMqttError(err) + '，正在尝试备用服务器…');
           console.log(`[Room] 主用 Broker 连续失败 ${ROOM_CONFIG.MAX_RETRY} 次，切换到备用:`, ROOM_CONFIG.BROKER_FALLBACK_URL);
           this._disconnect();
           this._tryConnect(ROOM_CONFIG.BROKER_FALLBACK_URL, clientId, resolve, reject);
@@ -231,9 +234,31 @@ class RoomManager {
         this._disconnect();
         this._tryConnect(ROOM_CONFIG.BROKER_FALLBACK_URL, clientId, resolve, reject);
       } else {
-        reject(e);
+        reject(new Error(this._formatMqttError(e)));
       }
     }
+  }
+
+  /**
+   * 将 MQTT 底层错误转换为中文可读提示
+   * 区分「握手失败/不可达」与「超时」等常见情况
+   * @param {Error} err 原始错误
+   * @param {string} [suffix] 附加说明（如重试次数），拼在括号里
+   * @returns {string}
+   */
+  _formatMqttError(err, suffix) {
+    const msg = (err && err.message) || '';
+    let friendly = '游戏服务器连接失败';
+    if (msg.includes('WebSocket is closed') || (msg.includes('close') && msg.includes('connect'))) {
+      friendly = '无法连接游戏服务器（WebSocket 握手失败），请检查网络或防火墙是否拦截 8084/8884 端口';
+    } else if (msg.includes('timeout') || msg.includes('Timeout')) {
+      friendly = '连接游戏服务器超时，请检查网络后重试';
+    } else if (msg.includes('refused') || msg.includes('ECONNREFUSED')) {
+      friendly = '游戏服务器拒绝连接（可能已满或限流）';
+    } else if (msg) {
+      friendly = '游戏服务器连接失败：' + msg;
+    }
+    return suffix ? `${friendly}（${suffix}）` : friendly;
   }
 
   /**
