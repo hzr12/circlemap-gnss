@@ -106,6 +106,7 @@ class App {
 
     // #13 — 长按地图：GPS 过期时设为手动位置，否则快速创建圆
     this.mapManager.onLongPress = (pos) => this._onMapLongPress(pos);
+    this.mapManager.onMapClick = (pos) => this._onMapClickInRoom(pos);
 
     // 初始化 UI
     this._setupUI();
@@ -821,6 +822,21 @@ class App {
       }
       this._drawCircle();
     }
+  }
+
+  /**
+   * 多人模式下点击地图：像地图选点一样，把点击点设为我的位置并共享
+   * 让无 GPS 的设备（如 PC）也能发报
+   */
+  _onMapClickInRoom(pos) {
+    if (!pos || !this.roomManager || !this.roomManager.isConnected()) return;
+    if (this.roomManager.isSpectator()) return;
+    // 复用「点击选点」的本地位置设置：更新我的位置、显示定位标记、标记手动（不被 GPS 覆盖）
+    this._setManualPosition(pos);
+    // 同时把该点作为共享位置广播给其他玩家
+    this.roomManager.publishPosition(pos.lat, pos.lng, this._lastAccuracy || 999, 0, 0);
+    this.roomManager.flushPositionNow();
+    this._updateRoomPlayerList();
   }
 
   /**
@@ -3327,6 +3343,10 @@ class App {
    */
   _roomToggleSharing() {
     if (!this.roomManager) return;
+    if (this.roomManager.getGameState() === 'playing') {
+      Toast.show('🎮 游戏中位置共享已锁定，无法关闭');
+      return;
+    }
     if (this.roomManager.isNpcTeam()) {
       Toast.show('👾 NPC 队持续共享，无法关闭');
       return;
@@ -3587,11 +3607,29 @@ class App {
     this.roomManager.onGameStateChange = (state) => {
       this._updateGameUI();
       if (state === 'playing') {
-        Toast.show('🕹️ 游戏开始！');
+        // 游戏中强制开启位置共享并锁定（不可关闭）
+        if (this.roomManager) this.roomManager.setSharingEnabled(true);
+        if (this._roomSharingBtn) {
+          this._roomSharingBtn.disabled = true;
+          this._roomSharingBtn.textContent = '📍 游戏中·共享中';
+          this._roomSharingBtn.classList.remove('sharing-off');
+        }
+        if (this.roomManager) this.roomManager.flushPositionNow(); // 开局立即发 1 次
+        Toast.show('🎮 游戏开始！位置共享已开启');
         this._updateRoomPlayerList();
       } else if (state === 'finished') {
-        Toast.show('🏁 游戏结束！');
+        // 游戏结束后恢复可切换
+        if (this._roomSharingBtn) {
+          this._roomSharingBtn.disabled = false;
+          this._updateSharingBtn();
+        }
+        Toast.show('🏁 游戏结束！位置共享可手动关闭');
         this._updateRoomPlayerList();
+      } else {
+        if (this._roomSharingBtn) {
+          this._roomSharingBtn.disabled = false;
+          this._updateSharingBtn();
+        }
       }
     };
 
@@ -3635,22 +3673,7 @@ class App {
    */
   _renderPlayerMarker(p, myInfo, now, staleMs) {
     if (!this.roomManager) return;
-    const gameState = this.roomManager.getGameState();
-    const myRole = this.roomManager.getPlayerRole(myInfo.id);
-
-    // 游戏进行中的可见性规则
-    if (gameState === 'playing') {
-      const isSpectator = this.roomManager.isSpectator();
-      // NPC 中性信标：对所有人始终可见，不受角色隐藏规则限制
-      if (!p.isNpc) {
-        // 观战者可见所有人（含其他猎人）
-        if (!isSpectator && myRole !== 'ghost') {
-          if (p.role !== 'ghost') return; // 猎人看不到其他猎人
-        }
-        // 被抓的人不显示位置（观战者仍可见，便于复盘）
-        if (!isSpectator && p.caught && p.role !== 'ghost') return;
-      }
-    }
+    // 游戏进行中：所有玩家位置互相可见（含其他队 / 其他猎人 / 被抓者）
 
     const teams = this.roomManager.getTeams();
     const broadcasterId = this.roomManager.getTeamBroadcasterId();
