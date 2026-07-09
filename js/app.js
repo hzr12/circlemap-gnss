@@ -1575,24 +1575,56 @@ class App {
       ctx.fillText('Circlemap · 鬼抓人地图雷达', W - 24 * S, H - 16 * S);
       ctx.textAlign = 'left';
 
-      // ── 导出 PNG（使用 Blob + ObjectURL，避免 Data URL 大小限制） ──
+      // ── 导出 PNG ──
       const dateStr = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
       const filename = `circlemap-activity-${dateStr}.png`;
-      canvas.toBlob((blob) => {
+      canvas.toBlob(async (blob) => {
         if (!blob) {
           Toast.show('⚠️ 导出失败：无法生成图片');
           return;
         }
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.download = filename;
-        link.href = url;
-        link.style.display = 'none';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-        Toast.show(`✅ 已导出：${filename}（查看系统下载文件夹）`);
+
+        // 检测 Capacitor 原生环境
+        if (typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform()) {
+          try {
+            // 方案 B：写缓存 → 系统分享（零权限）
+            const reader = new FileReader();
+            const base64 = await new Promise(resolve => {
+              reader.onloadend = () => resolve(reader.result.split(',')[1]);
+              reader.readAsDataURL(blob);
+            });
+
+            const result = await Capacitor.Plugins.Filesystem.writeFile({
+              path: filename,
+              data: base64,
+              directory: 'CACHE',
+            });
+
+            await Capacitor.Plugins.Share.share({
+              title: 'Circlemap 活动报告',
+              text: '鬼抓人·地图雷达 — 轨迹活动报告',
+              url: result.uri,
+              dialogTitle: '分享或保存活动报告',
+            });
+
+            Toast.show('✅ 报告已分享');
+          } catch (e) {
+            console.error('[Export] 分享失败:', e);
+            Toast.show('⚠️ 分享取消或失败');
+          }
+        } else {
+          // Web 端：直接下载
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.download = filename;
+          link.href = url;
+          link.style.display = 'none';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+          Toast.show(`✅ 已导出：${filename}`);
+        }
       }, 'image/png');
     } catch (e) {
       console.error('[Export] 报告导出失败:', e);
