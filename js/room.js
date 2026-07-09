@@ -520,6 +520,8 @@ class RoomManager {
     this._roomCode = null;
     this._players = {};
     this._lastPosition = null;
+    this._lastSentPos = null;
+    this._lastSentSpeed = null;
     this._teams = {};
     this._myTeamId = null;
     // 重置发报员状态
@@ -941,6 +943,7 @@ class RoomManager {
 
     // 发布加入消息
     this._publish({ join: true, name: this._nickname, color: this._color });
+    this._publishPresence(); // 立即回填静态身份，避免他人等 ≤30s 才拿到
     return this._roomCode;
   }
 
@@ -955,6 +958,7 @@ class RoomManager {
 
     // 发布加入消息
     this._publish({ join: true, name: this._nickname, color: this._color });
+    this._publishPresence(); // 立即回填静态身份，避免他人等 ≤30s 才拿到
   }
 
   // ============================================================
