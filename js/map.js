@@ -48,6 +48,7 @@ class MapManager {
     this.targetCircle = null;  // 对方精度范围圈
     this._myPos = null;        // 我的位置（Canvas 标注用）
     this.playerMarkers = {};   // 多人位置标记 {deviceId: qq.maps.Marker}
+    this._playerPredictions = {}; // 玩家位置预测 {deviceId: {lat,lng,bearing,speed,acc,ts}}
 
     // 回调钩子
     this.onCenterChange = null;
@@ -277,25 +278,28 @@ class MapManager {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    if (!this.circles.length) return;
-
     // ── Pass 1: 离屏 Canvas 只画填充（重叠区域自然叠色加深） ──
-    const offCanvas = this._getOffscreen(w, h);
-    const offCtx = offCanvas.getContext('2d');
-    offCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    offCtx.clearRect(0, 0, w, h);
+    if (this.circles.length) {
+      const offCanvas = this._getOffscreen(w, h);
+      const offCtx = offCanvas.getContext('2d');
+      offCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      offCtx.clearRect(0, 0, w, h);
 
-    for (const c of this.circles) {
-      this._drawCircleFill(offCtx, c);
+      for (const c of this.circles) {
+        this._drawCircleFill(offCtx, c);
+      }
+
+      // ── 合成离屏结果到主 Canvas（整体控制透明度） ──
+      ctx.drawImage(offCanvas, 0, 0, offCanvas.width, offCanvas.height, 0, 0, w, h);
+
+      // ── Pass 2: 主 Canvas 画描边 + 圆心 ──
+      for (const c of this.circles) {
+        this._drawCircleStrokes(ctx, c);
+      }
     }
 
-    // ── 合成离屏结果到主 Canvas（整体控制透明度） ──
-    ctx.drawImage(offCanvas, 0, 0, offCanvas.width, offCanvas.height, 0, 0, w, h);
-
-    // ── Pass 2: 主 Canvas 画描边 + 圆心 ──
-    for (const c of this.circles) {
-      this._drawCircleStrokes(ctx, c);
-    }
+    // ── Pass 3: 玩家预测椭圆（叠加在圆圈之上） ──
+    this._drawPlayerPredictions(ctx);
   }
 
   /**
@@ -1138,8 +1142,132 @@ class MapManager {
     this.playerMarkers = {};
   }
 
+  // ================================================================
+  //  位置预测椭圆
+  // ================================================================
+
+  /**
+   * 设置/更新玩家预测数据
+   */
+  setPlayerPrediction(id, lat, lng, bearing, speed, acc) {
+    this._playerPredictions[id] = { lat, lng, bearing, speed, acc, ts: Date.now() };
+    this._scheduleRedraw();
+  }
+
+  /**
+   * 移除玩家预测
+   */
+  removePlayerPrediction(id) {
+    delete this._playerPredictions[id];
+    this._scheduleRedraw();
+  }
+
+  /**
+   * 清除所有预测
+   */
+  clearPlayerPredictions() {
+    this._playerPredictions = {};
+    this._scheduleRedraw();
+  }
+
+  /**
+   * 沿朝向投影位置
+   * @param {number} lat 起始纬度
+   * @param {number} lng 起始经度
+   * @param {number} bearing 朝向角度（正北顺时针）
+   * @param {number} distance 投影距离（米）
+   * @returns {{lat:number, lng:number}}
+   */
+  _projectPosition(lat, lng, bearing, distance) {
+    const bearingRad = bearing * Math.PI / 180;
+    const d = distance;
+    const latRad = lat * Math.PI / 180;
+    const dx = d * Math.sin(bearingRad);
+    const dy = d * Math.cos(bearingRad);
+    const newLat = lat + dy / 111320;
+    const newLng = lng + dx / (111320 * Math.cos(latRad));
+    return { lat: newLat, lng: newLng };
+  }
+
+  /**
+   * 绘制玩家位置预测椭圆（Canvas 叠加层）
+   * 每个玩家画两个椭圆：10s 预测 + 30s 预测
+   */
+  _drawPlayerPredictions(ctx) {
+    const now = Date.now();
+    const MAX_AGE = 15000; // 15s 后预测失效
+
+    Object.entries(this._playerPredictions).forEach(([id, pred]) => {
+      if (now - pred.ts > MAX_AGE) {
+        delete this._playerPredictions[id];
+        return;
+      }
+      if (pred.speed == null || pred.speed < 0.3 || pred.bearing == null) return;
+
+      const bearingRad = pred.bearing * Math.PI / 180;
+      const latLng = new qq.maps.LatLng(pred.lat, pred.lng);
+
+      // 两个预测时刻：10s 和 30s
+      const times = [10, 30];
+      const opacities = [0.2, 0.08];
+      const strokeOpacities = [0.35, 0.15];
+
+      times.forEach((t, idx) => {
+        const distance = pred.speed * t;
+        const proj = this._projectPosition(pred.lat, pred.lng, pred.bearing, distance);
+        const projLatLng = new qq.maps.LatLng(proj.lat, proj.lng);
+        const cp = this._latLngToContainerPoint(projLatLng);
+        if (!cp) return;
+
+        // 不确定性：精度 + 速度 × 时间系数（越远不确定性越大）
+        const uncertainty = pred.acc + pred.speed * t * 0.8;
+        const semiMinorPx = Math.max(4, this._metersToPixels(uncertainty, projLatLng));
+        const semiMajorPx = semiMinorPx * 2.5;
+
+        ctx.save();
+        ctx.translate(cp.x, cp.y);
+        ctx.rotate(bearingRad);
+
+        ctx.beginPath();
+        ctx.ellipse(0, 0, semiMajorPx, semiMinorPx, 0, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 200, 80, ${opacities[idx]})`;
+        ctx.fill();
+        ctx.strokeStyle = `rgba(255, 200, 80, ${strokeOpacities[idx]})`;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // 标注预测时间
+        ctx.rotate(-bearingRad); // 恢复旋转以画文字
+        ctx.fillStyle = `rgba(255, 255, 255, ${opacities[idx] + 0.1})`;
+        ctx.font = '9px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(`${t}s`, 0, -semiMajorPx - 2);
+        ctx.restore();
+      });
+
+      // 方向指示器：从当前位置到预测位置的连线
+      const curCp = this._latLngToContainerPoint(latLng);
+      if (!curCp) return;
+      const proj30 = this._projectPosition(pred.lat, pred.lng, pred.bearing, pred.speed * 30);
+      const proj30LatLng = new qq.maps.LatLng(proj30.lat, proj30.lng);
+      const proj30Cp = this._latLngToContainerPoint(proj30LatLng);
+      if (!proj30Cp) return;
+
+      ctx.beginPath();
+      ctx.moveTo(curCp.x, curCp.y);
+      ctx.lineTo(proj30Cp.x, proj30Cp.y);
+      ctx.strokeStyle = 'rgba(255, 200, 80, 0.12)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    });
+  }
+
   destroy() {
     this.clearTrail();
+    this.clearPlayerPredictions();
 
     // 取消待执行渲染
     if (this._rafId) {
