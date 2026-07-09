@@ -3285,7 +3285,7 @@ class App {
       Toast.show('⚠️ 请输入有效的房间码');
       return;
     }
-    const nick = '玩家' + Math.random().toString(36).slice(2, 5);
+    const nick = (this._roomNickInput.value || '').trim() || '玩家' + Math.random().toString(36).slice(2, 5);
     const spectator = this._roomSpectatorCheck ? this._roomSpectatorCheck.checked : false;
     Toast.show('🔄 正在加入房间...');
     try {
@@ -3558,6 +3558,13 @@ class App {
     this.roomManager.onGameTimerUpdate = (startAt) => {
       if (!this._roomTimerSection) return;
       this._roomTimerSection.classList.add('visible');
+      // 把开始时间同步进选择框，让所有玩家都能看到设定值
+      if (this._roomTimerInput) {
+        const d = new Date(startAt);
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        this._roomTimerInput.value = `${hh}:${mm}`;
+      }
       // 启动每秒更新
       if (this._timerInterval) clearInterval(this._timerInterval);
       this._timerInterval = setInterval(() => this._updateTimerCountdown(), 1000);
@@ -3569,6 +3576,7 @@ class App {
         clearInterval(this._timerInterval);
         this._timerInterval = null;
       }
+      if (this._roomTimerInput) this._roomTimerInput.value = '';
       this._roomTimerValue.textContent = '--:--';
       this._roomTimerCountdown.classList.add('hidden');
       this._roomTimerSetFrm.classList.remove('hidden');
@@ -3854,12 +3862,28 @@ class App {
     if (this._roomCodeDisplay) this._roomCodeDisplay.classList.add('hidden');
     if (this._roomStatus) this._roomStatus.classList.add('hidden');
     if (this._roomTeamsSection) this._roomTeamsSection.classList.add('hidden');
-    this._roomTeamCreateForm.classList.add('hidden');
-    this._roomFormCreate.classList.remove('hidden');
-    this._roomFormJoin.classList.remove('hidden');
+    if (this._roomTeamCreateForm) this._roomTeamCreateForm.classList.add('hidden');
+    if (this._roomFormCreate) this._roomFormCreate.classList.remove('hidden');
+    if (this._roomFormJoin) this._roomFormJoin.classList.remove('hidden');
     if (this._roomPlayerCount) this._roomPlayerCount.textContent = '0';
-    this._roomPlayerList.innerHTML = '<div class="room-empty">尚未加入房间</div>';
+    if (this._roomPlayerList) this._roomPlayerList.innerHTML = '<div class="room-empty">尚未加入房间</div>';
     if (this._roomConnDot) this._roomConnDot.classList.remove('online');
+    if (this._roomCodeValue) this._roomCodeValue.textContent = '------';
+    // 游戏 UI 复位（roomManager 已置空，无法走 _updateGameUI，改为手动还原）
+    if (this._roomGameStatus) this._roomGameStatus.textContent = '⏳ 等待开始';
+    if (this._roomGameRoleDisplay) this._roomGameRoleDisplay.textContent = '';
+    if (this._roomGameHostBadge) this._roomGameHostBadge.classList.add('hidden');
+    if (this._roomGameStartBtn) {
+      this._roomGameStartBtn.textContent = '🎮 开始游戏';
+      this._roomGameStartBtn.classList.remove('hidden');
+    }
+    if (this._roomGameEndBtn) this._roomGameEndBtn.classList.add('hidden');
+    if (this._roomGameAssignBtn) this._roomGameAssignBtn.classList.add('hidden');
+    if (this._roomGameRandomBtn) this._roomGameRandomBtn.classList.add('hidden');
+    if (this._roomSharingBtn) {
+      this._roomSharingBtn.textContent = '📡 共享定位';
+      this._roomSharingBtn.classList.remove('sharing-off');
+    }
     // 隐藏扩展区块
     if (this._roomTimerSection) this._roomTimerSection.classList.remove('visible');
     if (this._roomBurstSection) this._roomBurstSection.classList.remove('visible');
@@ -3868,8 +3892,8 @@ class App {
     if (this._roomTimerCountdown) this._roomTimerCountdown.classList.add('hidden');
     if (this._roomTimerSetFrm) this._roomTimerSetFrm.classList.remove('hidden');
     if (this._roomTimerAbortBtn) this._roomTimerAbortBtn.classList.add('hidden');
-    this._roomTimerValue.textContent = '--:--';
-    this._roomBurstPhase.textContent = '未激活';
+    if (this._roomTimerValue) this._roomTimerValue.textContent = '--:--';
+    if (this._roomBurstPhase) this._roomBurstPhase.textContent = '未激活';
     // 停止定时器
     if (this._timerInterval) {
       clearInterval(this._timerInterval);
@@ -3936,8 +3960,12 @@ class App {
       this._roomTimerSetFrm.classList.add('hidden');
       Toast.show('🎮 游戏开始！');
       // 倒计时归零时，房主自动开局（非房主的 startGame 会被 isHost 守卫拦截）
-      if (this.roomManager.isHost() && this.roomManager.getGameState() === 'idle') {
-        this.roomManager.startGame();
+      // idle 或 finished 均可开新局，与 startGame() 自身守卫一致
+      if (this.roomManager.isHost()) {
+        const st = this.roomManager.getGameState();
+        if (st === 'idle' || st === 'finished') {
+          this.roomManager.startGame();
+        }
       }
       // 到 0 后自动清除定时器
       if (this._timerInterval) {
@@ -3993,8 +4021,9 @@ class App {
 
   _roomStartGame() {
     if (!this.roomManager || !this.roomManager.isHost()) return;
+    const restart = this.roomManager.getGameState() === 'finished';
     this.roomManager.startGame();
-    Toast.show('🎮 游戏开始！鬼去抓人吧！');
+    Toast.show(restart ? '🔄 新一局开始！鬼去抓人吧！' : '🎮 游戏开始！鬼去抓人吧！');
   }
 
   _roomEndGame() {
@@ -4057,7 +4086,9 @@ class App {
 
     // 按钮可见性
     const inGame = state === 'playing';
-    this._roomGameStartBtn.classList.toggle('hidden', !isHost || inGame || state === 'finished');
+    // 房主在 idle / finished 均可开新局（finished 时按钮显示为「再来一局」）
+    this._roomGameStartBtn.classList.toggle('hidden', !isHost || inGame);
+    this._roomGameStartBtn.textContent = state === 'finished' ? '🔄 再来一局' : '🎮 开始游戏';
     this._roomGameEndBtn.classList.toggle('hidden', !isHost || !inGame);
     this._roomGameAssignBtn.classList.toggle('hidden', !isHost);
     this._roomGameRandomBtn.classList.toggle('hidden', !isHost);
