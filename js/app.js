@@ -50,6 +50,7 @@ class App {
     this._isBackground = false;       // 是否在后台模式（pagehide 后 60s polling）
     this._bgLocateInterval = null;    // 后台轮询定位定时器
     this._nativeBgStarted = false;    // 原生后台定位插件是否已启动（@capgo/background-geolocation）
+    this._lastBgNativeTime = 0;       // 上次原生后台定位时间戳（30s 节流）
     this._wakeLock = null;            // 屏幕唤醒锁引用
     this._recentFixes = [];           // 最近定位记录（最多 10 条）
     this._speedHistory = [];          // 速度历史 [{x: 秒, y: m/s}]
@@ -997,6 +998,10 @@ class App {
           return;
         }
         if (!location) return;
+        // 30s 最小间隔节流（替代原生插件的 distanceFilter 方案）
+        const now = Date.now();
+        if (now - this._lastBgNativeTime < 30000) return;
+        this._lastBgNativeTime = now;
         // 将插件 Location 转为 app 内部的 {lat, lng, ...} 格式
         this._processBackgroundPosition({
           lat: location.latitude,
@@ -1122,8 +1127,8 @@ class App {
       this._isManualPosition = false;
       this.mapManager.setLocation(convPos, pos.accuracy, pos.heading);
 
-      // 记录最近定位
-      this._recordFix(pos, convPos);
+      // 记录最近定位（标记为后台定位）
+      this._recordFix(pos, convPos, false, true);
       this._prevDistances = {};
 
       // 如果正在记录轨迹，加入轨迹点
@@ -1848,7 +1853,7 @@ class App {
   /**
    * 记录一次定位到最近列表（最多 10 条）
    */
-  _recordFix(pos, convPos, isManual) {
+  _recordFix(pos, convPos, isManual, isBackground) {
     this._recentFixes.push({
       time: Date.now(),
       lat: convPos.lat,
@@ -1856,7 +1861,8 @@ class App {
       accuracy: pos.accuracy || 0,
       speed: pos.speed,
       heading: pos.heading,
-      isManual: !!isManual
+      isManual: !!isManual,
+      isBackground: !!isBackground
     });
     if (this._recentFixes.length > CONFIG.MAX_RECENT_FIXES) {
       this._recentFixes = this._recentFixes.slice(-CONFIG.MAX_RECENT_FIXES);
@@ -1888,11 +1894,12 @@ class App {
       if (f.accuracy < 15) accClass = 'acc-good';
       else if (f.accuracy < 50) accClass = 'acc-ok';
       const manualTag = f.isManual ? ' <span class="fix-manual">📍 手动</span>' : '';
+      const bgTag = f.isBackground ? ' <span class="fix-bg">后台</span>' : '';
       const coordStr = `${f.lat.toFixed(4)}, ${f.lng.toFixed(4)}`;
       html += `<div class="fix-item">
         <span class="fix-time">${timeStr}</span>
         <span class="fix-accuracy ${accClass}">${accStr}</span>
-        <span class="fix-coord">${coordStr}${manualTag}</span>
+        <span class="fix-coord">${coordStr}${manualTag}${bgTag}</span>
       </div>`;
     }
     listEl.innerHTML = html;

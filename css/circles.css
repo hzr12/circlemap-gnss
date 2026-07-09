@@ -349,3 +349,10 @@
   font-family: var(--font-sans);
 }
 
+.fix-bg {
+  font-size: 10px;
+  font-weight: normal;
+  color: var(--accent-2);
+  font-family: var(--font-sans);
+}
+
