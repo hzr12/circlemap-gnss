@@ -397,6 +397,8 @@ class RoomManager {
             caught: data.caught === true || (this._caughtPlayers[data.id] != null),
             caughtBy: data.caughtBy || (this._caughtPlayers[data.id] ? this._caughtPlayers[data.id].caughtBy : null),
           };
+
+          if (data.lat != null && data.lng != null) {
             player.lat = data.lat;
             player.lng = data.lng;
             player.acc = data.acc || 0;
