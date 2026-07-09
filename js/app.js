@@ -552,6 +552,30 @@ class App {
 
     // 位置共享切换
     this._roomBurstEnable.addEventListener('change', () => this._roomToggleBurst());
+
+    // —— 游戏控制 ————
+    this._roomGameSection = document.getElementById('room-game-section');
+    this._roomGameStatus = document.getElementById('room-game-status');
+    this._roomGameStartBtn = document.getElementById('room-game-start-btn');
+    this._roomGameEndBtn = document.getElementById('room-game-end-btn');
+    this._roomGameAssignBtn = document.getElementById('room-game-assign-btn');
+    this._roomGameRandomBtn = document.getElementById('room-game-random-btn');
+    this._roomGameRoleDisplay = document.getElementById('room-game-role-display');
+    this._roomGameHostBadge = document.getElementById('room-game-host-badge');
+
+    // —— 赛后统计 ————
+    this._roomStatsModal = document.getElementById('room-stats-modal');
+    this._roomStatsClose = document.getElementById('room-stats-close');
+    this._roomStatsContent = document.getElementById('room-stats-content');
+
+    // 游戏按钮事件
+    this._roomGameStartBtn.addEventListener('click', () => this._roomStartGame());
+    this._roomGameEndBtn.addEventListener('click', () => this._roomEndGame());
+    this._roomGameAssignBtn.addEventListener('click', () => this._roomAssignRole());
+    this._roomGameRandomBtn.addEventListener('click', () => this._roomRandomAssign());
+    this._roomStatsClose.addEventListener('click', () => {
+      this._roomStatsModal.classList.remove('visible');
+    });
   }
 
   /**
@@ -3422,29 +3446,15 @@ class App {
 
     this.roomManager.onPositionUpdate = (players) => {
       this._updateRoomPlayerList();
-      // 更新地图标记（发报员正常、跟随者不显示、分离者半透明）
+      // 更新地图标记（带游戏可见性规则）
       const myInfo = this.roomManager.getMyInfo();
-      const myTeamId = this.roomManager.getMyTeamId();
-      const teams = this.roomManager.getTeams();
-      const broadcasterId = this.roomManager.getTeamBroadcasterId();
       const now = Date.now();
-      const POSITION_STALE_MS = 30000; // 30s 无坐标更新视为过时
-
+      const POSITION_STALE_MS = 30000;
       this.mapManager.clearPlayerMarkers();
       this.mapManager.clearPlayerPredictions();
       Object.values(players).forEach((p) => {
-        if (p.id !== myInfo.id && p.online) {
-          if (p.spectator) return; // 观战者不显示在地图上
-          // 跟随者（非发报员、未分离）无位置发布 → 不会出现在 players 里，但安全跳过
-          if (p.teamId && p.teamId === myTeamId && p.id !== broadcasterId && !p.teamSeparation) return;
-          const stale = p.lastPosUpdate && (now - p.lastPosUpdate > POSITION_STALE_MS);
-          const color = p.teamId && teams[p.teamId] ? teams[p.teamId].color : p.color;
-          const opacity = stale ? 0.3 : p.teamSeparation ? 0.5 : 1;
-          this.mapManager.updatePlayerMarker(p.id, p.lat, p.lng, p.name, color, opacity);
-          // 更新预测椭圆数据（仅非过时位置）
-          if (!stale && p.lat != null && p.lng != null && p.bearing != null) {
-            this.mapManager.setPlayerPrediction(p.id, p.lat, p.lng, p.bearing, p.speed || 0, p.acc || 0);
-          }
+        if (p.id !== myInfo.id && p.online && !p.spectator) {
+          this._renderPlayerMarker(p, myInfo, now, POSITION_STALE_MS);
         }
       });
     };
@@ -3456,21 +3466,13 @@ class App {
       if (this.roomManager) {
         const myInfo = this.roomManager.getMyInfo();
         const players = this.roomManager.getPlayers();
-        const broadcasterId = this.roomManager.getTeamBroadcasterId();
         const now = Date.now();
         const POSITION_STALE_MS = 30000;
         this.mapManager.clearPlayerMarkers();
         this.mapManager.clearPlayerPredictions();
         Object.values(players).forEach((p) => {
           if (p.id !== myInfo.id && p.online && !p.spectator) {
-            if (p.teamId && p.teamId === myTeamId && p.id !== broadcasterId && !p.teamSeparation) return;
-            const stale = p.lastPosUpdate && (now - p.lastPosUpdate > POSITION_STALE_MS);
-            const color = p.teamId && teams[p.teamId] ? teams[p.teamId].color : p.color;
-            const opacity = stale ? 0.3 : p.teamSeparation ? 0.5 : 1;
-            this.mapManager.updatePlayerMarker(p.id, p.lat, p.lng, p.name, color, opacity);
-            if (!stale && p.lat != null && p.lng != null && p.bearing != null) {
-              this.mapManager.setPlayerPrediction(p.id, p.lat, p.lng, p.bearing, p.speed || 0, p.acc || 0);
-            }
+            this._renderPlayerMarker(p, myInfo, now, POSITION_STALE_MS);
           }
         });
       }
@@ -3531,6 +3533,85 @@ class App {
       this._roomTimerSetFrm.classList.remove('hidden');
       this._roomTimerAbortBtn.classList.add('hidden');
     };
+
+    // —— 游戏角色 ————
+    this.roomManager.onGameStateChange = (state) => {
+      this._updateGameUI();
+      if (state === 'playing') {
+        Toast.show('🕹️ 游戏开始！');
+        this._updateRoomPlayerList();
+      } else if (state === 'finished') {
+        Toast.show('🏁 游戏结束！');
+        this._updateRoomPlayerList();
+      }
+    };
+
+    this.roomManager.onRoleAssigned = (playerId, role, assignerId) => {
+      this._updateGameUI();
+      this._updateRoomPlayerList();
+      const myInfo = this.roomManager.getMyInfo();
+      if (playerId === myInfo.id) {
+        const roleName = role === 'ghost' ? '👻 鬼' : '🧑 人';
+        Toast.show(`你的角色：${roleName}`);
+      }
+    };
+
+    this.roomManager.onPlayerCaught = (targetId, ghostId) => {
+      this._updateRoomPlayerList();
+      const players = this.roomManager.getPlayers();
+      const targetName = players[targetId] ? players[targetId].name : '未知';
+      const ghostName = players[ghostId] ? players[ghostId].name : '未知';
+      Toast.show(`🫳 ${targetName} 被 ${ghostName} 抓住了！`);
+      // 刷新地图标记（被抓者标记更新）
+      if (this.roomManager) {
+        const myInfo = this.roomManager.getMyInfo();
+        const allPlayers = this.roomManager.getPlayers();
+        const now = Date.now();
+        const POSITION_STALE_MS = 30000;
+        this.mapManager.clearPlayerMarkers();
+        this.mapManager.clearPlayerPredictions();
+        Object.values(allPlayers).forEach((p) => {
+          if (p.id !== myInfo.id && p.online && !p.spectator) this._renderPlayerMarker(p, myInfo, now, POSITION_STALE_MS);
+        });
+      }
+    };
+
+    this.roomManager.onGameStatsReady = (stats) => {
+      this._roomShowGameStats(stats);
+    };
+  }
+
+  /**
+   * 渲染一个玩家标记（带游戏模式可见性）
+   */
+  _renderPlayerMarker(p, myInfo, now, staleMs) {
+    if (!this.roomManager) return;
+    const gameState = this.roomManager.getGameState();
+    const myRole = this.roomManager.getPlayerRole(myInfo.id);
+
+    // 游戏进行中的可见性规则
+    if (gameState === 'playing') {
+      // 鬼看到所有人，人(猎人)只看到鬼
+      if (myRole !== 'ghost') {
+        if (p.role !== 'ghost') return; // 猎人看不到其他猎人
+      }
+      // 被抓的人不显示位置
+      if (p.caught && p.role !== 'ghost') return;
+    }
+
+    const teams = this.roomManager.getTeams();
+    const broadcasterId = this.roomManager.getTeamBroadcasterId();
+    const myTeamId = this.roomManager.getMyTeamId();
+
+    if (p.teamId && p.teamId === myTeamId && p.id !== broadcasterId && !p.teamSeparation) return;
+    const stale = p.lastPosUpdate && (now - p.lastPosUpdate > staleMs);
+    const color = p.teamId && teams[p.teamId] ? teams[p.teamId].color : p.color;
+    let opacity = stale ? 0.3 : p.teamSeparation ? 0.5 : 1;
+    if (p.caught) opacity = 0.2; // 被抓的人几乎不可见
+    this.mapManager.updatePlayerMarker(p.id, p.lat, p.lng, p.name, color, opacity);
+    if (!stale && p.lat != null && p.lng != null && p.bearing != null && !p.caught) {
+      this.mapManager.setPlayerPrediction(p.id, p.lat, p.lng, p.bearing, p.speed || 0, p.acc || 0);
+    }
   }
 
   /**
@@ -3573,6 +3654,8 @@ class App {
       color: myInfo.color,
       teamId: myTeamId,
       spectator: this.roomManager.isSpectator(),
+      role: this.roomManager.getPlayerRole(myInfo.id),
+      caught: this.roomManager.isPlayerCaught(myInfo.id),
       statusText: this.roomManager.isSpectator() ? '观战中' : (mySharing ? '在线' : '定位关闭'),
       statusClass: this.roomManager.isSpectator() ? 'spectator' : (mySharing ? 'online' : 'sharing-off'),
       isSelf: true,
@@ -3611,6 +3694,8 @@ class App {
         isBroadcaster: p.teamBroadcaster === true,
         teamSeparation: p.teamSeparation === true,
         spectator: p.spectator === true,
+        role: p.role || null,
+        caught: p.caught === true,
       };
       if (p.teamId && teams[p.teamId]) {
         if (!grouped[p.teamId]) grouped[p.teamId] = [];
@@ -3633,14 +3718,14 @@ class App {
         <div class="room-player-item">
           <span class="room-player-dot" style="background:${myself.color}"></span>
           <span class="room-player-name self">${myself.name}</span>
-          <span class="room-player-status ${myself.statusClass}">${myself.spectator ? '<span class="player-tag tag-spectator">👁 观战</span> ' : myself.isBroadcaster ? '<span class="player-tag tag-broadcaster">📡 发报中</span> ' : myself.teamSeparation ? '<span class="player-tag tag-separated">已分离 ⚠</span> ' : ''}${myself.statusText}</span>
+          <span class="room-player-status ${myself.statusClass}">${this._getPlayerTagsHtml(myself)}${myself.statusText}</span>
         </div>`;
       if (grouped[myTeamId]) {
         grouped[myTeamId].forEach(p => {
           html += `<div class="room-player-item">
             <span class="room-player-dot" style="background:${p.color}"></span>
             <span class="room-player-name">${p.name}</span>
-            <span class="room-player-status ${p.statusClass}">${p.spectator ? '<span class="player-tag tag-spectator">👁 观战</span> ' : p.isBroadcaster ? '<span class="player-tag tag-broadcaster">📡 发报中</span> ' : p.teamSeparation ? '<span class="player-tag tag-separated">已分离 ⚠</span> ' : ''}${p.statusText}</span>
+            <span class="room-player-status ${p.statusClass}">${this._getPlayerTagsHtml(p)}${p.statusText}</span>
           </div>`;
         });
       }
@@ -3664,7 +3749,7 @@ class App {
         html += `<div class="room-player-item">
           <span class="room-player-dot" style="background:${p.color}"></span>
           <span class="room-player-name">${p.name}</span>
-          <span class="room-player-status ${p.statusClass}">${p.spectator ? '<span class="player-tag tag-spectator">👁 观战</span> ' : p.isBroadcaster ? '<span class="player-tag tag-broadcaster">📡 发报中</span> ' : p.teamSeparation ? '<span class="player-tag tag-separated">已分离 ⚠</span> ' : ''}${p.statusText}</span>
+          <span class="room-player-status ${p.statusClass}">${this._getPlayerTagsHtml(p)}${p.statusText}</span>
         </div>`;
       });
       html += `</div>`;
@@ -3678,7 +3763,7 @@ class App {
         html += `<div class="room-player-item">
           <span class="room-player-dot" style="background:${p.color}"></span>
           <span class="room-player-name${p.isSelf ? ' self' : ''}">${p.name}</span>
-          <span class="room-player-status ${p.statusClass}">${p.spectator ? '<span class="player-tag tag-spectator">👁 观战</span> ' : p.isBroadcaster ? '<span class="player-tag tag-broadcaster">📡 发报中</span> ' : p.teamSeparation ? '<span class="player-tag tag-separated">已分离 ⚠</span> ' : ''}${p.statusText}</span>
+          <span class="room-player-status ${p.statusClass}">${this._getPlayerTagsHtml(p)}${p.statusText}</span>
         </div>`;
       });
       html += `</div>`;
@@ -3688,6 +3773,29 @@ class App {
       html = `<div class="room-empty">等待队友加入...</div>`;
     }
     this._roomPlayerList.innerHTML = html;
+  }
+
+  /** 构建玩家标签 HTML（角色/观战/发报/被抓等） */
+  _getPlayerTagsHtml(p) {
+    let tags = '';
+    const gameState = this.roomManager ? this.roomManager.getGameState() : 'idle';
+    if (p.spectator) {
+      tags += '<span class="player-tag tag-spectator">👁 观战</span> ';
+    } else if (p.role === 'ghost') {
+      tags += '<span class="player-tag tag-ghost">👻 鬼</span> ';
+    } else if (p.role === 'hunter') {
+      tags += '<span class="player-tag tag-hunter">🧑 人</span> ';
+    }
+    if (p.caught) {
+      tags += '<span class="player-tag tag-caught">🫳 被抓</span> ';
+    }
+    if (p.isBroadcaster) {
+      tags += '<span class="player-tag tag-broadcaster">📡 发报中</span> ';
+    }
+    if (p.teamSeparation) {
+      tags += '<span class="player-tag tag-separated">已分离 ⚠</span> ';
+    }
+    return tags;
   }
 
   /**
@@ -3707,6 +3815,8 @@ class App {
     // 隐藏扩展区块
     if (this._roomTimerSection) this._roomTimerSection.classList.remove('visible');
     if (this._roomBurstSection) this._roomBurstSection.classList.remove('visible');
+    if (this._roomGameSection) this._roomGameSection.classList.remove('visible');
+    if (this._roomStatsModal) this._roomStatsModal.classList.remove('visible');
     if (this._roomTimerCountdown) this._roomTimerCountdown.classList.add('hidden');
     if (this._roomTimerSetFrm) this._roomTimerSetFrm.classList.remove('hidden');
     if (this._roomTimerAbortBtn) this._roomTimerAbortBtn.classList.add('hidden');
@@ -3729,6 +3839,7 @@ class App {
   _showRoomExtras() {
     if (this._roomTimerSection) this._roomTimerSection.classList.add('visible');
     if (this._roomBurstSection) this._roomBurstSection.classList.add('visible');
+    this._updateGameUI();
   }
 
   // ================================================================
@@ -3822,6 +3933,153 @@ class App {
     const div = document.createElement('div');
     div.appendChild(document.createTextNode(str));
     return div.innerHTML;
+  }
+
+  // ================================================================
+  //  游戏控制
+  // ================================================================
+
+  _roomStartGame() {
+    if (!this.roomManager || !this.roomManager.isHost()) return;
+    this.roomManager.startGame();
+    Toast.show('🎮 游戏开始！鬼去抓人吧！');
+  }
+
+  _roomEndGame() {
+    if (!this.roomManager || !this.roomManager.isHost()) return;
+    this.roomManager.endGame();
+  }
+
+  _roomAssignRole() {
+    if (!this.roomManager || !this.roomManager.isHost()) return;
+    // 简单循环分配：选择下一个未分配/猎人的玩家设为鬼
+    const players = this.roomManager.getPlayers();
+    const candidates = Object.values(players).filter(p => p.online && !p.spectator);
+    if (candidates.length < 2) { Toast.show('⚠️ 至少需要 2 名玩家'); return; }
+    const ghost = candidates.find(p => p.role === 'ghost');
+    if (ghost) {
+      // 已有鬼 → 将鬼转为人，将下一个未分配/人转为鬼
+      this.roomManager.assignRole(ghost.id, 'hunter');
+      const nextIdx = (candidates.indexOf(ghost) + 1) % candidates.length;
+      this.roomManager.assignRole(candidates[nextIdx].id, 'ghost');
+      Toast.show(`👻 鬼已更换为 ${candidates[nextIdx].name}`);
+    } else {
+      // 无鬼 → 第一个人设为鬼
+      this.roomManager.assignRole(candidates[0].id, 'ghost');
+      candidates.slice(1).forEach(p => this.roomManager.assignRole(p.id, 'hunter'));
+      Toast.show(`👻 ${candidates[0].name} 是鬼！其他人快跑！`);
+    }
+  }
+
+  _roomRandomAssign() {
+    if (!this.roomManager || !this.roomManager.isHost()) return;
+    this.roomManager.randomAssignRoles(1);
+    const players = this.roomManager.getPlayers();
+    const ghost = Object.values(players).find(p => p.role === 'ghost');
+    Toast.show(`🎲 随机分配完成！${ghost ? '👻 鬼是 ' + ghost.name : ''}`);
+  }
+
+  /** 更新游戏控制 UI */
+  _updateGameUI() {
+    if (!this.roomManager || !this._roomGameSection) return;
+    const state = this.roomManager.getGameState();
+    const isHost = this.roomManager.isHost();
+    const myRole = this.roomManager.getPlayerRole(this.roomManager.getMyInfo().id);
+
+    this._roomGameSection.classList.add('visible');
+
+    // 房主徽章
+    if (this._roomGameHostBadge) {
+      this._roomGameHostBadge.classList.toggle('hidden', !isHost);
+    }
+
+    // 状态文字
+    const stateMap = { idle: '⏳ 等待开始', playing: '🔴 游戏中', finished: '🏁 已结束' };
+    if (this._roomGameStatus) this._roomGameStatus.textContent = stateMap[state] || '⏳ 等待开始';
+
+    // 角色显示
+    if (this._roomGameRoleDisplay) {
+      const roleMap = { ghost: '👻 鬼', hunter: '🧑 人' };
+      this._roomGameRoleDisplay.textContent = myRole ? roleMap[myRole] || '' : '';
+    }
+
+    // 按钮可见性
+    const inGame = state === 'playing';
+    this._roomGameStartBtn.classList.toggle('hidden', !isHost || inGame || state === 'finished');
+    this._roomGameEndBtn.classList.toggle('hidden', !isHost || !inGame);
+    this._roomGameAssignBtn.classList.toggle('hidden', !isHost);
+    this._roomGameRandomBtn.classList.toggle('hidden', !isHost);
+  }
+
+  /** 显示赛后统计面板 */
+  _roomShowGameStats(stats) {
+    if (!this._roomStatsModal || !this._roomStatsContent) return;
+    if (!stats) return;
+
+    // 胜负判定
+    const winnerHtml = stats.winner === 'ghost'
+      ? '<div class="stats-winner stats-winner-ghost">👻 鬼方获胜！</div>'
+      : stats.winner === 'hunter'
+        ? '<div class="stats-winner stats-winner-hunter">🧑 人方获胜！</div>'
+        : '';
+
+    // 鬼列表
+    const ghostList = (stats.roles.ghost || []).map(g =>
+      `<span class="stats-role-tag tag-ghost">👻 ${this._escapeHtml(g.name)}</span>`
+    ).join(' ');
+
+    // 猎人列表
+    const hunterList = (stats.roles.hunter || []).map(h => {
+      const caughtBadge = h.caught ? ' <span class="stats-caught-badge">🫳 被抓</span>' : ' <span class="stats-survive-badge">✅ 存活</span>';
+      return `<div class="stats-hunter-row">
+        <span class="stats-role-tag tag-hunter">🧑 ${this._escapeHtml(h.name)}</span>${caughtBadge}
+      </div>`;
+    }).join('');
+
+    // 时间线
+    let timelineHtml = '';
+    if (stats.timeline && stats.timeline.length > 0) {
+      timelineHtml = '<div class="stats-timeline"><div class="stats-section-title">⏱ 事件时间线</div>';
+      stats.timeline.forEach(e => {
+        timelineHtml += `<div class="stats-timeline-item">
+          <span class="stats-time">+${e.offset}s</span>
+          <span class="stats-event">🫳 ${this._escapeHtml(e.playerName)} 被 ${this._escapeHtml(e.ghostName)} 抓住</span>
+        </div>`;
+      });
+      timelineHtml += '</div>';
+    }
+
+    this._roomStatsContent.innerHTML = `
+      ${winnerHtml}
+      <div class="stats-grid">
+        <div class="stats-item">
+          <div class="stats-label">⏱ 游戏时长</div>
+          <div class="stats-value">${stats.durationStr}</div>
+        </div>
+        <div class="stats-item">
+          <div class="stats-label">👥 玩家数</div>
+          <div class="stats-value">${stats.playerCount}</div>
+        </div>
+        <div class="stats-item">
+          <div class="stats-label">🫳 被抓</div>
+          <div class="stats-value">${stats.totalCaught}/${stats.playerCount - 1}</div>
+        </div>
+        <div class="stats-item">
+          <div class="stats-label">✅ 幸存</div>
+          <div class="stats-value">${stats.survivors}</div>
+        </div>
+      </div>
+      <div class="stats-section">
+        <div class="stats-section-title">👻 鬼</div>
+        <div class="stats-role-list">${ghostList}</div>
+      </div>
+      <div class="stats-section">
+        <div class="stats-section-title">🧑 人（猎人）</div>
+        <div class="stats-role-list">${hunterList}</div>
+      </div>
+      ${timelineHtml}
+    `;
+    this._roomStatsModal.classList.add('visible');
   }
 
   /**
