@@ -831,14 +831,18 @@ class App {
    * 让无 GPS 的设备（如 PC）也能发报
    */
   _onMapClickInRoom(pos) {
-    if (!pos || !this.roomManager || !this.roomManager.isConnected()) return;
-    if (this.roomManager.isSpectator()) return;
-    // 复用「点击选点」的本地位置设置：更新我的位置、显示定位标记、标记手动（不被 GPS 覆盖）
-    this._setManualPosition(pos);
-    // 同时把该点作为共享位置广播给其他玩家
-    this.roomManager.publishPosition(pos.lat, pos.lng, this._lastAccuracy || 999, 0, 0);
-    this.roomManager.flushPositionNow();
-    this._updateRoomPlayerList();
+    if (!pos) return;
+    // 恢复「点击选点」：总是先把点击点设为圆心并落一个同心圆
+    this.center = pos;
+    this.mapManager.setCenter(pos);
+    this._drawCircle();
+    // 多人模式：额外把点击点设为我的位置并广播（无 GPS 的 PC 也能发报）
+    if (this.roomManager && this.roomManager.isConnected() && !this.roomManager.isSpectator()) {
+      this._setManualPosition(pos);
+      this.roomManager.publishPosition(pos.lat, pos.lng, this._lastAccuracy || 999, 0, 0);
+      this.roomManager.flushPositionNow();
+      this._updateRoomPlayerList();
+    }
   }
 
   /**
@@ -2108,7 +2112,7 @@ class App {
     // 多人房间：发送位置
     if (this.roomManager && this.roomManager.isConnected()) {
       this.roomManager.publishPosition(
-        pos.lat, pos.lng,
+        convPos.lat, convPos.lng,
         pos.accuracy || 0,
         this._lastSpeed || 0,
         pos.heading || 0
@@ -3626,18 +3630,26 @@ class App {
     this.roomManager.onGameStateChange = (state) => {
       this._updateGameUI();
       if (state === 'playing') {
-        // 游戏中强制开启位置共享并锁定（不可关闭）
-        if (this.roomManager) this.roomManager.setSharingEnabled(true);
+        // 游戏开始：用玩家自己设置的「带静默」位置共享（重置静默时长，从静默相开始），而非始终开启
+        const silent = parseInt(this._roomBurstSilent.value) || 25;
+        const share = parseInt(this._roomBurstShare.value) || 5;
+        if (this.roomManager) {
+          this.roomManager.setSharingEnabled(true);        // 带静默也需共享开
+          this.roomManager.startBurstCycle(silent, share); // 重置静默时长，从静默相开始
+        }
+        if (this._roomBurstEnable) this._roomBurstEnable.checked = true;
         if (this._roomSharingBtn) {
           this._roomSharingBtn.disabled = true;
-          this._roomSharingBtn.textContent = '📍 游戏中·共享中';
+          this._roomSharingBtn.textContent = '📍 游戏中·带静默共享';
           this._roomSharingBtn.classList.remove('sharing-off');
         }
-        if (this.roomManager) this.roomManager.flushPositionNow(); // 开局立即发 1 次
-        Toast.show('🎮 游戏开始！位置共享已开启');
+        if (this.roomManager) this.roomManager.flushPositionNow(); // 静默相内会被门控拦掉，进入共享相后自动首播
+        Toast.show('🎮 游戏开始！带静默位置共享已开启');
         this._updateRoomPlayerList();
       } else if (state === 'finished') {
-        // 游戏结束后恢复可切换
+        // 游戏结束：停止开局强制的带静默周期，恢复可手动切换；共享保持开启（与原行为一致）
+        if (this.roomManager) this.roomManager.stopBurstCycle();
+        if (this._roomBurstEnable) this._roomBurstEnable.checked = false;
         if (this._roomSharingBtn) {
           this._roomSharingBtn.disabled = false;
           this._updateSharingBtn();
