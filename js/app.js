@@ -832,10 +832,9 @@ class App {
    */
   _onMapClickInRoom(pos) {
     if (!pos) return;
-    // 恢复「点击选点」：总是先把点击点设为圆心并落一个同心圆
+    // 恢复「点击选点」：把点击点设为圆心（不画圆；画圆只走「绘制圆形」按钮或长按地图）
     this.center = pos;
     this.mapManager.setCenter(pos);
-    this._drawCircle();
     // 多人模式：额外把点击点设为我的位置并广播（无 GPS 的 PC 也能发报）
     if (this.roomManager && this.roomManager.isConnected() && !this.roomManager.isSpectator()) {
       this._setManualPosition(pos);
