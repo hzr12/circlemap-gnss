@@ -341,6 +341,11 @@ class RoomManager {
         this._onPresenceMsg(senderId, this._decodePresence(payload));
         return;
       }
+      // 二进制圆同步（…/<id>/circle）
+      if (topic.endsWith('/circle')) {
+        this._onCircleMsg(senderId, this._decodeCircle(payload));
+        return;
+      }
 
       const data = JSON.parse(payload.toString());
 
@@ -463,12 +468,6 @@ class RoomManager {
       // 离线消息（含 Broker 代发的遗嘱）：先进入宽限，避免网络抖动 / 刷新重加导致的闪烁
       if (data.offline) {
         this._schedulePendingOffline(data.id);
-        return;
-      }
-
-      // 圆同步（多人可见其他队伍画的圆）
-      if (data.type === 'circle') {
-        this._onCircleMsg(senderId, data);
         return;
       }
 
@@ -732,6 +731,57 @@ class RoomManager {
     };
   }
 
+  // 圆同步包（二进制，像 pos/ping/presence）：
+  //   op Uint8（0 add / 1 update / 2 remove / 3 clear）
+  //   cid Float64（圆 id，可能超过 Uint32，用 Float64 保精度）
+  //   以下仅 add/update 携带：lat Int32(×1e6) / lng Int32(×1e6) / r Uint32(米) / interval Uint16(ms) / nameLen Uint8 + name(UTF-8) / colorLen Uint8 + color(UTF-8)
+  _encodeCircle(opCode, c) {
+    const isAddOrUpdate = (opCode === 0 || opCode === 1);
+    const nameU = new TextEncoder().encode(isAddOrUpdate ? (c.name || '') : '');
+    const colorU = new TextEncoder().encode(isAddOrUpdate ? (c.color || '#888') : '');
+    const headerLen = 1 + 8 + (isAddOrUpdate ? 14 : 0); // 4+4+4+2 = 14
+    const buf = new ArrayBuffer(headerLen + 1 + nameU.length + 1 + colorU.length);
+    const dv = new DataView(buf);
+    const u8 = new Uint8Array(buf);
+    let o = 0;
+    dv.setUint8(o, opCode); o += 1;
+    dv.setFloat64(o, c.cid || 0, true); o += 8;
+    if (isAddOrUpdate) {
+      dv.setInt32(o, Math.round(c.lat * 1e6), true); o += 4;
+      dv.setInt32(o, Math.round(c.lng * 1e6), true); o += 4;
+      dv.setUint32(o, Math.min(0xFFFFFFFF, Math.max(0, Math.round(c.r || 0))), true); o += 4;
+      dv.setUint16(o, Math.min(65535, Math.max(0, Math.round(c.interval || 2500))), true); o += 2;
+      u8[o] = nameU.length; o += 1; u8.set(nameU, o); o += nameU.length;
+      u8[o] = colorU.length; o += 1; u8.set(colorU, o); o += colorU.length;
+    }
+    return u8;
+  }
+
+  _decodeCircle(payload) {
+    const dv = this._asDataView(payload);
+    const u8 = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+    let o = 0;
+    const opCode = u8[o]; o += 1;
+    const cid = dv.getFloat64(o, true); o += 8;
+    const out = { cid };
+    if (opCode === 0 || opCode === 1) {
+      out.lat = dv.getInt32(o, true) / 1e6; o += 4;
+      out.lng = dv.getInt32(o, true) / 1e6; o += 4;
+      out.r = dv.getUint32(o, true); o += 4;
+      out.interval = dv.getUint16(o, true); o += 2;
+      const readStr = () => {
+        const len = u8[o]; o += 1;
+        const s = new TextDecoder().decode(u8.subarray(o, o + len));
+        o += len;
+        return s;
+      };
+      out.name = readStr();
+      out.color = readStr();
+    }
+    out.op = (['add', 'update', 'remove', 'clear'])[opCode] || 'clear';
+    return out;
+  }
+
   // 在场包：1 字节 flags + 三段变长字符串（name/color/teamId，各 1 字节长度前缀 + UTF-8）
   // flags bit0 旁观 / bit1 NPC / bit2 被抓 / bit3 有角色 / bit4 角色为鬼（其余保留）
   _encodePresence(p) {
@@ -924,17 +974,25 @@ class RoomManager {
     const teams = this.getTeams();
     const myTeamId = this.getMyTeamId();
     const color = (myTeamId && teams[myTeamId]) ? teams[myTeamId].color : this.getMyInfo().color;
-    const msg = { type: 'circle', op, color, name: this._nickname };
-    if (op === 'add' || op === 'update') {
-      msg.cid = circle.id;
-      msg.lat = circle.center.lat;
-      msg.lng = circle.center.lng;
-      msg.r = circle.maxRadius;
-      msg.interval = circle.interval || CONFIG.CONCENTRIC_INTERVAL;
-    } else if (op === 'remove') {
-      msg.cid = circle.id;
+    let opCode;
+    if (op === 'add') opCode = 0;
+    else if (op === 'update') opCode = 1;
+    else if (op === 'remove') opCode = 2;
+    else opCode = 3; // clear
+    const c = { cid: (circle && circle.id) || 0 };
+    if (opCode === 0 || opCode === 1) {
+      c.lat = circle.center.lat;
+      c.lng = circle.center.lng;
+      c.r = circle.maxRadius;
+      c.interval = circle.interval || CONFIG.CONCENTRIC_INTERVAL;
+      c.name = this._nickname || '';
+      c.color = color;
     }
-    this._client.publish(`${ROOM_CONFIG.TOPIC_PREFIX}/${this._roomCode}`, JSON.stringify(msg), { qos: 1, retain: false });
+    this._client.publish(
+      `${ROOM_CONFIG.TOPIC_PREFIX}/${this._roomCode}/${this._deviceId}/circle`,
+      this._encodeCircle(opCode, c),
+      { qos: 1, retain: false, binary: true }
+    );
   }
 
   /**
