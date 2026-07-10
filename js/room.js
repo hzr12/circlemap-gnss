@@ -429,6 +429,11 @@ class RoomManager {
         // 同步房主的位置共享设定
         if (data.burstSilent != null) this._burstSilentMin = Math.max(1, data.burstSilent);
         if (data.burstShare != null) this._burstShareMin = Math.max(1, data.burstShare);
+        // 同步共享/burst 状态
+        if (data.sharingEnabled != null) this._sharingEnabled = data.sharingEnabled;
+        if (data.burstEnabled != null) this._burstEnabled = data.burstEnabled;
+        if (data.burstPhase) this._burstPhase = data.burstPhase;
+        if (data.burstPhaseEnd) this._burstPhaseEnd = data.burstPhaseEnd;
         if (this.onGameStateChange) this.onGameStateChange('playing');
         return;
       }
@@ -503,6 +508,11 @@ class RoomManager {
         // 同步房主的位置共享设定（必须在 onGameStateChange 之前，否则读到默认值）
         if (data.burstSilent != null) this._burstSilentMin = Math.max(1, data.burstSilent);
         if (data.burstShare != null) this._burstShareMin = Math.max(1, data.burstShare);
+        // 同步共享/burst 状态
+        if (data.sharingEnabled != null) this._sharingEnabled = data.sharingEnabled;
+        if (data.burstEnabled != null) this._burstEnabled = data.burstEnabled;
+        if (data.burstPhase) this._burstPhase = data.burstPhase;
+        if (data.burstPhaseEnd) this._burstPhaseEnd = data.burstPhaseEnd;
         // 重建游戏状态
         if (data.gameState && data.gameState !== 'idle') {
           this._gameState = data.gameState;
@@ -967,6 +977,10 @@ class RoomManager {
       gameStartAt: this._gameStartAt || 0,
       burstSilent: this._burstSilentMin,
       burstShare: this._burstShareMin,
+      sharingEnabled: this._sharingEnabled,
+      burstEnabled: this._burstEnabled,
+      burstPhase: this._burstPhase,
+      burstPhaseEnd: this._burstPhaseEnd,
       playerRoles: { ...this._playerRoles },
       caughtPlayers: {},
     };
@@ -1238,6 +1252,21 @@ class RoomManager {
   }
 
   /**
+   * 恢复位置共享周期（中途加入时，根据已同步的 phase + phaseEnd 恢复定时器）
+   */
+  resumeBurstCycle() {
+    if (!this._burstEnabled) return;
+    if (this._burstPhaseEnd <= Date.now()) return; // 阶段已过期，不恢复
+    if (this.onBurstPhaseChange) this.onBurstPhaseChange(this._burstPhase, this._burstPhaseEnd);
+    if (this._burstTimer) clearTimeout(this._burstTimer);
+    const remaining = this._burstPhaseEnd - Date.now();
+    this._burstTimer = setTimeout(() => {
+      const next = this._burstPhase === 'silent' ? 'sharing' : 'silent';
+      this._enterBurstPhase(next);
+    }, remaining);
+  }
+
+  /**
    * 停止位置共享，恢复连续共享
    */
   stopBurstCycle() {
@@ -1405,7 +1434,20 @@ class RoomManager {
     // 同步房主的位置共享设定
     if (burstSilent != null) this._burstSilentMin = Math.max(1, burstSilent);
     if (burstShare != null) this._burstShareMin = Math.max(1, burstShare);
-    this._publish({ type: 'game_start', burstSilent: this._burstSilentMin, burstShare: this._burstShareMin });
+    // 同步共享/burst 状态
+    this._sharingEnabled = true;
+    this._burstEnabled = true;
+    this._burstPhase = 'silent';
+    this._burstPhaseEnd = Date.now() + this._burstSilentMin * 60 * 1000;
+    this._publish({
+      type: 'game_start',
+      burstSilent: this._burstSilentMin,
+      burstShare: this._burstShareMin,
+      sharingEnabled: true,
+      burstEnabled: true,
+      burstPhase: 'silent',
+      burstPhaseEnd: this._burstPhaseEnd,
+    });
     // 自动按队伍分配角色：随机选一个非 NPC 队为鬼队，其余为人队
     this._autoAssignTeamRoles();
     if (this.onGameStateChange) this.onGameStateChange('playing');

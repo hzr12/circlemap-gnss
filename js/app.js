@@ -3631,22 +3631,24 @@ class App {
     this.roomManager.onGameStateChange = (state) => {
       this._updateGameUI();
       if (state === 'playing') {
-        // 游戏开始：同步房主的位置共享设定（room.js 已存储，非房主从 game_start 消息同步）
-        const settings = this.roomManager.getBurstSettings();
+        // 游戏开始/重加入：room.js 已同步 burst 状态，此处恢复定时器 + 同步 UI
         if (this.roomManager) {
-          this.roomManager.setSharingEnabled(true);        // 带静默也需共享开
-          this.roomManager.startBurstCycle(settings.silent, settings.share); // 从 room.js 读取同步后的设定
+          this.roomManager.setSharingEnabled(true);
+          this.roomManager.resumeBurstCycle(); // 根据已同步的 phase/phaseEnd 恢复定时器
         }
+        const settings = this.roomManager.getBurstSettings();
+        const burst = this.roomManager.isBurstEnabled();
+        const phase = this.roomManager.getBurstPhase();
         // 同步 UI 显示
         if (this._roomBurstSilent) this._roomBurstSilent.value = settings.silent;
         if (this._roomBurstShare) this._roomBurstShare.value = settings.share;
-        if (this._roomBurstEnable) this._roomBurstEnable.checked = true;
+        if (this._roomBurstEnable) this._roomBurstEnable.checked = burst;
         if (this._roomSharingBtn) {
           this._roomSharingBtn.disabled = true;
           this._roomSharingBtn.textContent = ' 游戏中·带静默共享';
           this._roomSharingBtn.classList.remove('sharing-off');
         }
-        if (this.roomManager) this.roomManager.flushPositionNow(); // 静默相内会被门控拦掉，进入共享相后自动首播
+        if (this.roomManager) this.roomManager.flushPositionNow();
         Toast.show(' 游戏开始！带静默位置共享已开启');
         this._updateRoomPlayerList();
       } else if (state === 'finished') {
