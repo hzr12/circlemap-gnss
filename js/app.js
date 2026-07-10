@@ -3495,7 +3495,7 @@ class App {
 
       html += `<div class="room-team-card">
         <div class="room-team-card-header">
-          <span class="room-team-dot" style="background:${team.color}"></span>
+          <span class="room-team-dot" style="background:${this._sanitizeColor(team.color)}"></span>
           <span class="room-team-name">${this._escapeHtml(team.name)}</span>
           <span class="room-team-meta">${members.length} 人${isCreator ? ' · 队长' : ''}</span>
         </div>
@@ -3815,19 +3815,19 @@ class App {
       const team = teams[myTeamId];
       html += `<div class="room-player-group">
         <div class="room-player-group-label" style="color:${team.color}">
-          <span class="room-team-dot" style="background:${team.color}"></span>
+          <span class="room-team-dot" style="background:${this._sanitizeColor(team.color)}"></span>
           ${this._escapeHtml(team.name)} (<span class="room-player-group-count">${1 + (grouped[myTeamId] ? grouped[myTeamId].length : 0)} 人</span>)
         </div>
         <div class="room-player-item">
-          <span class="room-player-dot" style="background:${myself.color}"></span>
-          <span class="room-player-name self">${myself.name}</span>
+          <span class="room-player-dot" style="background:${this._sanitizeColor(myself.color)}"></span>
+          <span class="room-player-name self">${this._escapeHtml(myself.name)}</span>
           <span class="room-player-status ${myself.statusClass}">${this._getPlayerTagsHtml(myself)}${myself.statusText}</span>
         </div>`;
       if (grouped[myTeamId]) {
         grouped[myTeamId].forEach(p => {
           html += `<div class="room-player-item">
-            <span class="room-player-dot" style="background:${p.color}"></span>
-            <span class="room-player-name">${p.name}</span>
+            <span class="room-player-dot" style="background:${this._sanitizeColor(p.color)}"></span>
+            <span class="room-player-name">${this._escapeHtml(p.name)}</span>
             <span class="room-player-status ${p.statusClass}">${this._getPlayerTagsHtml(p)}${p.statusText}</span>
           </div>`;
         });
@@ -3845,13 +3845,13 @@ class App {
       if (!team) return;
       html += `<div class="room-player-group">
         <div class="room-player-group-label" style="color:${team.color}">
-          <span class="room-team-dot" style="background:${team.color}"></span>
+          <span class="room-team-dot" style="background:${this._sanitizeColor(team.color)}"></span>
           ${this._escapeHtml(team.name)} (<span class="room-player-group-count">${members.length} 人</span>)
         </div>`;
       members.forEach(p => {
         html += `<div class="room-player-item">
-          <span class="room-player-dot" style="background:${p.color}"></span>
-          <span class="room-player-name">${p.name}</span>
+          <span class="room-player-dot" style="background:${this._sanitizeColor(p.color)}"></span>
+          <span class="room-player-name">${this._escapeHtml(p.name)}</span>
           <span class="room-player-status ${p.statusClass}">${this._getPlayerTagsHtml(p)}${p.statusText}</span>
         </div>`;
       });
@@ -3864,8 +3864,8 @@ class App {
         <div class="room-player-group-label room-player-group-label-none">⚪ 无队伍（<span class="room-player-group-count">${ungrouped.length} 人</span>）</div>`;
       ungrouped.forEach(p => {
         html += `<div class="room-player-item">
-          <span class="room-player-dot" style="background:${p.color}"></span>
-          <span class="room-player-name${p.isSelf ? ' self' : ''}">${p.name}</span>
+          <span class="room-player-dot" style="background:${this._sanitizeColor(p.color)}"></span>
+          <span class="room-player-name${p.isSelf ? ' self' : ''}">${this._escapeHtml(p.name)}</span>
           <span class="room-player-status ${p.statusClass}">${this._getPlayerTagsHtml(p)}${p.statusText}</span>
         </div>`;
       });
@@ -4062,6 +4062,16 @@ class App {
     const div = document.createElement('div');
     div.appendChild(document.createTextNode(str));
     return div.innerHTML;
+  }
+
+  // 仅允许安全的 CSS 颜色（#hex / rgb()），其余一律回退 #888，
+  // 防止队伍色/玩家色被构造为 "red" onmouseover="..." 触发属性注入 XSS
+  _sanitizeColor(c) {
+    if (typeof c !== 'string') return '#888';
+    const s = c.trim();
+    if (/^#[0-9a-fA-F]{3,8}$/.test(s)) return s;
+    if (/^rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(,\s*[\d.]+\s*)?\)$/.test(s)) return s;
+    return '#888';
   }
 
   // ================================================================
