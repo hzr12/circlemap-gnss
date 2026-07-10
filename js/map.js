@@ -36,6 +36,7 @@ class MapManager {
     this.onMapClick = null;        // 点击地图回调（多人模式：设为我的共享位置）
     this.circles = [];          // {id, center:{lat,lng}, maxRadius, interval}
     this.selectedCircleId = null;
+    this._remoteCircles = [];    // 其他玩家同步过来的圆（多人可见）
     this._idCounter = Date.now(); // #3 时间戳起始 + 递增，避免碰撞
     this.PICK_THRESHOLD = 22;   // 像素距离阈值
 
@@ -297,6 +298,13 @@ class MapManager {
       // ── Pass 2: 主 Canvas 画描边 + 圆心 ──
       for (const c of this.circles) {
         this._drawCircleStrokes(ctx, c);
+      }
+    }
+
+    // ── Pass 2.5: 其他玩家同步的圆（作者色虚线 + 昵称，与本地蓝圆区分） ──
+    if (this._remoteCircles.length) {
+      for (const c of this._remoteCircles) {
+        this._drawRemoteCircle(ctx, c);
       }
     }
 
@@ -619,6 +627,99 @@ class MapManager {
    */
   getCircles() {
     return this.circles;
+  }
+
+  /**
+   * 设置其他玩家同步过来的圆（多人可见），触发重绘
+   */
+  setRemoteCircles(circles) {
+    this._remoteCircles = Array.isArray(circles) ? circles : [];
+    this._scheduleRedraw();
+  }
+
+  /**
+   * 其他玩家圆的渲染：作者色 + 虚线同心圆 + 昵称标注（与本地蓝圆区分）
+   */
+  _drawRemoteCircle(ctx, circle) {
+    const latLng = new qq.maps.LatLng(circle.center.lat, circle.center.lng);
+    const cp = this._latLngToContainerPoint(latLng);
+    if (!cp) return;
+    const maxR = circle.maxRadius;
+    const interval = circle.interval || CONFIG.CONCENTRIC_INTERVAL;
+    const mp = this._metersToPixels(maxR, latLng);
+    const ip = this._metersToPixels(interval, latLng);
+    const { x: cx, y: cy } = cp;
+    if (mp < CONFIG.MIN_DRAW_PX) return;
+    const color = circle.color || '#FF8C00';
+    const drawInner = ip >= 2;
+    const ringCount = drawInner ? Math.max(1, Math.floor(mp / ip)) : 0;
+    ctx.save();
+    // 轻量填充
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(1, mp), 0, Math.PI * 2);
+    ctx.fillStyle = this._hexToRgba(color, 0.06);
+    ctx.fill();
+    // 同心内圈（虚线）
+    if (drawInner) {
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      for (let j = 1; j <= ringCount; j++) {
+        const r = j * ip;
+        if (r > mp) break;
+        ctx.beginPath();
+        ctx.arc(cx, cy, Math.max(1, r), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    // 外圈（虚线，醒目）
+    ctx.globalAlpha = 0.9;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([7, 5]);
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(1, mp), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    // 圆心
+    ctx.beginPath();
+    ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    // 昵称标注（圆心上方）
+    if (circle.name) {
+      ctx.font = '600 11px -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      const label = circle.name;
+      const lw = ctx.measureText(label).width;
+      const ly = cy - mp - 4;
+      ctx.fillStyle = this._hexToRgba(color, 0.85);
+      ctx.beginPath();
+      ctx.roundRect(cx - lw / 2 - 4, ly - 14, lw + 8, 15, 4);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(label, cx, ly);
+    }
+    ctx.restore();
+  }
+
+  /**
+   * 将 #RRGGBB 转为 rgba（带透明度）
+   */
+  _hexToRgba(hex, alpha) {
+    let h = (hex || '#888').replace('#', '');
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    const r = parseInt(h.slice(0, 2), 16) || 0;
+    const g = parseInt(h.slice(2, 4), 16) || 0;
+    const b = parseInt(h.slice(4, 6), 16) || 0;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
   }
 
   /**
