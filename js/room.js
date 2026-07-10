@@ -100,6 +100,9 @@ class RoomManager {
     this._lastSentSpeed = null;     // 最近一次下发时的速度（静止→移动 瞬间判定用）
     this._sharingEnabled = false;     // 默认关闭，游戏开始时自动开启并锁定
 
+    // 其他玩家同步过来的圆（多人可见）：key = `${author}:${cid}`
+    this._remoteCircles = {};
+
     // 位置共享（静默/共享交替）
     this._burstEnabled = false;
     this._burstSilentMin = 25;       // 静默时长（分钟）
@@ -136,6 +139,7 @@ class RoomManager {
     this.onGameTimerAborted = null; // () → void
     this.onGameStateChange = null;  // (state) → void
     this.onRoleAssigned = null;     // (playerId, role, assignerId) → void
+    this.onCircleSync = null;       // (circles[]) → void，其他玩家的圆变更
     this.onPlayerCaught = null;     // (targetId, ghostId) → void
     this.onGameStatsReady = null;   // (stats) → void
   }
@@ -462,6 +466,12 @@ class RoomManager {
         return;
       }
 
+      // 圆同步（多人可见其他队伍画的圆）
+      if (data.type === 'circle') {
+        this._onCircleMsg(senderId, data);
+        return;
+      }
+
       // 加入消息（携带 name/color，触发 onPlayerJoin）
       if (data.id && data.id !== this._deviceId && data.join != null) {
         this._cancelPendingOffline(data.id);
@@ -517,6 +527,7 @@ class RoomManager {
     this._lastSentSpeed = null;
     this._teams = {};
     this._myTeamId = null;
+    this._remoteCircles = {};  // 清除其他玩家同步的圆
     // 重置发报员状态
     this._teamBroadcasterId = null;
     this._lastBroadcastTs = 0;
@@ -905,6 +916,60 @@ class RoomManager {
   }
 
   /**
+   * 发布圆变更（多人同步，其他队伍可见）：add / update / remove / clear
+   * circle: { id, center:{lat,lng}, maxRadius, interval }
+   */
+  publishCircle(op, circle) {
+    if (!this._client || !this._connected || !this._roomCode) return;
+    const teams = this.getTeams();
+    const myTeamId = this.getMyTeamId();
+    const color = (myTeamId && teams[myTeamId]) ? teams[myTeamId].color : this.getMyInfo().color;
+    const msg = { type: 'circle', op, color, name: this._nickname };
+    if (op === 'add' || op === 'update') {
+      msg.cid = circle.id;
+      msg.lat = circle.center.lat;
+      msg.lng = circle.center.lng;
+      msg.r = circle.maxRadius;
+      msg.interval = circle.interval || CONFIG.CONCENTRIC_INTERVAL;
+    } else if (op === 'remove') {
+      msg.cid = circle.id;
+    }
+    this._client.publish(`${ROOM_CONFIG.TOPIC_PREFIX}/${this._roomCode}`, JSON.stringify(msg), { qos: 1, retain: false });
+  }
+
+  /**
+   * 处理收到的圆同步消息
+   */
+  _onCircleMsg(senderId, data) {
+    if (!data || senderId === this._deviceId) return;
+    const key = `${senderId}:${data.cid}`;
+    if (data.op === 'add' || data.op === 'update') {
+      this._remoteCircles[key] = {
+        author: senderId, cid: data.cid,
+        center: { lat: data.lat, lng: data.lng },
+        maxRadius: data.r, interval: data.interval || CONFIG.CONCENTRIC_INTERVAL,
+        color: data.color || '#888', name: data.name || '玩家',
+      };
+    } else if (data.op === 'remove') {
+      delete this._remoteCircles[key];
+    } else if (data.op === 'clear') {
+      Object.keys(this._remoteCircles).forEach((k) => {
+        if (k.indexOf(senderId + ':') === 0) delete this._remoteCircles[k];
+      });
+    } else {
+      return;
+    }
+    if (this.onCircleSync) this.onCircleSync(this.getRemoteCircles());
+  }
+
+  /**
+   * 获取其他玩家同步过来的圆列表
+   */
+  getRemoteCircles() {
+    return Object.values(this._remoteCircles);
+  }
+
+  /**
    * 启动定时发布
    * - 坐标定时器（POSITION_INTERVAL=5s）：仅在有坐标可共享时发送，保证游戏内位置时效
    * - 心跳定时器（HEARTBEAT_INTERVAL=30s）：仅发轻量 ping 维持在线状态，与坐标解耦
@@ -944,6 +1009,12 @@ class RoomManager {
 
   _expirePendingOffline(id) {
     if (this._offlineTimers[id]) delete this._offlineTimers[id];
+    // 移除该玩家同步过来的圆
+    let circleChanged = false;
+    Object.keys(this._remoteCircles).forEach((k) => {
+      if (k.indexOf(id + ':') === 0) { delete this._remoteCircles[k]; circleChanged = true; }
+    });
+    if (circleChanged && this.onCircleSync) this.onCircleSync(this.getRemoteCircles());
     const p = this._players[id];
     if (!p) return;
     p.online = false;
