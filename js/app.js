@@ -318,6 +318,7 @@ class App {
         this._dirty = true;
         this._updateCircleList(true);
         this._updateInfo();
+        if (this.roomManager && this._roomJoined) this.roomManager.publishCircle('update', sel);
       }
     });
 
@@ -334,6 +335,7 @@ class App {
         this._dirty = true;
         this._updateCircleList(true);
         this._updateInfo();
+        if (this.roomManager && this._roomJoined) this.roomManager.publishCircle('update', sel);
       }
     });
 
@@ -881,12 +883,16 @@ class App {
       return;
     }
 
-    this.mapManager.addCircle(this.center, this.circleRadius);
+    const newCircleId = this.mapManager.addCircle(this.center, this.circleRadius);
     this._updateInfo();
     this._updateCircleList(true);
     this._updateStatusBar(true);
     this._dirty = true;
     this._saveState();
+    if (this.roomManager && this._roomJoined) {
+      const c = this.mapManager.circles.find(x => x.id === newCircleId);
+      if (c) this.roomManager.publishCircle('add', c);
+    }
     Toast.show(`已创建同心圆，半径 ${
       this.circleRadius >= 1000
         ? (this.circleRadius / 1000).toFixed(1) + ' km'
@@ -2215,6 +2221,7 @@ class App {
     this._updateStatusBar(true);
     this._dirty = true;
     this._saveState();
+    if (this.roomManager && this._roomJoined) this.roomManager.publishCircle('clear');
 
     this._showUndoToast('已清除全部', () => {
       this.mapManager.circles = savedCircles;
@@ -2229,6 +2236,11 @@ class App {
       this._updateInfo();
       this._updateCircleList(true);
       this._updateStatusBar(true);
+      this._dirty = true;
+      this._saveState();
+      if (this.roomManager && this._roomJoined) {
+        savedCircles.forEach((c) => this.roomManager.publishCircle('add', c));
+      }
       this._dirty = true;
       this._saveState();
     });
@@ -3127,6 +3139,7 @@ class App {
     this._saveState();
     // 清除已删除圆的趋势缓存
     delete this._prevDistances[id];
+    if (this.roomManager && this._roomJoined) this.roomManager.publishCircle('remove', { id });
 
     this._showUndoToast('已删除', () => {
       this.mapManager.circles.push(circle);
@@ -3139,6 +3152,7 @@ class App {
       this._updateStatusBar(true);
       this._dirty = true;
       this._saveState();
+      if (this.roomManager && this._roomJoined) this.roomManager.publishCircle('add', circle);
     });
   }
 
@@ -3253,11 +3267,15 @@ class App {
 
         if (!isNaN(radius) && radius >= CONFIG.MIN_RADIUS && radius <= CONFIG.MAX_RADIUS) {
           this._setRadiusSliderValue(radius);
-          this.mapManager.addCircle(this.center, radius);
+          const newCircleId = this.mapManager.addCircle(this.center, radius);
           this._updateInfo();
           this._updateCircleList(true);
           this._dirty = true;
           this._saveState();
+          if (this.roomManager && this._roomJoined) {
+            const c = this.mapManager.circles.find(x => x.id === newCircleId);
+            if (c) this.roomManager.publishCircle('add', c);
+          }
         }
       }
     } catch (e) {
@@ -3334,6 +3352,7 @@ class App {
     this._roomJoined = false;
     this.mapManager.clearPlayerMarkers();
     this.mapManager.clearPlayerPredictions();
+    this.mapManager.setRemoteCircles([]);
     this._roomCleanup();
     Toast.show('🚪 已离开房间');
   }
@@ -3666,6 +3685,9 @@ class App {
     this.roomManager.onGameStatsReady = (stats) => {
       this._roomShowGameStats(stats);
     };
+    this.roomManager.onCircleSync = (circles) => {
+      this.mapManager.setRemoteCircles(circles);
+    };
   }
 
   /**
@@ -3702,6 +3724,10 @@ class App {
     if (this._roomStatus) this._roomStatus.classList.remove('hidden');
     if (this._roomTeamsSection) this._roomTeamsSection.classList.remove('hidden');
     this._updateSharingBtn();
+    // 加入房间后广播自己已有的圆，让其他队伍立即看到
+    if (this.roomManager && this._roomJoined) {
+      this.mapManager.getCircles().forEach((c) => this.roomManager.publishCircle('add', c));
+    }
   }
 
   /**
