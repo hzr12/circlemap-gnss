@@ -560,6 +560,10 @@ class App {
     this._roomBurstShare = document.getElementById('room-burst-share');
     this._roomBurstPhase = document.getElementById('room-burst-phase');
 
+    // —— 路径预测 ——
+    this._roomPredictionSection = document.getElementById('room-prediction-section');
+    this._roomPredictionEnable = document.getElementById('room-prediction-enable');
+
     // 倒计时按钮
     this._roomTimerSetBtn.addEventListener('click', () => this._roomSetTimer());
     this._roomTimerAbortBtn.addEventListener('click', () => this._roomAbortTimer());
@@ -569,6 +573,15 @@ class App {
 
     // 位置共享切换
     this._roomBurstEnable.addEventListener('change', () => this._roomToggleBurst());
+
+    // —— 路径预测切换 ——
+    this._roomPredictionEnable.addEventListener('change', () => this._roomTogglePrediction());
+    // 从 localStorage 恢复状态
+    const saved = localStorage.getItem('circlemap_prediction');
+    if (saved !== null) {
+      CONFIG.ENABLE_PREDICTION = saved === '1';
+      this._roomPredictionEnable.checked = CONFIG.ENABLE_PREDICTION;
+    }
 
     // —— 游戏控制 ————
     this._roomGameSection = document.getElementById('room-game-section');
@@ -3438,7 +3451,7 @@ class App {
       const myId = this.roomManager.getMyInfo().id;
       Object.values(this.roomManager.getPlayers()).forEach((p) => {
         if (p.id !== myId && p.online) {
-          this.mapManager.updatePlayerMarker(p.id, p.lat, p.lng, p.name, p.color);
+          this.mapManager.updatePlayerMarker(p.id, p.lat, p.lng, p.name, p.color, 1, p.acc);
         }
       });
     }
@@ -3792,7 +3805,7 @@ class App {
     const color = p.teamId && teams[p.teamId] ? teams[p.teamId].color : p.color;
     let opacity = stale ? 0.3 : p.teamSeparation ? 0.5 : 1;
     if (p.caught) opacity = 0.2; // 被抓的人几乎不可见
-    this.mapManager.updatePlayerMarker(p.id, p.lat, p.lng, p.name, color, opacity);
+    this.mapManager.updatePlayerMarker(p.id, p.lat, p.lng, p.name, color, opacity, p.acc);
     if (!stale && p.lat != null && p.lng != null && p.bearing != null && !p.caught) {
       this.mapManager.setPlayerPrediction(p.id, p.lat, p.lng, p.bearing, p.speed || 0, p.acc || 0);
     }
@@ -4022,6 +4035,7 @@ class App {
     // 隐藏扩展区块
     if (this._roomTimerSection) this._roomTimerSection.classList.remove('visible');
     if (this._roomBurstSection) this._roomBurstSection.classList.remove('visible');
+    if (this._roomPredictionSection) this._roomPredictionSection.classList.remove('visible');
     if (this._roomGameSection) this._roomGameSection.classList.remove('visible');
     if (this._roomStatsModal) this._roomStatsModal.classList.remove('visible');
     if (this._roomTimerCountdown) this._roomTimerCountdown.classList.add('hidden');
@@ -4046,6 +4060,7 @@ class App {
   _showRoomExtras() {
     if (this._roomTimerSection) this._roomTimerSection.classList.add('visible');
     if (this._roomBurstSection) this._roomBurstSection.classList.add('visible');
+    if (this._roomPredictionSection) this._roomPredictionSection.classList.add('visible');
     this._updateGameUI();
   }
 
@@ -4144,6 +4159,21 @@ class App {
       }
       Toast.show(' 位置共享已关闭');
     }
+  }
+
+  /**
+   * 切换路径预测显示
+   */
+  _roomTogglePrediction() {
+    const enabled = this._roomPredictionEnable.checked;
+    CONFIG.ENABLE_PREDICTION = enabled;
+    localStorage.setItem('circlemap_prediction', enabled ? '1' : '0');
+    if (!enabled) {
+      this.mapManager.clearPlayerPredictions();
+    } else {
+      this.mapManager._scheduleRedraw();
+    }
+    Toast.show(enabled ? ' 路径预测已开启' : ' 路径预测已关闭');
   }
 
   _escapeHtml(str) {

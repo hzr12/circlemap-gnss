@@ -74,6 +74,9 @@ const CONFIG = {
   MAX_RECENT_FIXES: 10,                 // 最近定位最大条数
   MIN_DISPLACEMENT_M: 5,                // 位移重建阈值（米）
 
+  // ----- 功能开关 -----
+  ENABLE_PREDICTION: true,              // 玩家路径预测椭圆（多人模式 10s/30s 椭圆投影）
+
   // ----- 轨迹 -----
   TRAIL_SAMPLE_MIN_DIST: 10,            // 轨迹采样最小间隔（米）
   TRAIL_JITTER_FACTOR: 1.5,            // 抖动检测：位移必须 > accuracy × 倍数才记录

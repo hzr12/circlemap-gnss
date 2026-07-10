@@ -53,6 +53,7 @@ class MapManager {
     this.targetCircle = null;  // 对方精度范围圈
     this._myPos = null;        // 我的位置（Canvas 标注用）
     this.playerMarkers = {};   // 多人位置标记 {deviceId: qq.maps.Marker}
+    this.playerAccuracyCircles = {}; // 多人精度圈 {deviceId: qq.maps.Circle}
     this._playerPredictions = {}; // 玩家位置预测 {deviceId: {lat,lng,bearing,speed,acc,ts}}
 
     // 回调钩子
@@ -1218,7 +1219,7 @@ class MapManager {
    * @param {string} name 昵称
    * @param {string} color 主题色
    */
-  updatePlayerMarker(id, lat, lng, name, color, opacity = 1) {
+  updatePlayerMarker(id, lat, lng, name, color, opacity = 1, accuracy) {
     if (!this.map) return;
     const latLng = new qq.maps.LatLng(lat, lng);
     if (this.playerMarkers[id]) {
@@ -1237,6 +1238,39 @@ class MapManager {
       });
       this.playerMarkers[id]._lastOpacity = opacity;
     }
+    this._updatePlayerAccuracyCircle(id, latLng, accuracy, color);
+  }
+
+  _hexToMapColor(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16) || 0;
+    const g = parseInt(hex.slice(3, 5), 16) || 0;
+    const b = parseInt(hex.slice(5, 7), 16) || 0;
+    return new qq.maps.Color(r, g, b, alpha);
+  }
+
+  _updatePlayerAccuracyCircle(id, latLng, accuracy, color) {
+    if (accuracy == null || isNaN(accuracy) || accuracy <= 0) {
+      if (this.playerAccuracyCircles[id]) {
+        this.playerAccuracyCircles[id].setMap(null);
+        delete this.playerAccuracyCircles[id];
+      }
+      return;
+    }
+    if (this.playerAccuracyCircles[id]) {
+      this.playerAccuracyCircles[id].setCenter(latLng);
+      this.playerAccuracyCircles[id].setRadius(accuracy);
+    } else {
+      this.playerAccuracyCircles[id] = new qq.maps.Circle({
+        map: this.map,
+        center: latLng,
+        radius: accuracy,
+        fillColor: this._hexToMapColor(color, 0.08),
+        strokeColor: this._hexToMapColor(color, 0.15),
+        strokeWeight: 1,
+        clickable: false,
+        editable: false,
+      });
+    }
   }
 
   /**
@@ -1246,6 +1280,10 @@ class MapManager {
     if (this.playerMarkers[id]) {
       this.playerMarkers[id].setMap(null);
       delete this.playerMarkers[id];
+    }
+    if (this.playerAccuracyCircles[id]) {
+      this.playerAccuracyCircles[id].setMap(null);
+      delete this.playerAccuracyCircles[id];
     }
   }
 
@@ -1257,6 +1295,10 @@ class MapManager {
       this.playerMarkers[id].setMap(null);
     });
     this.playerMarkers = {};
+    Object.keys(this.playerAccuracyCircles).forEach((id) => {
+      this.playerAccuracyCircles[id].setMap(null);
+    });
+    this.playerAccuracyCircles = {};
   }
 
   // ================================================================
@@ -1267,6 +1309,7 @@ class MapManager {
    * 设置/更新玩家预测数据
    */
   setPlayerPrediction(id, lat, lng, bearing, speed, acc) {
+    if (!CONFIG.ENABLE_PREDICTION) return;
     this._playerPredictions[id] = { lat, lng, bearing, speed, acc, ts: Date.now() };
     this._scheduleRedraw();
   }
@@ -1311,6 +1354,7 @@ class MapManager {
    * 每个玩家画两个椭圆：10s 预测 + 30s 预测
    */
   _drawPlayerPredictions(ctx) {
+    if (!CONFIG.ENABLE_PREDICTION) return;
     const now = Date.now();
     const MAX_AGE = 15000; // 15s 后预测失效
 
