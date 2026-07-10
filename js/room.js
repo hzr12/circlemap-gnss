@@ -102,6 +102,7 @@ class RoomManager {
 
     // 其他玩家同步过来的圆（多人可见）：key = `${author}:${cid}`
     this._remoteCircles = {};
+    this._remoteCircleTimers = {};  // key → setTimeout id，10分钟后自动删除
 
     // 位置共享（静默/共享交替）
     this._burstEnabled = false;
@@ -610,6 +611,9 @@ class RoomManager {
     this._teams = {};
     this._myTeamId = null;
     this._remoteCircles = {};  // 清除其他玩家同步的圆
+    // 清除远程圆过期定时器
+    Object.values(this._remoteCircleTimers).forEach(t => clearTimeout(t));
+    this._remoteCircleTimers = {};
     // 重置发报员状态
     this._teamBroadcasterId = null;
     this._lastBroadcastTs = 0;
@@ -1126,17 +1130,41 @@ class RoomManager {
         center: { lat: data.lat, lng: data.lng },
         maxRadius: data.r, interval: data.interval || CONFIG.CONCENTRIC_INTERVAL,
         color: data.color || '#888', name: data.name || '玩家',
+        receivedAt: Date.now(),
       };
+      // 10 分钟后自动删除
+      this._scheduleRemoteCircleExpiry(key);
     } else if (data.op === 'remove') {
+      this._cancelRemoteCircleTimer(key);
       delete this._remoteCircles[key];
     } else if (data.op === 'clear') {
       Object.keys(this._remoteCircles).forEach((k) => {
-        if (k.indexOf(senderId + ':') === 0) delete this._remoteCircles[k];
+        if (k.indexOf(senderId + ':') === 0) {
+          this._cancelRemoteCircleTimer(k);
+          delete this._remoteCircles[k];
+        }
       });
     } else {
       return;
     }
     if (this.onCircleSync) this.onCircleSync(this.getRemoteCircles());
+  }
+
+  /** 安排远程圆 10 分钟后自动过期删除 */
+  _scheduleRemoteCircleExpiry(key) {
+    this._cancelRemoteCircleTimer(key);
+    this._remoteCircleTimers[key] = setTimeout(() => {
+      delete this._remoteCircles[key];
+      delete this._remoteCircleTimers[key];
+      if (this.onCircleSync) this.onCircleSync(this.getRemoteCircles());
+    }, 10 * 60 * 1000);
+  }
+
+  _cancelRemoteCircleTimer(key) {
+    if (this._remoteCircleTimers[key]) {
+      clearTimeout(this._remoteCircleTimers[key]);
+      delete this._remoteCircleTimers[key];
+    }
   }
 
   /**
