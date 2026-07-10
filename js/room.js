@@ -116,6 +116,12 @@ class RoomManager {
     // 观战模式
     this._isSpectator = false;
 
+    // MQTT 5.0 / topicAlias 状态
+    this._mqttVersion = 5;            // 尝试的协议版本（5=MQTT 5.0, 4=3.1.1）
+    this._topicAliases = {};          // topic → alias number
+    this._topicAliasRegistered = null; // Set: 已向 broker 注册别名的 topic
+    this._topicAliasMax = 0;          // broker 返回的 topicAliasMaximum
+
     // 游戏开始倒计时
     this._gameStartAt = 0;           // 游戏开始时间戳，0=未设置
     this._gameTimerAborted = false;
@@ -176,6 +182,12 @@ class RoomManager {
       // 清理旧连接
       this._disconnect();
 
+      // MQTT 5.0 / topicAlias 状态重置
+      this._mqttVersion = 5;
+      this._topicAliases = {};
+      this._topicAliasRegistered = new Set();
+      this._topicAliasMax = 0;
+
       // 生成短 Client ID（< 23 字符，兼容 MQTT 3.1.1）
       const shortId = 'cm' + Math.random().toString(36).slice(2, 10);
 
@@ -193,37 +205,73 @@ class RoomManager {
     const discarded = { current: false };
     let errCount = 0;
     let lastErr = null;
+    const isMqtt5 = (this._mqttVersion === 5);
 
-    console.log('[Room] 正在连接 MQTT:', brokerUrl, 'clientId:', clientId);
+    console.log('[Room] 正在连接 MQTT:', brokerUrl, 'protocol:', isMqtt5 ? '5.0' : '3.1.1', 'clientId:', clientId);
 
     try {
-      // 遗嘱消息（Last-Will）：异常断开（刷新页面 / 关闭标签页 / 系统杀进程）时，
-      // Broker 会代发该离线通知，他人端走现有 offline 分支（见 _handleMessage）直接清掉幽灵标记。
-      // 正常 leaveRoom() 会先发显式 offline 再优雅断开，不会触发本遗嘱。
+      // 遗嘱消息（Last-Will）：异常断开时 Broker 代发离线通知
       const willTopic = this._roomCode
         ? `${ROOM_CONFIG.TOPIC_PREFIX}/${this._roomCode}/${this._deviceId}`
         : null;
 
-      this._client = mqtt.connect(brokerUrl, {
-        clientId: clientId,
+      const connectOpts = {
+        clientId,
         clean: true,
         reconnectPeriod: ROOM_CONFIG.RECONNECT_DELAY,
         connectTimeout: ROOM_CONFIG.CONNECT_TIMEOUT,
         keepalive: 30,
-        ...(willTopic ? {
-          will: {
-            topic: willTopic,
-            payload: JSON.stringify({ id: this._deviceId, offline: true }),
-            qos: 1,
-            retain: false,
-          },
-        } : {}),
-      });
+      };
 
-      this._client.on('connect', () => {
+      // MQTT 5.0 连接选项
+      if (isMqtt5) {
+        connectOpts.protocolVersion = 5;
+        connectOpts.properties = {};
+      }
+
+      if (willTopic) {
+        connectOpts.will = {
+          topic: willTopic,
+          payload: JSON.stringify({ id: this._deviceId, offline: true }),
+          qos: 1,
+          retain: false,
+        };
+        if (isMqtt5) {
+          connectOpts.will.properties = {};
+        }
+      }
+
+      this._client = mqtt.connect(brokerUrl, connectOpts);
+
+      this._client.on('connect', (connack) => {
         if (discarded.current) return;
+
+        // MQTT 5.0: 检查 CONNACK reasonCode
+        if (isMqtt5 && connack && connack.reasonCode && connack.reasonCode !== 0) {
+          console.log('[Room] MQTT 5.0 CONNACK 拒绝 reasonCode:', connack.reasonCode, '→ 降级到 3.1.1');
+          this._mqttVersion = 4;
+          this._topicAliasMax = 0;
+          discarded.current = true;
+          this._client.end(true);
+          setTimeout(() => {
+            if (!discarded.current) {
+              this._tryConnect(brokerUrl, fallbacks, clientId, resolve, reject);
+            }
+          }, 100);
+          return;
+        }
+
         discarded.current = true;
         this._connected = true;
+
+        // 提取 topicAliasMaximum（MQTT 5.0 CONNACK 属性）
+        if (isMqtt5 && connack && connack.properties) {
+          this._topicAliasMax = connack.properties.topicAliasMaximum || 0;
+          if (this._topicAliasMax > 0) {
+            console.log('[Room] MQTT 5.0 连接成功，topicAliasMaximum:', this._topicAliasMax);
+          }
+        }
+
         if (this.onConnectionChange) this.onConnectionChange(true);
         resolve();
       });
@@ -242,10 +290,26 @@ class RoomManager {
         if (this.onConnectionChange) this.onConnectionChange(false);
       });
 
-      // 累计 MQTT 错误次数，连续 MAX_RETRY 次失败 → 切备用
+      // 累计错误次数：MQTT 5.0 首次失败立即降级到 3.1.1（不计入 MAX_RETRY）
       this._client.on('error', (err) => {
         if (discarded.current) return;
         errCount++;
+
+        // MQTT 5.0 连接失败 → 立即降级到 3.1.1，重试同一 Broker
+        if (isMqtt5 && errCount === 1) {
+          console.log('[Room] MQTT 5.0 连接失败:', err && err.message, '→ 降级到 3.1.1');
+          this._mqttVersion = 4;
+          this._topicAliasMax = 0;
+          discarded.current = true;
+          this._disconnect();
+          setTimeout(() => {
+            if (!discarded.current) {
+              this._tryConnect(brokerUrl, fallbacks, clientId, resolve, reject);
+            }
+          }, 100);
+          return;
+        }
+
         lastErr = err;
         console.error(`[Room] MQTT 错误 (${errCount}/${ROOM_CONFIG.MAX_RETRY}):`, err && err.message);
 
@@ -257,7 +321,7 @@ class RoomManager {
             return;
           }
 
-          // 当前 Broker 失败后给出明确提示再切下一个备用（只提示一次，避免刷屏）
+          // 当前 Broker 失败后给出明确提示再切下一个备用
           const next = fallbacks.shift();
           if (this.onRoomError) this.onRoomError(this._formatMqttError(err) + '，正在尝试备用服务器…');
           console.log(`[Room] 当前 Broker 连续失败 ${ROOM_CONFIG.MAX_RETRY} 次，切换到备用:`, next);
@@ -317,6 +381,9 @@ class RoomManager {
       this._client = null;
     }
     this._connected = false;
+    this._topicAliases = {};
+    this._topicAliasRegistered = null;
+    this._topicAliasMax = 0;
   }
 
   /**
@@ -671,7 +738,7 @@ class RoomManager {
     const myRole = this._playerRoles[this._deviceId];
     if (myRole) msg.role = myRole;
     if (this._caughtPlayers[this._deviceId] != null) msg.caught = true;
-    this._client.publish(topic, JSON.stringify(msg), { qos: 1, retain: false });
+    this._publishWithAlias(topic, JSON.stringify(msg), { qos: 1, retain: false });
   }
 
   // ============================================================
@@ -931,6 +998,44 @@ class RoomManager {
     };
   }
 
+  // ============================================================
+  //  topicAlias 压缩（MQTT 5.0）
+  // ============================================================
+
+  /**
+   * 获取 topic 的 alias 编号（首次分配后自动注册）
+   * @param {string} topic 完整 topic
+   * @returns {number|null} alias 编号，不可用时返回 null
+   */
+  _getTopicAlias(topic) {
+    if (this._mqttVersion !== 5 || this._topicAliasMax === 0) return null;
+    if (this._topicAliases[topic]) return this._topicAliases[topic];
+    const nextId = Object.keys(this._topicAliases).length + 1;
+    if (nextId > this._topicAliasMax) return null;
+    this._topicAliases[topic] = nextId;
+    return nextId;
+  }
+
+  /**
+   * 使用 topicAlias 发布消息（MQTT 5.0 自动压缩 topic）
+   * 首次发布携带完整 topic 字符串 + alias；后续只传空 topic + alias
+   * @param {string} topic 完整 topic
+   * @param {string|Uint8Array} payload 消息体
+   * @param {object} opts publish 选项（qos/retain/binary）
+   */
+  _publishWithAlias(topic, payload, opts) {
+    if (!this._client || !this._connected) return;
+    const alias = this._getTopicAlias(topic);
+    if (alias != null) {
+      const registered = this._topicAliasRegistered.has(topic);
+      const pubTopic = registered ? '' : topic;
+      this._client.publish(pubTopic, payload, { ...opts, properties: { topicAlias: alias } });
+      if (!registered) this._topicAliasRegistered.add(topic);
+    } else {
+      this._client.publish(topic, payload, opts);
+    }
+  }
+
   _publishPosition() {
     if (!this._client || !this._connected || !this._roomCode || !this._lastPosition) return;
     const p = this._lastPosition;
@@ -938,7 +1043,7 @@ class RoomManager {
     const bytes = this._encodePos({
       lat: p.lat, lng: p.lng, acc: p.acc, speed: p.speed, bearing: p.bearing, ts: Date.now(),
     });
-    this._client.publish(topic, bytes, { qos: 1, retain: false, binary: true });
+    this._publishWithAlias(topic, bytes, { qos: 1, retain: false, binary: true });
     this._lastSentPos = { lat: p.lat, lng: p.lng, bearing: p.bearing, ts: Date.now() };
     this._lastSentSpeed = p.speed;
   }
@@ -952,7 +1057,7 @@ class RoomManager {
       teamSeparation: this._teamSeparation,
       spectator: this._isSpectator,
     });
-    this._client.publish(topic, bytes, { qos: 1, retain: false, binary: true });
+    this._publishWithAlias(topic, bytes, { qos: 1, retain: false, binary: true });
   }
 
   _publishPresence() {
@@ -968,7 +1073,7 @@ class RoomManager {
       role: this._playerRoles[this._deviceId] || null,
       caught: this._caughtPlayers[this._deviceId] != null,
     });
-    this._client.publish(topic, bytes, { qos: 1, retain: false, binary: true });
+    this._publishWithAlias(topic, bytes, { qos: 1, retain: false, binary: true });
   }
 
   // ============================================================
@@ -1125,7 +1230,7 @@ class RoomManager {
       c.name = this._nickname || '';
       c.color = color;
     }
-    this._client.publish(
+    this._publishWithAlias(
       `${ROOM_CONFIG.TOPIC_PREFIX}/${this._roomCode}/${this._deviceId}/circle`,
       this._encodeCircle(opCode, c),
       { qos: 1, retain: false, binary: true }
