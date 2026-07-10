@@ -500,6 +500,9 @@ class RoomManager {
           }
           if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
         }
+        // 同步房主的位置共享设定（必须在 onGameStateChange 之前，否则读到默认值）
+        if (data.burstSilent != null) this._burstSilentMin = Math.max(1, data.burstSilent);
+        if (data.burstShare != null) this._burstShareMin = Math.max(1, data.burstShare);
         // 重建游戏状态
         if (data.gameState && data.gameState !== 'idle') {
           this._gameState = data.gameState;
@@ -511,9 +514,6 @@ class RoomManager {
           this._gameStartAt = data.gameStartAt;
           if (this.onGameTimerUpdate) this.onGameTimerUpdate(data.gameStartAt);
         }
-        // 同步房主的位置共享设定
-        if (data.burstSilent != null) this._burstSilentMin = Math.max(1, data.burstSilent);
-        if (data.burstShare != null) this._burstShareMin = Math.max(1, data.burstShare);
         // 重建角色
         if (data.playerRoles) {
           for (const [playerId, role] of Object.entries(data.playerRoles)) {
