@@ -29,7 +29,7 @@ class Storage {
     } catch (e) {
       console.warn('[Storage] 保存失败:', e.message);
       if (e.name === 'QuotaExceededError') {
-        Toast.show('⚠️ 存储空间不足，请清理部分数据');
+        Toast.show(' 存储空间不足，请清理部分数据');
       }
     }
   }

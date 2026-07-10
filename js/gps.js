@@ -332,7 +332,7 @@ class GPSManager {
         }
       }
 
-      // ⚠️ 先注册监听器，再调用 startGnssListening()
+      //  先注册监听器，再调用 startGnssListening()
       // 原因：Java 端 registerGnssCallback() 会立即开始回调，
       // 如果先 start 后 addListener，第一批卫星事件会被丢弃（竞态条件）
       const gnssHandler = (event) => {
@@ -360,7 +360,7 @@ class GPSManager {
         const msg = `[${code}] ${startErr?.message || '未知'}`;
         console.warn('[GPS] startGnssListening 拒绝:', msg);
         if (code === 'PERMISSION_DENIED') {
-          Toast.show(`❌ ACCESS_FINE_LOCATION 权限被拒 — 请到系统设置→应用→CircleMap→位置，开启"始终允许"`, 6000);
+          Toast.show(` ACCESS_FINE_LOCATION 权限被拒 — 请到系统设置→应用→CircleMap→位置，开启"始终允许"`, 6000);
         }
         throw startErr;
       }
@@ -373,7 +373,7 @@ class GPSManager {
     } catch (err) {
       this._gnssInitError = err.message || 'start_failed';
       console.warn('[GPS] GNSS 插件激活失败:', err.message);
-      Toast.show(`❌ GNSS 启动失败: ${err.message || '未知错误'}`, 4000);
+      Toast.show(` GNSS 启动失败: ${err.message || '未知错误'}`, 4000);
       // 清理可能已注册的监听器
       this._removeGnssListeners();
     }
