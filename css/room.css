@@ -355,35 +355,36 @@
 .room-team-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 .room-team-card {
   background: var(--bg-input);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 .room-team-card-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
+  gap: 6px;
+  font-size: 12px;
+  min-width: 0;
 }
 .room-team-dot {
   display: inline-block;
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
   border: 2px solid rgba(255,255,255,0.15);
 }
 .room-team-dot-radar {
   display: inline-block;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   flex-shrink: 0;
 }
 [data-theme="light"] .room-team-dot {
@@ -393,30 +394,50 @@
   flex: 1;
   color: var(--text-primary);
   font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .room-team-meta {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-tertiary);
+  white-space: nowrap;
+}
+/* 团队首字共享徽章 */
+.room-team-share {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--tc, var(--accent-1));
+  flex-shrink: 0;
+  box-shadow: 0 0 0 2px var(--bg-input);
+}
+.room-team-card-header .room-team-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 .room-team-members {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 3px;
 }
 .room-team-member {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 11px;
+  gap: 3px;
+  font-size: 10px;
   color: var(--text-secondary);
   background: var(--bg-hover);
-  padding: 2px 8px;
-  border-radius: 10px;
-}
-.room-team-actions {
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
+  padding: 1px 6px;
+  border-radius: 8px;
 }
 .room-team-empty {
   text-align: center;

@@ -3538,10 +3538,12 @@ class App {
     }
 
     let html = '';
+    const broadcasterId = this.roomManager.getTeamBroadcasterId();
     Object.values(teams).forEach((team) => {
       const members = this.roomManager.getTeamMembers(team.id);
       const isMyTeam = team.id === myTeamId;
       const isCreator = team.creatorId === myInfo.id;
+      const isSharing = broadcasterId && members.some(m => m.id === broadcasterId);
       let actionBtn = '';
       if (isMyTeam) {
         actionBtn = `<button class="room-btn mini danger" data-team-id="${team.id}" data-action="leave">离开</button>`;
@@ -3558,17 +3560,22 @@ class App {
             <circle cx="12" cy="12" r="5" fill="none" stroke="${teamColor}" stroke-opacity="0.2" stroke-width="1"/>
             <circle cx="12" cy="12" r="3" fill="${teamColor}" fill-opacity="0.9"/>
           </svg>`;
+      const firstChar = (team.name || '?').trim().charAt(0) || '?';
+      const shareBadge = isSharing
+        ? `<span class="room-team-share" style="--tc:${teamColor}" title="位置共享中">${this._escapeHtml(firstChar)}</span>`
+        : '';
 
-      html += `<div class="room-team-card">
+      html += `<div class="room-team-card${isSharing ? ' is-sharing' : ''}">
         <div class="room-team-card-header">
           ${teamDot}
           <span class="room-team-name">${this._escapeHtml(team.name)}</span>
-          <span class="room-team-meta">${members.length} 人${isCreator ? ' · 队长' : ''}</span>
+          ${shareBadge}
+          <span class="room-team-meta">${members.length}人${isCreator ? ' · 队长' : ''}</span>
+          <div class="room-team-actions">${actionBtn}</div>
         </div>
         <div class="room-team-members">
           ${members.map(m => `<span class="room-team-member">${this._escapeHtml(m.name)}</span>`).join('')}
         </div>
-        <div class="room-team-actions">${actionBtn}</div>
       </div>`;
     });
     this._roomTeamList.innerHTML = html;
