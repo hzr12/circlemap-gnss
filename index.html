@@ -121,15 +121,8 @@
       </div>
 
       <!-- 多人房间 -->
-    <div class="room-section" id="room-section">
-      <!-- 测试用：指定 MQTT 服务器 -->
-      <div class="room-form" style="margin-top:6px;margin-bottom:6px">
-        <div class="room-form-row">
-          <input type="text" id="room-broker-input" class="room-input" placeholder="测试服务器 ws://host:port/mqtt（留空用默认）" autocomplete="off" enterkeyhint="done">
-        </div>
-        <div style="font-size:11px;color:var(--text-tertiary)">本地测试填 ws://localhost:8083/mqtt（留空用默认公共服务器）</div>
-      </div>
-      <!-- 创建房间表单 -->
+      <div class="room-section" id="room-section">
+        <!-- 创建房间表单 -->
         <div class="room-form" id="room-form-create">
           <div class="room-form-row">
             <input type="text" id="room-nick-input" class="room-input" placeholder="输入昵称（可选）" maxlength="12" enterkeyhint="done">
@@ -476,9 +469,9 @@
 
   <!-- MQTT（多人位置共享） -->
   <script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
-  <script src="js/room.js?t=20260710v30"></script>
+  <script src="js/room.js?t=20260710v29"></script>
 
-  <script src="js/app.js?t=20260710v84"></script>
+  <script src="js/app.js?t=20260710v83"></script>
 
 <!-- 功能提示浮层（逐个显示在对应功能旁） -->
 <div id="hint-tooltip" class="hint-tooltip" style="display:none">
