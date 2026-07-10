@@ -306,6 +306,13 @@ class App {
         this._updateCircleList(true);
       }
     });
+    this._radiusSlider.addEventListener('change', () => {
+      const val = sliderToVal(parseInt(this._radiusSlider.value, 10));
+      const sel = this.mapManager.getSelectedCircle();
+      if (sel && this.roomManager && this._roomJoined) {
+        this.roomManager.publishCircle('update', sel);
+      }
+    });
 
     this._radiusInput.addEventListener('change', () => {
       let val = parseInt(this._radiusInput.value, 10);
@@ -3449,9 +3456,11 @@ class App {
       this.mapManager.clearPlayerMarkers();
       // 重绘他人标记
       const myId = this.roomManager.getMyInfo().id;
+      const allTeams = this.roomManager.getTeams();
       Object.values(this.roomManager.getPlayers()).forEach((p) => {
         if (p.id !== myId && p.online) {
-          this.mapManager.updatePlayerMarker(p.id, p.lat, p.lng, p.name, p.color, 1, p.acc);
+          const teamLabel2 = (p.teamId && allTeams[p.teamId]) ? (allTeams[p.teamId].name || '').trim().charAt(0) || '' : '';
+          this.mapManager.updatePlayerMarker(p.id, p.lat, p.lng, p.name, p.color, 1, p.acc, teamLabel2);
         }
       });
     }
@@ -3805,7 +3814,9 @@ class App {
     const color = p.teamId && teams[p.teamId] ? teams[p.teamId].color : p.color;
     let opacity = stale ? 0.3 : p.teamSeparation ? 0.5 : 1;
     if (p.caught) opacity = 0.2; // 被抓的人几乎不可见
-    this.mapManager.updatePlayerMarker(p.id, p.lat, p.lng, p.name, color, opacity, p.acc);
+    // 有队伍时标记显示队伍首字，否则显示昵称首字
+    const teamLabel = (p.teamId && teams[p.teamId]) ? (teams[p.teamId].name || '').trim().charAt(0) || '' : '';
+    this.mapManager.updatePlayerMarker(p.id, p.lat, p.lng, p.name, color, opacity, p.acc, teamLabel);
     if (!stale && p.lat != null && p.lng != null && p.bearing != null && !p.caught) {
       this.mapManager.setPlayerPrediction(p.id, p.lat, p.lng, p.bearing, p.speed || 0, p.acc || 0);
     }

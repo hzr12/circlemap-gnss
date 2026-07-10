@@ -1181,8 +1181,8 @@ class MapManager {
   /**
    * 创建玩家标记图标（圆点 + 名称标签）
    */
-  _createPlayerIcon(color, name, opacity = 1) {
-    const label = (name || '?').charAt(0).toUpperCase();
+  _createPlayerIcon(color, name, opacity = 1, labelOverride) {
+    const label = labelOverride || (name || '?').charAt(0).toUpperCase();
     // 与"我的位置 / 标记对方"一致的同心圆点样式，颜色用队伍色；中心保留昵称首字便于辨认
     const svg = [
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">',
@@ -1219,13 +1219,13 @@ class MapManager {
    * @param {string} name 昵称
    * @param {string} color 主题色
    */
-  updatePlayerMarker(id, lat, lng, name, color, opacity = 1, accuracy) {
+  updatePlayerMarker(id, lat, lng, name, color, opacity = 1, accuracy, labelOverride) {
     if (!this.map) return;
     const latLng = new qq.maps.LatLng(lat, lng);
     if (this.playerMarkers[id]) {
       this.playerMarkers[id].setPosition(latLng);
       if (opacity !== this.playerMarkers[id]._lastOpacity) {
-        this.playerMarkers[id].setIcon(this._createPlayerIcon(color, name, opacity));
+        this.playerMarkers[id].setIcon(this._createPlayerIcon(color, name, opacity, labelOverride));
         this.playerMarkers[id]._lastOpacity = opacity;
       }
     } else {
@@ -1233,7 +1233,7 @@ class MapManager {
         position: latLng,
         map: this.map,
         draggable: false,
-        icon: this._createPlayerIcon(color, name, opacity),
+        icon: this._createPlayerIcon(color, name, opacity, labelOverride),
         title: name || '玩家',
       });
       this.playerMarkers[id]._lastOpacity = opacity;
