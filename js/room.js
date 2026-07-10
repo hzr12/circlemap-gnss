@@ -71,6 +71,7 @@ function _pickColor(seed) {
 class RoomManager {
   constructor() {
     this._client = null;
+    this._brokerOverride = null; // 测试用：自定义 MQTT Broker URL（ws://host:port/mqtt），null 用默认
     this._deviceId = this._getDeviceId();
     this._roomCode = null;
     this._nickname = '玩家';
@@ -161,6 +162,15 @@ class RoomManager {
   }
 
   /**
+   * 设置自定义 MQTT Broker（测试用）。传 null/空串恢复默认公共服务器。
+   * 需在 createRoom/joinRoom 之前调用，连接时生效。
+   * @param {string|null} url 如 ws://localhost:8083/mqtt
+   */
+  setBrokerOverride(url) {
+    this._brokerOverride = (url && url.trim()) ? url.trim() : null;
+  }
+
+  /**
    * 连接 MQTT Broker
    * @returns {Promise<void>}
    */
@@ -178,7 +188,10 @@ class RoomManager {
       const shortId = 'cm' + Math.random().toString(36).slice(2, 10);
 
       // 尝试主用 Broker；失败时按 BROKER_FALLBACKS 顺序依次尝试
-      this._tryConnect(ROOM_CONFIG.BROKER_URL, ROOM_CONFIG.BROKER_FALLBACKS.slice(), shortId, resolve, reject);
+      // 若设置了自定义 Broker（测试用），则只连它、不走公共 fallback
+      const primaryBroker = this._brokerOverride || ROOM_CONFIG.BROKER_URL;
+      const brokerFallbacks = this._brokerOverride ? [] : ROOM_CONFIG.BROKER_FALLBACKS.slice();
+      this._tryConnect(primaryBroker, brokerFallbacks, shortId, resolve, reject);
     });
   }
 

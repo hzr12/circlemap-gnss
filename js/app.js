@@ -559,6 +559,8 @@ class App {
     this._roomBurstSilent = document.getElementById('room-burst-silent');
     this._roomBurstShare = document.getElementById('room-burst-share');
     this._roomBurstPhase = document.getElementById('room-burst-phase');
+    // 测试用：自定义 MQTT 服务器输入框
+    this._roomBrokerInput = document.getElementById('room-broker-input');
 
     // 倒计时按钮
     this._roomTimerSetBtn.addEventListener('click', () => this._roomSetTimer());
@@ -3297,6 +3299,7 @@ class App {
     Toast.show('🔄 正在创建房间...');
     try {
       this.roomManager = new RoomManager();
+      this.roomManager.setBrokerOverride(this._roomBrokerInput ? (this._roomBrokerInput.value || '').trim() : null);
       this._bindRoomEvents();
       const code = await this.roomManager.createRoom(nick, spectator);
       this._roomJoined = true;
@@ -3327,6 +3330,7 @@ class App {
     Toast.show('🔄 正在加入房间...');
     try {
       this.roomManager = new RoomManager();
+      this.roomManager.setBrokerOverride(this._roomBrokerInput ? (this._roomBrokerInput.value || '').trim() : null);
       this._bindRoomEvents();
       await this.roomManager.joinRoom(code, nick, spectator);
       this._roomJoined = true;
