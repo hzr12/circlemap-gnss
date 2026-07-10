@@ -356,3 +356,42 @@
   font-family: var(--font-sans);
 }
 
+/* ---------- NPC 视角：远程圆列表 ---------- */
+.circle-section-divider {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  padding: 8px 0 4px;
+  border-top: 1px solid var(--border-color);
+  margin-top: 6px;
+}
+.circle-item.remote {
+  opacity: 0.9;
+}
+.circle-item.remote .circle-idx {
+  border: 2px solid;
+  background: transparent;
+  font-size: 10px;
+  font-weight: 700;
+}
+.npc-dist-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.npc-dist-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+.npc-dist-player {
+  font-weight: 500;
+  font-family: var(--font-sans);
+}
+.npc-dist-line .player-tag {
+  font-size: 9px;
+  padding: 0 3px;
+}
+

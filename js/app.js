@@ -3184,14 +3184,7 @@ class App {
     if (!force && this._lastCircleUpdate && now - this._lastCircleUpdate < CONFIG.LIST_THROTTLE_MS) return;
     this._lastCircleUpdate = now;
 
-    if (!circles.length) {
-      this._circleListEl.innerHTML = `<div class="empty-state">暂无同心圆，点击「绘制圆形」添加</div>`;
-      this._circleCountEl.textContent = '0';
-      return;
-    }
-
-    this._circleCountEl.textContent = circles.length;
-
+    // 本地圆列表
     let html = '';
     for (let i = 0; i < circles.length; i++) {
       const c = circles[i];
@@ -3238,7 +3231,48 @@ class App {
         </button>
       </div>`;
     }
+
+    // NPC 视角：显示其他队伍的圆 + 各队员到圆心的距离
+    if (this.roomManager && this.roomManager.isNpcTeam() && this.roomManager.isConnected()) {
+      const remoteCircles = this.roomManager.getRemoteCircles();
+      const players = this.roomManager.getPlayers();
+      const teams = this.roomManager.getTeams();
+      const myInfo = this.roomManager.getMyInfo();
+      if (remoteCircles.length) {
+        html += `<div class="circle-section-divider">其他队伍的圆</div>`;
+        remoteCircles.forEach((rc, idx) => {
+          const radiusStr = rc.maxRadius >= 1000
+            ? (rc.maxRadius / 1000).toFixed(1) + ' km'
+            : rc.maxRadius + ' m';
+          const authorName = rc.name || '玩家';
+          const teamColor = rc.color || '#888';
+          // 计算每个鬼/人队员到该圆心的距离
+          const distLines = [];
+          Object.values(players).forEach((p) => {
+            if (p.id === myInfo.id || !p.online || p.spectator || p.isNpc) return;
+            if (p.lat == null || p.lng == null) return;
+            const dist = calcDistance({ lat: p.lat, lng: p.lng }, rc.center);
+            const pName = p.name || '未知';
+            const pTeam = p.teamId && teams[p.teamId] ? teams[p.teamId].name : '';
+            const tag = p.role === 'ghost' ? '鬼' : p.role === 'hunter' ? '人' : '';
+            distLines.push(`<span class="npc-dist-line"><span class="npc-dist-player" style="color:${p.color || '#ccc'}">${this._escapeHtml(pName)}</span>${tag ? `<span class="player-tag tag-${p.role}">${tag}</span>` : ''} ${formatDistance(dist)}</span>`);
+          });
+          html += `<div class="circle-item remote" data-remote-idx="${idx}">
+            <span class="circle-idx" style="border-color:${teamColor}">R${idx + 1}</span>
+            <div class="circle-summary">
+              <div class="circle-name">${radiusStr} <span class="circle-created" style="color:${teamColor}">${this._escapeHtml(authorName)}</span></div>
+              ${distLines.length ? `<div class="circle-meta npc-dist-list">${distLines.join('')}</div>` : '<div class="circle-meta">暂无位置数据</div>'}
+            </div>
+          </div>`;
+        });
+      }
+    }
+
+    if (!html) {
+      html = `<div class="empty-state">暂无同心圆，点击「绘制圆形」添加</div>`;
+    }
     this._circleListEl.innerHTML = html;
+    this._circleCountEl.textContent = circles.length;
   }
 
   /* ============= URL 参数 ============= */
