@@ -328,22 +328,26 @@ class RoomManager {
 
       // 二进制坐标（…/<id>/pos）
       if (topic.endsWith('/pos')) {
-        this._onPositionMsg(senderId, this._decodePos(payload));
+        try { this._onPositionMsg(senderId, this._decodePos(payload)); }
+        catch (e) { console.warn('[Room] pos 解码/处理失败:', topic, e); }
         return;
       }
       // 二进制心跳（…/<id>/ping）
       if (topic.endsWith('/ping')) {
-        this._onPingMsg(senderId, this._decodePing(payload));
+        try { this._onPingMsg(senderId, this._decodePing(payload)); }
+        catch (e) { console.warn('[Room] ping 解码/处理失败:', topic, e); }
         return;
       }
       // 二进制在场（…/<id>/presence）
       if (topic.endsWith('/presence')) {
-        this._onPresenceMsg(senderId, this._decodePresence(payload));
+        try { this._onPresenceMsg(senderId, this._decodePresence(payload)); }
+        catch (e) { console.warn('[Room] presence 解码/处理失败:', topic, e); }
         return;
       }
       // 二进制圆同步（…/<id>/circle）
       if (topic.endsWith('/circle')) {
-        this._onCircleMsg(senderId, this._decodeCircle(payload));
+        try { this._onCircleMsg(senderId, this._decodeCircle(payload)); }
+        catch (e) { console.warn('[Room] circle 解码/处理失败:', topic, e); }
         return;
       }
 
@@ -494,7 +498,7 @@ class RoomManager {
         return;
       }
     } catch (e) {
-      console.warn('[Room] 消息解析失败:', e);
+      console.warn('[Room] 消息处理失败:', topic, e);
     }
   }
 
