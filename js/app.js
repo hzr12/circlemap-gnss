@@ -1133,6 +1133,11 @@ class App {
     this._isBackground = true;
     console.log('[Background] 进入后台定位模式');
 
+    // 通知 RoomManager 降低心跳频率、暂停 position 定时器
+    if (this.roomManager && this.roomManager.isConnected()) {
+      this.roomManager.setBackgroundMode(true);
+    }
+
     // 省电模式下不尝试 wakeLock（避免无谓唤醒）
     if (!this.gpsManager.isPowerSaving) {
       this._requestWakeLock();
@@ -1162,6 +1167,11 @@ class App {
    */
   _exitBackgroundMode() {
     this._isBackground = false;
+
+    // 通知 RoomManager 恢复心跳频率
+    if (this.roomManager && this.roomManager.isConnected()) {
+      this.roomManager.setBackgroundMode(false);
+    }
 
     // 停止原生后台定位（如果已启动）
     if (this._nativeBgStarted) {
@@ -1236,6 +1246,11 @@ class App {
 
       // 后台不更新 UI，但保存状态
       this._saveState();
+
+      // 后台定位回调触发 MQTT 发布（原生线程回调不受 WebView 节流）
+      if (this.roomManager && this.roomManager.isConnected()) {
+        this.roomManager.publishFromBackground();
+      }
     } catch (e) {
       // 静默
     }

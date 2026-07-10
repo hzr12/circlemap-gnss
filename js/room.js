@@ -220,7 +220,7 @@ class RoomManager {
         clean: true,
         reconnectPeriod: ROOM_CONFIG.RECONNECT_DELAY,
         connectTimeout: ROOM_CONFIG.CONNECT_TIMEOUT,
-        keepalive: 30,
+        keepalive: 300,
       };
 
       // MQTT 5.0 连接选项
@@ -1362,6 +1362,68 @@ class RoomManager {
       clearTimeout(this._offlineTimers[id]);
       delete this._offlineTimers[id];
     });
+  }
+
+  /**
+   * 切换后台模式：后台时降低心跳频率、暂停 position 发布；前台时恢复
+   * @param {boolean} enabled true=进入后台，false=回到前台
+   */
+  setBackgroundMode(enabled) {
+    if (enabled) {
+      console.log('[Room] 后台模式：降低心跳频率');
+      // 重置心跳定时器 → 60s
+      if (this._heartbeatTimer) {
+        clearInterval(this._heartbeatTimer);
+        this._heartbeatTimer = setInterval(() => {
+          this._preparePublish();
+          this._publishPing();
+        }, 60000);
+      }
+      // 重置在场广播 → 120s
+      if (this._presenceTimer) {
+        clearInterval(this._presenceTimer);
+        this._presenceTimer = setInterval(() => {
+          this._publishPresence();
+        }, 120000);
+      }
+      // 暂停 position 定时器（后台由原生回调或 JS 轮询触发）
+      if (this._posTimer) {
+        clearTimeout(this._posTimer);
+        this._posTimer = null;
+      }
+      // NPC 定时器保留（NPC 需要持续共享位置）
+    } else {
+      console.log('[Room] 前台模式：恢复正常心跳频率');
+      // 恢复心跳 → 15s
+      if (this._heartbeatTimer) {
+        clearInterval(this._heartbeatTimer);
+        this._heartbeatTimer = setInterval(() => {
+          this._preparePublish();
+          this._publishPing();
+        }, ROOM_CONFIG.HEARTBEAT_INTERVAL);
+      }
+      // 恢复在场广播 → 30s
+      if (this._presenceTimer) {
+        clearInterval(this._presenceTimer);
+        this._presenceTimer = setInterval(() => {
+          this._publishPresence();
+        }, ROOM_CONFIG.PRESENCE_INTERVAL);
+      }
+      // 恢复 position 定时器
+      this._schedulePositionTick();
+    }
+  }
+
+  /**
+   * 后台模式下单次触发 MQTT 发布（由原生后台定位回调调用）
+   * 仅发布 ping + position，不触发完整 _preparePublish
+   */
+  publishFromBackground() {
+    if (!this._connected || !this._client) return;
+    this._publishPing();
+    if (this._lastPosition) {
+      this._publishPosition();
+    }
   }
 
   _stopPublishing() {
