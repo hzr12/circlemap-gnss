@@ -102,6 +102,19 @@
   vertical-align: middle;
 }
 
+.tag-outside {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: normal;
+  font-family: var(--font-sans);
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  padding: 1px 8px;
+  border-radius: 10px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
 
 
 .tag-stale {

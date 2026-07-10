@@ -3207,8 +3207,9 @@ class App {
       let distClass = '';
       if (this.myPosition) {
         const { dist, bearingStr, within, stale, trend } = this._calcCircleTrend(c);
-        distStr = formatDistance(dist) + trend + (stale ? ' ' : '') + (this._isManualPosition ? ' ' : '') + ` 方位${bearingStr}`; // #15 手动标记
-        distClass = within === 'inrange' ? 'dist-within' : within === 'maybe' ? 'dist-maybe' : '';
+        const rangeTag = within === 'inrange' ? ' [范围内]' : within === 'maybe' ? ' [可能范围内]' : ' [范围外]';
+        distStr = formatDistance(dist) + rangeTag + trend + (stale ? ' ' : '') + (this._isManualPosition ? ' ' : '') + ` 方位${bearingStr}`; // #15 手动标记
+        distClass = within === 'inrange' ? 'dist-within' : within === 'maybe' ? 'dist-maybe' : 'dist-outside';
       }
 
       html += `<div class="circle-item${isSel ? ' active' : ''}" data-id="${c.id}">
@@ -3246,16 +3247,27 @@ class App {
             : rc.maxRadius + ' m';
           const authorName = rc.name || '玩家';
           const teamColor = rc.color || '#888';
-          // 计算每个鬼/人队员到该圆心的距离
+          // 计算每个鬼/人队员到该圆心的距离 + 范围内/外状态
           const distLines = [];
           Object.values(players).forEach((p) => {
             if (p.id === myInfo.id || !p.online || p.spectator || p.isNpc) return;
             if (p.lat == null || p.lng == null) return;
             const dist = calcDistance({ lat: p.lat, lng: p.lng }, rc.center);
             const pName = p.name || '未知';
-            const pTeam = p.teamId && teams[p.teamId] ? teams[p.teamId].name : '';
             const tag = p.role === 'ghost' ? '鬼' : p.role === 'hunter' ? '人' : '';
-            distLines.push(`<span class="npc-dist-line"><span class="npc-dist-player" style="color:${p.color || '#ccc'}">${this._escapeHtml(pName)}</span>${tag ? `<span class="player-tag tag-${p.role}">${tag}</span>` : ''} ${formatDistance(dist)}</span>`);
+            let rangeTag = '';
+            if (dist <= rc.maxRadius) {
+              rangeTag = ' <span class="tag-inrange">范围内</span>';
+            } else {
+              // 无精度数据时用保守估计 15m
+              const fallbackAcc = Math.max(this._lastAccuracy || 0, 15);
+              if ((dist - fallbackAcc) <= rc.maxRadius) {
+                rangeTag = ' <span class="tag-maybe">可能范围内</span>';
+              } else {
+                rangeTag = ' <span class="tag-outside">范围外</span>';
+              }
+            }
+            distLines.push(`<span class="npc-dist-line"><span class="npc-dist-player" style="color:${p.color || '#ccc'}">${this._escapeHtml(pName)}</span>${tag ? `<span class="player-tag tag-${p.role}">${tag}</span>` : ''} ${formatDistance(dist)}${rangeTag}</span>`);
           });
           html += `<div class="circle-item remote" data-remote-idx="${idx}">
             <span class="circle-idx" style="border-color:${teamColor}">R${idx + 1}</span>

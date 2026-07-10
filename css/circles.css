@@ -21,6 +21,11 @@
   background: var(--bg-warning-subtle);
 }
 
+.circle-dist.dist-outside {
+  color: var(--text-tertiary);
+  opacity: 0.7;
+}
+
 /* 趋势箭头样式 */
 .trend-up {
   color: var(--accent-1);
