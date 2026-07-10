@@ -220,7 +220,7 @@ class RoomManager {
         clean: true,
         reconnectPeriod: ROOM_CONFIG.RECONNECT_DELAY,
         connectTimeout: ROOM_CONFIG.CONNECT_TIMEOUT,
-        keepalive: 150,
+        keepalive: 120,
       };
 
       // MQTT 5.0 连接选项
