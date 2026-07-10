@@ -178,7 +178,11 @@ class RoomManager {
       const shortId = 'cm' + Math.random().toString(36).slice(2, 10);
 
       // 尝试主用 Broker；失败时按 BROKER_FALLBACKS 顺序依次尝试
-      this._tryConnect(ROOM_CONFIG.BROKER_URL, ROOM_CONFIG.BROKER_FALLBACKS.slice(), shortId, resolve, reject);
+      // 本地测试用：URL 带 ?broker=ws://localhost:8083/mqtt 可覆盖默认 Broker（且不再走公共 fallback）
+      const brokerParam = new URLSearchParams(window.location.search).get('broker');
+      const primaryBroker = brokerParam ? brokerParam : ROOM_CONFIG.BROKER_URL;
+      const brokerFallbacks = brokerParam ? [] : ROOM_CONFIG.BROKER_FALLBACKS.slice();
+      this._tryConnect(primaryBroker, brokerFallbacks, shortId, resolve, reject);
     });
   }
 
