@@ -102,23 +102,26 @@ class MapManager {
 
     // 点击选点 / 选取圆心
     qq.maps.event.addListener(this.map, 'click', (event) => {
-      if (this.mode !== 'click') return;
       if (!event.latLng) return;
+      const pos = { lat: event.latLng.getLat(), lng: event.latLng.getLng() };
 
-      // 先判断是否点击了已有圆心
-      const clickedPt = this._latLngToContainerPoint(event.latLng);
-      if (clickedPt) {
-        const picked = this._pickCircle(clickedPt);
-        if (picked) {
-          this.selectedCircleId = picked.id;
-          this._scheduleRedraw();
-          if (this.onCenterChange) this.onCenterChange(picked.center, picked);
-          return;
+      // 仅在 click 模式下做"选取圆心"：点到已有圆心则选中并停止（不触发选点）
+      if (this.mode === 'click') {
+        const clickedPt = this._latLngToContainerPoint(event.latLng);
+        if (clickedPt) {
+          const picked = this._pickCircle(clickedPt);
+          if (picked) {
+            this.selectedCircleId = picked.id;
+            this._scheduleRedraw();
+            if (this.onCenterChange) this.onCenterChange(picked.center, picked);
+            return;
+          }
         }
       }
 
-      this.setCenter({ lat: event.latLng.getLat(), lng: event.latLng.getLng() });
-      if (this.onMapClick) this.onMapClick({ lat: event.latLng.getLat(), lng: event.latLng.getLng() });
+      // click / room / input 等各模式下均允许点击选点（设圆心 + 多人广播）
+      this.setCenter(pos);
+      if (this.onMapClick) this.onMapClick(pos);
     });
 
     // #13 — 长按地图触发回调（用于手动设位置或快速创建圆）
