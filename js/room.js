@@ -103,6 +103,7 @@ class RoomManager {
     // 其他玩家同步过来的圆（多人可见）：key = `${author}:${cid}`
     this._remoteCircles = {};
     this._remoteCircleTimers = {};  // key → setTimeout id，10分钟后自动删除
+    this._pendingPlayerTeams = {};  // 重加入时缓存的玩家-队伍映射，玩家到位后回填
 
     // 位置共享（静默/共享交替）
     this._burstEnabled = false;
@@ -504,6 +505,8 @@ class RoomManager {
               this._players[playerId].isNpc = (this._teams[teamId] && this._teams[teamId].isNpc) || false;
             }
           }
+          // 缓存尚未到位的玩家队伍，待 position/presence 到达时回填
+          this._pendingPlayerTeams = { ...data.playerTeams };
           if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
         }
         // 同步房主的位置共享设定（必须在 onGameStateChange 之前，否则读到默认值）
@@ -518,6 +521,7 @@ class RoomManager {
         if (data.gameState && data.gameState !== 'idle') {
           this._gameState = data.gameState;
           if (data.gameStartTs) this._gameStartTs = data.gameStartTs;
+          if (data.gameEndTs) this._gameEndTs = data.gameEndTs;
           if (this.onGameStateChange) this.onGameStateChange(data.gameState);
         }
         // 重建游戏倒计时（仅在 idle 状态下，说明倒计时已设但未开始）
@@ -684,6 +688,11 @@ class RoomManager {
       teamId: null, teamBroadcaster: false, teamSeparation: false,
       spectator: false, isNpc: false, role: null, caught: false, caughtBy: null,
     };
+    // 重加入竞态：新玩家到位时回填 room_state 中缓存的队伍
+    if (!existing && this._pendingPlayerTeams[senderId]) {
+      player.teamId = this._pendingPlayerTeams[senderId];
+      delete this._pendingPlayerTeams[senderId];
+    }
     player.id = senderId;
     player.ts = pos.ts || Date.now();
     player.online = true;
@@ -744,6 +753,10 @@ class RoomManager {
     player.name = p.name || player.name || '未知';
     player.color = p.color || player.color || '#888';
     player.teamId = p.teamId || player.teamId || null;
+    // 重加入竞态：无 teamId 时回填 room_state 中缓存的队伍
+    if (!player.teamId && this._pendingPlayerTeams[senderId]) {
+      player.teamId = this._pendingPlayerTeams[senderId];
+    }
     player.spectator = p.spectator === true;
     player.isNpc = (this._teams[player.teamId] && this._teams[player.teamId].isNpc) || p.isNpc === true;
     player.role = p.role || this._playerRoles[senderId] || player.role || null;
@@ -987,6 +1000,7 @@ class RoomManager {
       burstPhaseEnd: this._burstPhaseEnd,
       playerRoles: { ...this._playerRoles },
       caughtPlayers: {},
+      gameEndTs: this._gameEndTs || 0,
     };
     for (const [id, info] of Object.entries(this._caughtPlayers)) {
       msg.caughtPlayers[id] = { caughtBy: info.caughtBy, ts: info.ts };
@@ -1217,7 +1231,10 @@ class RoomManager {
     // 移除该玩家同步过来的圆
     let circleChanged = false;
     Object.keys(this._remoteCircles).forEach((k) => {
-      if (k.indexOf(id + ':') === 0) { delete this._remoteCircles[k]; circleChanged = true; }
+      if (k.indexOf(id + ':') === 0) {
+        if (this._remoteCircleTimers[k]) { clearTimeout(this._remoteCircleTimers[k]); delete this._remoteCircleTimers[k]; }
+        delete this._remoteCircles[k]; circleChanged = true;
+      }
     });
     if (circleChanged && this.onCircleSync) this.onCircleSync(this.getRemoteCircles());
     const p = this._players[id];
@@ -1512,6 +1529,11 @@ class RoomManager {
       if (player.spectator || player.isNpc) continue;
       const role = player.teamId === ghostTeamId ? 'ghost' : 'hunter';
       this.assignRole(player.id, role);
+    }
+    // 房主不在 _players 中，需单独分配角色
+    if (this._myTeamId && !this._isNpcTeam() && !this._isSpectator) {
+      const hostRole = this._myTeamId === ghostTeamId ? 'ghost' : 'hunter';
+      this.assignRole(this._deviceId, hostRole);
     }
   }
 
@@ -1884,8 +1906,8 @@ class RoomManager {
     }
 
     const dist = calcDistance(
-      this._lastPosition.lat, this._lastPosition.lng,
-      broadcaster.lat, broadcaster.lng
+      { lat: this._lastPosition.lat, lng: this._lastPosition.lng },
+      { lat: broadcaster.lat, lng: broadcaster.lng }
     );
 
     // 回滞：300m 进入分离，100m 回到跟随

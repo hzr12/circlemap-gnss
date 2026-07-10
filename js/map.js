@@ -11,6 +11,9 @@ if (typeof CanvasRenderingContext2D !== 'undefined' &&
   CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
     const radii = typeof r === 'number' ? [r, r, r, r] : r;
     const [tl, tr, br, bl] = radii;
+    if (tl < 0 || tr < 0 || br < 0 || bl < 0) {
+      throw new TypeError('roundRect radii must not be negative');
+    }
     this.moveTo(x + tl, y);
     this.lineTo(x + w - tr, y);
     this.quadraticCurveTo(x + w, y, x + w, y + tr);
@@ -571,6 +574,7 @@ class MapManager {
     this.map.setCenter(latLng);
     if (this._rafId) cancelAnimationFrame(this._rafId);
     this._redraw();
+    this._lastRedrawTime = performance.now();
 
     if (this.onCenterChange) {
       this.onCenterChange(this.center);

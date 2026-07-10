@@ -12,7 +12,10 @@ class Toast {
    */
   static show(message, duration) {
     const existing = document.querySelector('.toast-msg');
-    if (existing) existing.remove();
+    if (existing) {
+      clearTimeout(existing._removalTimer);
+      existing.remove();
+    }
 
     const toast = document.createElement('div');
     toast.className = 'toast-msg';
@@ -24,7 +27,7 @@ class Toast {
     });
 
     const ms = duration || CONFIG.DEFAULT_TOAST_DURATION;
-    setTimeout(() => {
+    toast._removalTimer = setTimeout(() => {
       toast.classList.remove('show');
       setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
     }, ms);

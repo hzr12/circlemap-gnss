@@ -160,7 +160,7 @@ class App {
     this._startWatching();
 
     // 首次功能提示
-    setTimeout(() => this._showHints(), 1500);
+    this._hintsTimeout = setTimeout(() => this._showHints(), 1500);
 
     // 页面隐藏时切换到后台定位模式（60s 一次单次定位 + wakeLock）
     this._pageHideHandler = () => {
@@ -833,7 +833,7 @@ class App {
     if (!pos) return;
     // 恢复「点击选点」：把点击点设为圆心（不画圆；画圆只走「绘制圆形」按钮或长按地图）
     this.center = pos;
-    this.mapManager.setCenter(pos);
+    // map.js 的 click handler 已先调 setCenter，此处不重复
   }
 
   /**
@@ -2621,8 +2621,8 @@ class App {
       Storage.saveTrail(this.trail);
     }
     if (!this._dirty) return;
-    this._dirty = false;
     Storage.saveCircles(this.mapManager, this.circleRadius, this.center);
+    this._dirty = false;
   }
 
   /**
@@ -3669,22 +3669,23 @@ class App {
         if (this.roomManager) {
           this.roomManager.setSharingEnabled(true);
           this.roomManager.resumeBurstCycle(); // 根据已同步的 phase/phaseEnd 恢复定时器
+          const settings = this.roomManager.getBurstSettings();
+          const burst = this.roomManager.isBurstEnabled();
+          const phase = this.roomManager.getBurstPhase();
+          // 同步 UI 显示
+          if (this._roomBurstSilent) this._roomBurstSilent.value = settings.silent;
+          if (this._roomBurstShare) this._roomBurstShare.value = settings.share;
+          if (this._roomBurstEnable) this._roomBurstEnable.checked = burst;
+          this.roomManager.flushPositionNow();
         }
-        const settings = this.roomManager.getBurstSettings();
-        const burst = this.roomManager.isBurstEnabled();
-        const phase = this.roomManager.getBurstPhase();
-        // 同步 UI 显示
-        if (this._roomBurstSilent) this._roomBurstSilent.value = settings.silent;
-        if (this._roomBurstShare) this._roomBurstShare.value = settings.share;
-        if (this._roomBurstEnable) this._roomBurstEnable.checked = burst;
         if (this._roomSharingBtn) {
           this._roomSharingBtn.disabled = true;
           this._roomSharingBtn.textContent = ' 游戏中·带静默共享';
           this._roomSharingBtn.classList.remove('sharing-off');
         }
-        if (this.roomManager) this.roomManager.flushPositionNow();
         Toast.show(' 游戏开始！带静默位置共享已开启');
         this._updateRoomPlayerList();
+        this._updateCircleList();
       } else if (state === 'finished') {
         // 游戏结束：停止开局强制的带静默周期，恢复可手动切换；共享保持开启（与原行为一致）
         if (this.roomManager) this.roomManager.stopBurstCycle();
@@ -4287,6 +4288,14 @@ class App {
       this.roomManager.destroy();
       this.roomManager = null;
     }
+    if (this._timerInterval) {
+      clearInterval(this._timerInterval);
+      this._timerInterval = null;
+    }
+    if (this._burstPhaseInterval) {
+      clearInterval(this._burstPhaseInterval);
+      this._burstPhaseInterval = null;
+    }
     if (this.mapManager) {
       this.mapManager.clearPlayerMarkers();
     }
@@ -4326,6 +4335,7 @@ class App {
       this._bgLocateInterval = null;
     }
     this._releaseWakeLock();
+    if (this._hintsTimeout) { clearTimeout(this._hintsTimeout); this._hintsTimeout = null; }
     this.mapManager.destroy();
   }
 
