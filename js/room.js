@@ -469,6 +469,69 @@ class RoomManager {
         return;
       }
 
+      // 房间状态请求：新玩家加入时请求同步完整状态
+      if (data.type === 'request_state') {
+        this._broadcastFullState();
+        return;
+      }
+
+      // 房间状态同步：收到后重建队伍、游戏状态、角色、被抓等信息
+      if (data.type === 'room_state') {
+        if (data.id === this._deviceId) return;
+        // 重建队伍
+        if (data.teams) {
+          for (const [teamId, team] of Object.entries(data.teams)) {
+            if (!this._teams[teamId]) {
+              this._teams[teamId] = team;
+            }
+          }
+          if (this.onTeamUpdate) this.onTeamUpdate({ ...this._teams }, this._myTeamId);
+        }
+        // 重建玩家-队伍分配
+        if (data.playerTeams) {
+          for (const [playerId, teamId] of Object.entries(data.playerTeams)) {
+            if (this._players[playerId]) {
+              this._players[playerId].teamId = teamId;
+              this._players[playerId].isNpc = (this._teams[teamId] && this._teams[teamId].isNpc) || false;
+            }
+          }
+          if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+        }
+        // 重建游戏状态
+        if (data.gameState && data.gameState !== 'idle') {
+          this._gameState = data.gameState;
+          if (data.gameStartTs) this._gameStartTs = data.gameStartTs;
+          if (this.onGameStateChange) this.onGameStateChange(data.gameState);
+        }
+        // 重建游戏倒计时（仅在 idle 状态下，说明倒计时已设但未开始）
+        if (data.gameStartAt && (!data.gameState || data.gameState === 'idle')) {
+          this._gameStartAt = data.gameStartAt;
+          if (this.onGameTimerUpdate) this.onGameTimerUpdate(data.gameStartAt);
+        }
+        // 重建角色
+        if (data.playerRoles) {
+          for (const [playerId, role] of Object.entries(data.playerRoles)) {
+            this._playerRoles[playerId] = role;
+            if (this._players[playerId]) {
+              this._players[playerId].role = role;
+            }
+          }
+          if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+        }
+        // 重建被抓状态
+        if (data.caughtPlayers) {
+          for (const [playerId, info] of Object.entries(data.caughtPlayers)) {
+            this._caughtPlayers[playerId] = info;
+            if (this._players[playerId]) {
+              this._players[playerId].caught = true;
+              this._players[playerId].caughtBy = info.caughtBy;
+            }
+          }
+          if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+        }
+        return;
+      }
+
       // 离线消息（含 Broker 代发的遗嘱）：先进入宽限，避免网络抖动 / 刷新重加导致的闪烁
       if (data.offline) {
         this._schedulePendingOffline(data.id);
@@ -876,6 +939,36 @@ class RoomManager {
   }
 
   // ============================================================
+  //  房间状态同步（重新加入时恢复完整状态）
+  // ============================================================
+
+  /**
+   * 广播当前房间完整状态（队伍、游戏状态、角色、被抓等）
+   * 当收到 request_state 时调用，让重新加入的玩家同步
+   */
+  _broadcastFullState() {
+    if (!this._client || !this._connected || !this._roomCode) return;
+    const playerTeams = {};
+    for (const [id, p] of Object.entries(this._players)) {
+      if (p.teamId) playerTeams[id] = p.teamId;
+    }
+    const msg = {
+      type: 'room_state',
+      teams: { ...this._teams },
+      playerTeams,
+      gameState: this._gameState,
+      gameStartTs: this._gameStartTs || 0,
+      gameStartAt: this._gameStartAt || 0,
+      playerRoles: { ...this._playerRoles },
+      caughtPlayers: {},
+    };
+    for (const [id, info] of Object.entries(this._caughtPlayers)) {
+      msg.caughtPlayers[id] = { caughtBy: info.caughtBy, ts: info.ts };
+    }
+    this._publish(msg);
+  }
+
+  // ============================================================
   //  自适应位置下发
   // ============================================================
 
@@ -1224,6 +1317,8 @@ class RoomManager {
     // 发布加入消息
     this._publish({ join: true, name: this._nickname, color: this._color });
     this._publishPresence(); // 立即回填静态身份，避免他人等 ≤30s 才拿到
+    // 请求房间状态同步（队伍、游戏状态、角色等），让已有玩家广播完整状态
+    this._publish({ type: 'request_state' });
   }
 
   // ============================================================

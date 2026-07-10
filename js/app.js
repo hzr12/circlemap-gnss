@@ -827,21 +827,13 @@ class App {
   }
 
   /**
-   * 多人模式下点击地图：像地图选点一样，把点击点设为我的位置并共享
-   * 让无 GPS 的设备（如 PC）也能发报
+   * 多人模式下点击地图：仅选点（设圆心），不设为我的 GPS 位置
    */
   _onMapClickInRoom(pos) {
     if (!pos) return;
     // 恢复「点击选点」：把点击点设为圆心（不画圆；画圆只走「绘制圆形」按钮或长按地图）
     this.center = pos;
     this.mapManager.setCenter(pos);
-    // 多人模式：额外把点击点设为我的位置并广播（无 GPS 的 PC 也能发报）
-    if (this.roomManager && this.roomManager.isConnected() && !this.roomManager.isSpectator()) {
-      this._setManualPosition(pos);
-      this.roomManager.publishPosition(pos.lat, pos.lng, this._lastAccuracy || 999, 0, 0);
-      this.roomManager.flushPositionNow();
-      this._updateRoomPlayerList();
-    }
   }
 
   /**
