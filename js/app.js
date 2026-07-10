@@ -3496,9 +3496,19 @@ class App {
         actionBtn = `<button class="room-btn mini primary" data-team-id="${team.id}" data-action="join">加入</button>`;
       }
 
+      const teamColor = this._sanitizeColor(team.color);
+      const teamDot = isMyTeam
+        ? `<span class="room-team-dot" style="background:${teamColor}"></span>`
+        : `<svg class="room-team-dot-radar" viewBox="0 0 24 24" width="14" height="14">
+            <circle cx="12" cy="12" r="11" fill="none" stroke="${teamColor}" stroke-opacity="0.6" stroke-width="2"/>
+            <circle cx="12" cy="12" r="8" fill="none" stroke="${teamColor}" stroke-opacity="0.35" stroke-width="1.2"/>
+            <circle cx="12" cy="12" r="5" fill="none" stroke="${teamColor}" stroke-opacity="0.2" stroke-width="1"/>
+            <circle cx="12" cy="12" r="3" fill="${teamColor}" fill-opacity="0.9"/>
+          </svg>`;
+
       html += `<div class="room-team-card">
         <div class="room-team-card-header">
-          <span class="room-team-dot" style="background:${this._sanitizeColor(team.color)}"></span>
+          ${teamDot}
           <span class="room-team-name">${this._escapeHtml(team.name)}</span>
           <span class="room-team-meta">${members.length} 人${isCreator ? ' · 队长' : ''}</span>
         </div>

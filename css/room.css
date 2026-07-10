@@ -380,6 +380,12 @@
   flex-shrink: 0;
   border: 2px solid rgba(255,255,255,0.15);
 }
+.room-team-dot-radar {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
 [data-theme="light"] .room-team-dot {
   border-color: rgba(0,0,0,0.1);
 }
