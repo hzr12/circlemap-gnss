@@ -1392,6 +1392,8 @@ class RoomManager {
     this._gameStartTs = Date.now();
     this._gameEvents = [{ type: 'game_start', ts: this._gameStartTs }];
     this._publish({ type: 'game_start' });
+    // 自动按队伍分配角色：随机选一个非 NPC 队为鬼队，其余为人队
+    this._autoAssignTeamRoles();
     if (this.onGameStateChange) this.onGameStateChange('playing');
   }
 
@@ -1409,6 +1411,24 @@ class RoomManager {
       p.caughtBy = null;
       p.role = null;
     });
+  }
+
+  /**
+   * 自动按队伍分配角色（鬼抓人）：随机选一个非 NPC 队为鬼队，其余为人队
+   * NPC 队和观战者不参与
+   */
+  _autoAssignTeamRoles() {
+    const nonNpcTeams = Object.values(this._teams).filter(t => !t.isNpc);
+    if (nonNpcTeams.length < 2) return; // 至少需要2个非NPC队才能自动分配
+    // 随机选一个队为鬼队
+    const shuffled = [...nonNpcTeams].sort(() => Math.random() - 0.5);
+    const ghostTeamId = shuffled[0].id;
+    // 分配角色
+    for (const player of Object.values(this._players)) {
+      if (player.spectator || player.isNpc) continue;
+      const role = player.teamId === ghostTeamId ? 'ghost' : 'hunter';
+      this.assignRole(player.id, role);
+    }
   }
 
   /**
