@@ -2914,17 +2914,19 @@ class App {
    * 免费、无需 API key、原生 CORS
    */
   _fetchWeatherOpenMeteo(lat, lng) {
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&daily=sunrise,sunset&timezone=auto&forecast_days=1`;
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,relative_humidity_2m,apparent_temperature,wind_speed_10m,weather_code&daily=sunrise,sunset&timezone=auto&forecast_days=1`;
     return fetch(url, { signal: AbortSignal.timeout(5000) })
       .then(r => r.json())
       .then(data => {
         const cur = data.current;
         if (!cur) throw new Error('no data');
         const temp = cur.temperature_2m;
+        const feelsLike = cur.apparent_temperature;
         const humidity = cur.relative_humidity_2m;
         const wind = cur.wind_speed_10m;
         const code = cur.weather_code;
         const desc = App._weatherCodeToZh(code);
+        const feelsText = feelsLike != null ? ` 体感${Math.round(feelsLike)}°` : '';
         const humidityText = humidity != null ? ` 湿度${humidity}%` : '';
         // 日出日落
         let sunText = '';
@@ -2934,7 +2936,7 @@ class App {
           const sunset = daily.sunset[0].slice(11);
           sunText = ` 日出${sunrise} 日落${sunset}`;
         }
-        this._weatherHtml = `<span class="gps-weather" title="湿度 ${humidity}%">${temp}°C ${wind}km/h${humidityText}${desc ? ' ' + desc : ''}${sunText}</span>`;
+        this._weatherHtml = `<span class="gps-weather" title="湿度 ${humidity}%">${temp}°C${feelsText} ${wind}km/h${humidityText}${desc ? ' ' + desc : ''}${sunText}</span>`;
         this._updateStatusBar(true);
       });
   }
@@ -2952,11 +2954,13 @@ class App {
         const cur = data.current_condition?.[0];
         if (!cur) return;
         const temp = cur.temp_C;
+        const feelsLike = cur.FeelsLikeC;
         const wind = cur.windspeedKmph;
         const desc = App._wttrCodeToZh(cur.weatherCode) || cur.weatherDesc?.[0]?.value || '';
         const humidity = cur.humidity;
+        const feelsText = feelsLike ? ` 体感${Math.round(feelsLike)}°` : '';
         const humidityText = humidity ? ` 湿度${humidity}%` : '';
-        this._weatherHtml = `<span class="gps-weather" title="湿度 ${humidity}%">${temp}°C ${wind}km/h${humidityText}${desc ? ' ' + desc : ''}</span>`;
+        this._weatherHtml = `<span class="gps-weather" title="湿度 ${humidity}%">${temp}°C${feelsText} ${wind}km/h${humidityText}${desc ? ' ' + desc : ''}</span>`;
         this._updateStatusBar(true);
       })
       .catch(() => {});
