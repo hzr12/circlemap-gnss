@@ -3631,13 +3631,15 @@ class App {
     this.roomManager.onGameStateChange = (state) => {
       this._updateGameUI();
       if (state === 'playing') {
-        // 游戏开始：用玩家自己设置的「带静默」位置共享（重置静默时长，从静默相开始），而非始终开启
-        const silent = parseInt(this._roomBurstSilent.value) || 25;
-        const share = parseInt(this._roomBurstShare.value) || 5;
+        // 游戏开始：同步房主的位置共享设定（room.js 已存储，非房主从 game_start 消息同步）
+        const settings = this.roomManager.getBurstSettings();
         if (this.roomManager) {
           this.roomManager.setSharingEnabled(true);        // 带静默也需共享开
-          this.roomManager.startBurstCycle(silent, share); // 重置静默时长，从静默相开始
+          this.roomManager.startBurstCycle(settings.silent, settings.share); // 从 room.js 读取同步后的设定
         }
+        // 同步 UI 显示
+        if (this._roomBurstSilent) this._roomBurstSilent.value = settings.silent;
+        if (this._roomBurstShare) this._roomBurstShare.value = settings.share;
         if (this._roomBurstEnable) this._roomBurstEnable.checked = true;
         if (this._roomSharingBtn) {
           this._roomSharingBtn.disabled = true;
@@ -4026,7 +4028,9 @@ class App {
       if (this.roomManager.isHost()) {
         const st = this.roomManager.getGameState();
         if (st === 'idle' || st === 'finished') {
-          this.roomManager.startGame();
+          const silent = parseInt(this._roomBurstSilent.value) || 25;
+          const share = parseInt(this._roomBurstShare.value) || 5;
+          this.roomManager.startGame(silent, share);
         }
       }
       // 到 0 后自动清除定时器
@@ -4094,7 +4098,9 @@ class App {
   _roomStartGame() {
     if (!this.roomManager || !this.roomManager.isHost()) return;
     const restart = this.roomManager.getGameState() === 'finished';
-    this.roomManager.startGame();
+    const silent = parseInt(this._roomBurstSilent.value) || 25;
+    const share = parseInt(this._roomBurstShare.value) || 5;
+    this.roomManager.startGame(silent, share);
     Toast.show(restart ? ' 新一局开始！鬼去抓人吧！' : ' 游戏开始！鬼去抓人吧！');
   }
 

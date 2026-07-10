@@ -426,6 +426,9 @@ class RoomManager {
         this._gameState = 'playing';
         this._gameStartTs = data.ts || Date.now();
         this._gameEvents = [{ type: 'game_start', ts: this._gameStartTs }];
+        // 同步房主的位置共享设定
+        if (data.burstSilent != null) this._burstSilentMin = Math.max(1, data.burstSilent);
+        if (data.burstShare != null) this._burstShareMin = Math.max(1, data.burstShare);
         if (this.onGameStateChange) this.onGameStateChange('playing');
         return;
       }
@@ -508,6 +511,9 @@ class RoomManager {
           this._gameStartAt = data.gameStartAt;
           if (this.onGameTimerUpdate) this.onGameTimerUpdate(data.gameStartAt);
         }
+        // 同步房主的位置共享设定
+        if (data.burstSilent != null) this._burstSilentMin = Math.max(1, data.burstSilent);
+        if (data.burstShare != null) this._burstShareMin = Math.max(1, data.burstShare);
         // 重建角色
         if (data.playerRoles) {
           for (const [playerId, role] of Object.entries(data.playerRoles)) {
@@ -959,6 +965,8 @@ class RoomManager {
       gameState: this._gameState,
       gameStartTs: this._gameStartTs || 0,
       gameStartAt: this._gameStartAt || 0,
+      burstSilent: this._burstSilentMin,
+      burstShare: this._burstShareMin,
       playerRoles: { ...this._playerRoles },
       caughtPlayers: {},
     };
@@ -1264,6 +1272,7 @@ class RoomManager {
   isBurstEnabled() { return this._burstEnabled; }
   getBurstPhase() { return this._burstPhase; }
   getBurstPhaseEnd() { return this._burstPhaseEnd; }
+  getBurstSettings() { return { silent: this._burstSilentMin, share: this._burstShareMin }; }
 
   // ============================================================
   //  观战模式
@@ -1383,15 +1392,20 @@ class RoomManager {
   /**
    * 开始游戏（房主专用）
    * 广播 game_start → 所有人进入 playing 状态
+   * @param {number} [burstSilent] 静默时长（分钟），随 game_start 同步给所有人
+   * @param {number} [burstShare] 共享时长（分钟），随 game_start 同步给所有人
    */
-  startGame() {
+  startGame(burstSilent, burstShare) {
     if (!this._isHost) return;
     if (this._gameState === 'playing') return; // 进行中不允许重复开始；idle / finished 均可开新局
     this._resetGameState();
     this._gameState = 'playing';
     this._gameStartTs = Date.now();
     this._gameEvents = [{ type: 'game_start', ts: this._gameStartTs }];
-    this._publish({ type: 'game_start' });
+    // 同步房主的位置共享设定
+    if (burstSilent != null) this._burstSilentMin = Math.max(1, burstSilent);
+    if (burstShare != null) this._burstShareMin = Math.max(1, burstShare);
+    this._publish({ type: 'game_start', burstSilent: this._burstSilentMin, burstShare: this._burstShareMin });
     // 自动按队伍分配角色：随机选一个非 NPC 队为鬼队，其余为人队
     this._autoAssignTeamRoles();
     if (this.onGameStateChange) this.onGameStateChange('playing');
