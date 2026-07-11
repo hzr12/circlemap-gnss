@@ -16,10 +16,11 @@
 - **URL 参数** — `?lat=39.9&lng=116.4&radius=1000` 直接打开指定位置
 
 ### GPS 定位
-- **短按** GPS 按钮 → 单次定位，飞到当前位置
-- **长按** GPS 按钮 → 切换持续追踪
-- **WGS84 → GCJ-02** 纯前端纠偏（双重保障：官方 API + 手写算法）
-- **精度环** — 地图上显示定位精度范围
+- **短按** GPS 按钮 — 单次定位，飞到当前位置
+- **长按** GPS 按钮 — 切换持续追踪
+- **WGS84 -> GCJ-02** 纯前端纠偏（腾讯地图官方 API + 手写 Haversine 降级）
+- **精度环** — 地图上显示定位精度范围圆环
+- **卡尔曼滤波** — 一维卡尔曼（位置+速度），Q/R 自适应 accuracy 抑制漂移
 - **自动降级** — 连续超时 5 次自动切低精度，信号恢复后自动切回
 - **位置过期提醒** — 10 分钟未更新自动提示 + 自动重定位
 
@@ -28,7 +29,7 @@
 - 预设半径按钮 — 100m/500m/1km/3km/5km/10km 一键切换
 - 多层同心圆绘制（默认每 2.5km 一圈）
 - **重叠染色加深** — 多个圆重叠区域颜色自然加深（离屏 Canvas 双 Pass）
-- 圆列表 — 查看、选中、编辑半径、删除（均支持撤销）
+- 圆列表 — 查看、选中、编辑半径、删除（均支持 5 秒撤销）
 - 信息面板 — 圆心坐标、半径、面积、圈数
 
 ### 位置追踪
@@ -41,13 +42,19 @@
 
 ### 多人联网对战（MQTT 5.0）
 - **房间系统** — 创建/加入房间，4-8 人实时对战
+- **自动重连** — 页面加载后 24 小时内自动检测并重连上次房间（localStorage 持久化），5 秒内短时刷新跳过让 MQTT 重连自行恢复
 - **队伍模式** — 鬼（追逐方）vs 人（逃跑方），开局自动分配
+- **队伍首字标记** — 地图上玩家标记显示队伍名首字符，快速区分阵营
 - **NPC 观战** — 独立旁观视角，可查看所有队伍圆心距离 + 每人范围内/外状态
+- **团队健康度面板** — 实时显示全队在线状态、电量百分比、GPS 精度、最后更新时间，颜色分级一目了然
+- **玩家精度圈** — 远程玩家的位置标记附带精度范围圈（主题色半透明）
+- **路径预测开关** — 可选的玩家运动路径预测椭圆（10s/30s 投影），滑动开关控制
 - **圆列表共享** — 各队伍同心圆在房间内同步，所有人可见
 - **远程圆过期** — 10 分钟无更新自动删除
+- **半径滑块松手同步** — 编辑半径松手后通过 `change` 事件立即同步到其他玩家
 - **MQTT 5.0 topicAlias** — 上行 topic 开销从 ~50B 降至 ~3B，8 人 1 小时总流量 ~142KB
 - **后台保活** — 锁屏/切后台后心跳降频（60s）+ MQTT keepalive 5 分钟 + 原生回调驱动发布，不断连
-- **自动重连** — 连接断开后 5s 自动重连，支持 Broker 降级（MQTT 5.0 → 3.1.1）+ 多 Broker 备用
+- **自动重连** — 连接断开后 5s 自动重连，支持 Broker 降级（MQTT 5.0 -> 3.1.1）+ 多 Broker 备用
 - **共享设定同步** — 房主修改设定（半径、共享开关等）后全员同步
 - **重加入恢复** — 断线重连后自动 request_state 同步完整房间状态
 
@@ -59,7 +66,7 @@
 ### 轨迹记录
 - 记录移动轨迹，10m 自适应采样 + 精度联动抖动过滤
 - **轨迹平滑** — 滑动窗口平均算法（窗口 5）
-- **速度着色** — 轨迹线按速度分段染色（蓝→青→黄绿→橙→红）
+- **速度着色** — 轨迹线按速度分段染色（蓝 -> 青 -> 黄绿 -> 橙 -> 红）
 - **速度曲线** — Chart.js 实时折线图
 - GPX 1.1 文件导出（WGS84 坐标优先）
 - **轨迹统计** — 总距离、总时长、平均/最高速度、起止时间
@@ -73,7 +80,8 @@
 
 ### 界面
 - 深色/浅色双主题 — CSS 变量，一键切换
-- 玻璃质感 · 移动优先 · 触屏优化
+- 主色可选 — 青/绿/蓝/紫/橙 五种主题色
+- 玻璃质感，移动优先，触屏优化
 - 移动端面板折叠 — 点击把手收起/展开
 - 响应横竖屏旋转
 - 桌面端浮动面板（380px 宽，右下角悬浮）
@@ -88,6 +96,7 @@
 - 主用 Open-Meteo（免费、无 key、原生 CORS）
 - 降级到 wttr.in（中文）
 - 显示温度、湿度、风速、天气描述、日出日落
+- **体感温度** — 显示体感温度（`apparent_temperature` + `FeelsLikeC`）
 
 ---
 
@@ -130,14 +139,16 @@ CI 会自动构建并发布到 GitHub Release。
 | 地图引擎 | 腾讯地图 JavaScript API v2（`qq.maps.*`） |
 | UI | 纯 ES6 Class，零框架 |
 | 同心圆渲染 | Canvas 叠加层（离屏双 Pass） |
-| 坐标纠偏 | WGS84 ↔ GCJ-02（官方 API + 纯 JS 降级） |
+| 坐标纠偏 | WGS84 -> GCJ-02（官方 API + 纯 JS 降级） |
 | GPS | 浏览器 Geolocation API |
+| 滤波 | 一维卡尔曼滤波器（位置+速度，Q/R 自适应） |
 | 多人通信 | MQTT 5.0 over WebSocket（mqtt.js） |
 | Broker | EMQX 公共 Broker（主用）+ HiveMQ / Mosquitto（备用） |
 | 轨迹图表 | Chart.js 4 |
 | 持久化 | localStorage |
 | 原生壳 | Capacitor v8 Android |
 | GNSS | 自定义 Capacitor 插件（原生端） |
+| 后台定位 | @capgo/background-geolocation |
 | CI/CD | GitHub Actions（自动构建+签名+发布） |
 
 ---
@@ -145,30 +156,33 @@ CI 会自动构建并发布到 GitHub Release。
 ## 目录结构
 
 ```
-├── index.html              # 唯一入口
-├── css/
-│   ├── theme.css           # CSS 变量 + 主色方案
+├── index.html              # 唯一入口（加载全部 CSS/JS 及 CDN 库）
+├── css/                    # 12 个 CSS 文件（按功能拆分）
+│   ├── fonts.css           # 字体定义
+│   ├── theme.css           # CSS 变量 + 主色方案 + 深色/浅色主题
 │   ├── base.css            # Reset + 基础样式
-│   ├── map.css             # 地图容器 + Canvas
-│   ├── panel.css           # 面板结构 + 坐标输入 + 半径
-│   ├── gps.css             # GPS 状态条 + 信号强度
-│   ├── circles.css         # 圆列表 + 距离标记
+│   ├── map.css             # 地图容器 + Canvas 叠加层
+│   ├── panel.css           # 面板结构 + 坐标输入 + 半径控制
+│   ├── gps.css             # GPS 状态条 + 信号强度 + GNSS
+│   ├── circles.css         # 圆列表 + 距离标记 + 范围标签
 │   ├── trail.css           # 轨迹记录 + 速度曲线
 │   ├── toast-modal.css     # Toast + Modal
 │   ├── onboarding.css      # 首次引导
-│   └── responsive.css      # 响应式布局
-├── js/
-│   ├── config.js           # 配置常量 + 工具函数
-│   ├── app.js              # 主控制器（UI 绑定 + 逻辑编排）
-│   ├── map.js              # 地图管理器（腾讯地图 + Canvas 同心圆渲染）
-│   ├── gps.js              # GPS 定位（Geolocation API + GNSS 插件）
-│   ├── room.js             # 多人房间管理（MQTT 5.0 通信 + 队伍 + NPC）
-│   ├── trail.js            # 轨迹记录
-│   ├── toast.js            # 消息提示
-│   └── storage.js          # localStorage 持久化
+│   ├── responsive.css      # 响应式布局
+│   └── room.css            # 多人房间 UI（队伍、游戏、健康度面板）
+├── js/                     # 9 个 JS 文件（严格加载顺序）
+│   ├── config.js           # CONFIG 全局常量 + 工具函数
+│   ├── toast.js            # Toast 消息提示
+│   ├── storage.js          # localStorage 持久化
+│   ├── trail.js            # 轨迹点存储、自适应采样、距离计算
+│   ├── map.js              # MapManager（腾讯地图 + Canvas 同心圆渲染）
+│   ├── gps.js              # GPSManager（Geolocation API + 卡尔曼滤波 + GNSS 桥接）
+│   ├── mqtt.js             # mqtt.js CDN（MQTT 5.0 客户端，外部库）
+│   ├── room.js             # RoomManager（MQTT 通信 + 队伍/NPC/游戏控制）
+│   └── app.js              # App 主控制器（UI 绑定 + 逻辑编排 + 启动入口）
 ├── native/
 │   ├── capacitor.config.json
-│   ├── gnss-plugin/        # 自定义 Capacitor GNSS 插件
+│   ├── gnss-plugin/        # 自定义 Capacitor GNSS 插件（TypeScript）
 │   └── package.json
 ├── .github/workflows/
 │   └── android-build.yml   # Android APK 构建 CI
@@ -181,13 +195,16 @@ CI 会自动构建并发布到 GitHub Release。
 ## 注意事项
 
 - **联网要求**：腾讯地图 API 需要联网加载，内网/断网不可用
-- **坐标纠偏**：浏览器返回 WGS84，腾讯地图使用 GCJ-02，纠偏有 5 秒超时降级
+- **坐标纠偏**：浏览器返回 WGS84，腾讯地图使用 GCJ-02，纠偏有 5 秒超时降级到手写算法
 - **GPS 节流**：连续定位间隔最少 5 秒
-- **GNSS 插件**：仅在 Android 原生端可用，浏览器 Web 端自动隐藏
-- **轨迹上限**：最多 500 个采样点
+- **GNSS 插件**：仅在 Android 原生端可用，浏览器 Web 端自动隐藏；注册顺序必须先 `addListener` 后 `startGnssListening`
+- **轨迹上限**：最多 500 个采样点（`TRAIL_MAX_POINTS`）
 - **多人模式**：MQTT Broker 为公共服务器，消息不可加密，无 SLA 保障；8 人以内低频场景完全够用
 - **后台保活**：锁屏后 MQTT 心跳自动降频（60s），keepalive 5 分钟，原生定位回调驱动发布；10 小时可玩
 - **最大房间人数**：8 人（受 EMQX 公共 Broker 连接速率限制）
+- **缓存版本戳**：所有 CSS/JS 引用使用 `?t=YYYYMMDDvN` 格式手动管理版本，修改文件后必须同步更新
+- **脚本加载顺序**：`config.js -> toast.js -> storage.js -> trail.js -> map.js -> gps.js -> [mqtt.js CDN] -> room.js -> app.js`，不可调换
+- **MQTT Broker**：`test.mosquitto.org` 的 wss(8081) 已被官方禁用，仅 ws 明文可用；浏览器混合内容策略会拦截 ws://，故仅 file:// 或 http:// 页面下可达
 
 ---
 
