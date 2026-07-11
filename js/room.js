@@ -95,6 +95,11 @@ class RoomManager {
     this._presenceTimer = null;     // 在场广播定时器（setInterval）
     this._npcTimer = null;          // NPC 队强制共享定时器（setInterval）
     this._offlineTimers = {};       // 离线宽限定时器（id → setTimeout），防抖避免抖动/重加闪烁
+
+    // 玩家更新合并（H1）：微任务级合并，同一 tick 内多次变更只触发一次 onPositionUpdate 回调
+    this._updateScheduled = false;
+    this._changedPlayers = new Set(); // 自上次通知以来变更的玩家 ID
+
     this._lastPosition = null;      // 最近一次 GPS 坐标
     this._lastSentPos = null;       // 最近一次实际下发的坐标（自适应位移判定用）
     this._lastSentSpeed = null;     // 最近一次下发时的速度（静止→移动 瞬间判定用）
@@ -154,6 +159,46 @@ class RoomManager {
     this.onCircleSync = null;       // (circles[]) → void，其他玩家的圆变更
     this.onPlayerCaught = null;     // (targetId, ghostId) → void
     this.onGameStatsReady = null;   // (stats) → void
+  }
+
+  // ════════════════════════════════════════════════════════════
+  //  内部辅助（H1/H2 优化）
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * H2: 获取/创建玩家对象 — 去重 _onPositionMsg / _onPingMsg / _onPresenceMsg
+   * 三段重复的默认字段 + { ...existing } 浅拷贝。
+   * 若玩家已存在则就地更新（避免旧引用），不存在则用默认值初始化。
+   */
+  _ensurePlayer(id) {
+    if (this._players[id]) return this._players[id];
+    const p = {
+      id, name: '未知', color: '#888', online: true, sharing: true,
+      teamId: null, teamBroadcaster: false, teamSeparation: false,
+      spectator: false, isNpc: false, role: null, caught: false, caughtBy: null,
+    };
+    this._players[id] = p;
+    return p;
+  }
+
+  /**
+   * H1: 安排一次 onPositionUpdate 回调（同一 tick 内合并）
+   * 使用微任务（Promise.resolve().then）将同一 tick 内多次变更合并为一次全量通知。
+   * 若传入 changedId，则跟踪变更玩家，回调第二参数为 changedIds Set，便于消费者增量重绘。
+   * @param {string} [changedId] 发生变更的玩家 ID（可选）
+   */
+  _schedulePositionUpdate(changedId) {
+    if (!this.onPositionUpdate) return;
+    if (changedId) this._changedPlayers.add(changedId);
+    if (this._updateScheduled) return;
+    this._updateScheduled = true;
+    Promise.resolve().then(() => {
+      if (!this._updateScheduled) return;
+      this._updateScheduled = false;
+      const changed = this._changedPlayers;
+      this._changedPlayers = new Set();
+      this.onPositionUpdate({ ...this._players }, changed.size ? changed : null);
+    });
   }
 
   /**
@@ -225,6 +270,7 @@ class RoomManager {
         reconnectPeriod: ROOM_CONFIG.RECONNECT_DELAY,
         connectTimeout: ROOM_CONFIG.CONNECT_TIMEOUT,
         keepalive: 120,
+        wsOptions: { perMessageDeflate: true },
       };
 
       // MQTT 5.0 连接选项
@@ -439,7 +485,7 @@ class RoomManager {
           this._players[data.id].teamId = data.teamId;
         }
         if (this.onTeamUpdate) this.onTeamUpdate({ ...this._teams }, this._myTeamId);
-        if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+        this._schedulePositionUpdate();
         return;
       }
 
@@ -448,7 +494,7 @@ class RoomManager {
           this._players[data.id].teamId = data.teamId;
         }
         if (this.onTeamUpdate) this.onTeamUpdate({ ...this._teams }, this._myTeamId);
-        if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+        this._schedulePositionUpdate();
         return;
       }
 
@@ -457,7 +503,7 @@ class RoomManager {
           this._players[data.id].teamId = null;
         }
         if (this.onTeamUpdate) this.onTeamUpdate({ ...this._teams }, this._myTeamId);
-        if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+        this._schedulePositionUpdate();
         return;
       }
 
@@ -471,7 +517,7 @@ class RoomManager {
             this._myTeamId = null;
           }
           if (this.onTeamUpdate) this.onTeamUpdate({ ...this._teams }, this._myTeamId);
-          if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+          this._schedulePositionUpdate();
         }
         return;
       }
@@ -546,7 +592,7 @@ class RoomManager {
           this._players[targetId].caughtBy = ghostId;
         }
         if (this.onPlayerCaught) this.onPlayerCaught(targetId, ghostId);
-        if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+        this._schedulePositionUpdate();
         return;
       }
 
@@ -578,7 +624,7 @@ class RoomManager {
           }
           // 缓存尚未到位的玩家队伍，待 position/presence 到达时回填
           this._pendingPlayerTeams = { ...data.playerTeams };
-          if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+          this._schedulePositionUpdate();
         }
         // 同步房主的位置共享设定（必须在 onGameStateChange 之前，否则读到默认值）
         if (data.burstSilent != null) this._burstSilentMin = Math.max(1, data.burstSilent);
@@ -608,7 +654,7 @@ class RoomManager {
               this._players[playerId].role = role;
             }
           }
-          if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+          this._schedulePositionUpdate();
         }
         // 重建被抓状态
         if (data.caughtPlayers) {
@@ -619,7 +665,7 @@ class RoomManager {
               this._players[playerId].caughtBy = info.caughtBy;
             }
           }
-          if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+          this._schedulePositionUpdate();
         }
         return;
       }
@@ -635,21 +681,14 @@ class RoomManager {
         this._cancelPendingOffline(data.id);
         const existing = this._players[data.id];
         const isNew = !existing;
-        const player = existing ? { ...existing } : {
-          id: data.id, name: data.name || '未知', color: data.color || '#888',
-          online: true, sharing: true, teamId: null, teamBroadcaster: false,
-          teamSeparation: false, spectator: false, isNpc: false,
-          role: null, caught: false, caughtBy: null,
-        };
-        player.id = data.id;
-        player.name = data.name || player.name || '未知';
-        player.color = data.color || player.color || '#888';
+        const player = this._ensurePlayer(data.id);
+        if (data.name) player.name = data.name;
+        if (data.color) player.color = data.color;
         player.online = true;
         if (data.teamId) player.teamId = data.teamId;
         player.isNpc = (this._teams[player.teamId] && this._teams[player.teamId].isNpc) || false;
-        this._players[data.id] = player;
         if (isNew && this.onPlayerJoin) this.onPlayerJoin(data.id, player.name);
-        if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+        this._schedulePositionUpdate(data.id);
         return;
       }
     } catch (e) {
@@ -754,17 +793,12 @@ class RoomManager {
     this._cancelPendingOffline(senderId);
     const existing = this._players[senderId];
     const isNew = !existing;
-    const player = existing ? { ...existing } : {
-      id: senderId, name: '未知', color: '#888', online: true, sharing: true,
-      teamId: null, teamBroadcaster: false, teamSeparation: false,
-      spectator: false, isNpc: false, role: null, caught: false, caughtBy: null,
-    };
+    const player = this._ensurePlayer(senderId);
     // 重加入竞态：新玩家到位时回填 room_state 中缓存的队伍
     if (!existing && this._pendingPlayerTeams[senderId]) {
       player.teamId = this._pendingPlayerTeams[senderId];
       delete this._pendingPlayerTeams[senderId];
     }
-    player.id = senderId;
     player.ts = pos.ts || Date.now();
     player.online = true;
     player.lat = pos.lat;
@@ -777,9 +811,8 @@ class RoomManager {
     player.role = this._playerRoles[senderId] || player.role || null;
     player.caught = (this._caughtPlayers[senderId] != null) || player.caught || false;
     player.caughtBy = this._caughtPlayers[senderId] ? this._caughtPlayers[senderId].caughtBy : (player.caughtBy || null);
-    this._players[senderId] = player;
     if (isNew && this.onPlayerJoin) this.onPlayerJoin(senderId, player.name);
-    if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+    this._schedulePositionUpdate(senderId);
   }
 
   _onPingMsg(senderId, flags) {
@@ -787,12 +820,7 @@ class RoomManager {
     this._cancelPendingOffline(senderId);
     const existing = this._players[senderId];
     const isNew = !existing;
-    const player = existing ? { ...existing } : {
-      id: senderId, name: '未知', color: '#888', online: true, sharing: true,
-      teamId: null, teamBroadcaster: false, teamSeparation: false,
-      spectator: false, isNpc: false, role: null, caught: false, caughtBy: null,
-    };
-    player.id = senderId;
+    const player = this._ensurePlayer(senderId);
     player.online = true;
     player.sharing = flags.sharing;
     player.spectator = flags.spectator;
@@ -806,25 +834,18 @@ class RoomManager {
       this._myAmBroadcaster = false;
       this._lastBroadcastTs = Date.now();
     }
-    this._players[senderId] = player;
     if (isNew && this.onPlayerJoin) this.onPlayerJoin(senderId, player.name);
-    if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+    this._schedulePositionUpdate(senderId);
   }
 
   // 在场消息：低频回填静态身份（name/color/teamId/spectator/isNpc/role/caught）
   _onPresenceMsg(senderId, p) {
     if (senderId === this._deviceId) return;
     this._cancelPendingOffline(senderId);
-    const existing = this._players[senderId];
-    const player = existing ? { ...existing } : {
-      id: senderId, name: p.name || '未知', color: p.color || '#888',
-      online: true, sharing: true, teamId: null, teamBroadcaster: false,
-      teamSeparation: false, spectator: false, isNpc: false,
-      role: null, caught: false, caughtBy: null,
-    };
-    player.id = senderId;
-    player.name = p.name || player.name || '未知';
-    player.color = p.color || player.color || '#888';
+    const player = this._ensurePlayer(senderId);
+    // 不覆盖名字和颜色（保留首次收到时的值，避免后续空值覆盖）
+    if (p.name) player.name = p.name;
+    if (p.color) player.color = p.color;
     player.teamId = p.teamId || player.teamId || null;
     // 重加入竞态：无 teamId 时回填 room_state 中缓存的队伍
     if (!player.teamId && this._pendingPlayerTeams[senderId]) {
@@ -835,8 +856,7 @@ class RoomManager {
     player.role = p.role || this._playerRoles[senderId] || player.role || null;
     player.caught = p.caught === true || (this._caughtPlayers[senderId] != null) || player.caught || false;
     player.caughtBy = this._caughtPlayers[senderId] ? this._caughtPlayers[senderId].caughtBy : (player.caughtBy || null);
-    this._players[senderId] = player;
-    if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+    this._schedulePositionUpdate(senderId);
   }
 
   // ============================================================
@@ -1378,7 +1398,7 @@ class RoomManager {
     p.online = false;
     if (this.onPlayerLeave) this.onPlayerLeave(id, p.name);
     delete this._players[id];
-    if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+    this._schedulePositionUpdate();
   }
 
   _cancelPendingOffline(id) {
@@ -1763,7 +1783,7 @@ class RoomManager {
     }
     this._publish({ type: 'role_assign', targetId, role });
     if (this.onRoleAssigned) this.onRoleAssigned(targetId, role, this._deviceId);
-    if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+    this._schedulePositionUpdate();
   }
 
   /**
@@ -1805,7 +1825,7 @@ class RoomManager {
     }
     this._publish({ type: 'player_caught', targetId, ghostId });
     if (this.onPlayerCaught) this.onPlayerCaught(targetId, ghostId);
-    if (this.onPositionUpdate) this.onPositionUpdate({ ...this._players });
+    this._schedulePositionUpdate();
   }
 
   /**

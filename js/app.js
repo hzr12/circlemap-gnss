@@ -44,6 +44,7 @@ class App {
     this._lastRelocateAttempt = 0; // 上次自动重定位时间戳
     this._lastRawPos = null;     // 上次原始 WGS84 坐标，用于移动距离判断
     this._lastDistPos = null;    // 上次刷新距离的位置，用于 5m 位移节流
+    this._lastFullUpdate = 0;    // 上次全量UI更新时间戳（链式节流）
     this._panelCollapsed = window.innerWidth <= CONFIG.MOBILE_BREAKPOINT; // 移动端面板默认收起
     this._watchingBeforeHide = false; // 切后台前是否在追踪
     this._restoringView = false;      // 从后台恢复时不飞地图
@@ -64,6 +65,9 @@ class App {
     this._dirty = false;              // 是否有未持久化的状态变更
     this._trailDirty = false;         // 轨迹是否有未持久化的变更
     this._lastGcj02ErrorToast = 0;    // 坐标转换失败 Toast 防抖时间戳
+    this._lastWeatherFetch = 0;       // 上次天气请求时间戳（节流）
+    this._lastWeatherPos = null;      // 上次天气请求时的位置
+    this._lastChartUpdate = 0;        // 上次速度曲线更新时间戳
     this._intervalId = null;          // 定时刷新 interval ID
     this._resizeHandler = null;       // 地图 resize 事件处理器引用
     this._visibilityHandler = null;   // visibilitychange 处理器引用
@@ -1013,7 +1017,7 @@ class App {
       if (this._isWatching && pos.speed != null) {
         const elapsed = (Date.now() - this._speedTrackingStart) / 1000;
         this._speedHistory.push({ x: Math.round(elapsed * 10) / 10, y: pos.speed });
-        if (this._speedHistory.length > 1000) this._speedHistory.shift();
+        if (this._speedHistory.length > 500) this._speedHistory.shift();
         this._updateSpeedChart();
       }
       this._processQueue = this._processQueue
@@ -1385,17 +1389,22 @@ class App {
 
   _updateSpeedChart() {
     if (!this._speedChart) return;
+    // 节流：每 5 个位置点或间隔 > 30s 才更新
+    const now = Date.now();
+    if (this._lastChartUpdate && (this._speedHistory.length % 5 !== 0) && now - this._lastChartUpdate < 30000) return;
+    this._lastChartUpdate = now;
     const data = this._speedChart.data.datasets[0].data;
-    const last = this._speedHistory[this._speedHistory.length - 1];
-    data.push(last);
-    // 保留最近 120 个点
-    if (data.length > 120) data.shift();
+    // 降采样：只取最近 120 个点（每 5s 一个点 → 10 分钟历史）
+    const window = this._speedHistory.slice(-120);
+    data.length = 0;
+    for (const p of window) data.push(p);
     this._speedChart.update('none');
-    // 更新信息文字
+    // 更新信息文字（降采样计算）
     const infoEl = document.getElementById('speed-chart-info');
-    if (infoEl && last) {
-      const avg = this._speedHistory.reduce((s, p) => s + p.y, 0) / this._speedHistory.length;
-      const max = Math.max(...this._speedHistory.map(p => p.y));
+    if (infoEl && window.length) {
+      const last = window[window.length - 1];
+      const avg = window.reduce((s, p) => s + p.y, 0) / window.length;
+      const max = Math.max(...window.map(p => p.y));
       infoEl.textContent = `当前 ${last.y.toFixed(1)} 平均 ${avg.toFixed(1)} 最高 ${max.toFixed(1)} m/s`;
     }
   }
@@ -2134,13 +2143,27 @@ class App {
       }
     }
 
-    // 位移 >N 米才重建圆列表（省性能）
-    if (!this._lastDistPos || calcDistance(convPos, this._lastDistPos) > CONFIG.MIN_DISPLACEMENT_M) {
+    // 链式节流：大位移触发全量UI更新，微动只更新距离数字
+    const now = Date.now();
+    const moved = this._lastDistPos ? calcDistance(convPos, this._lastDistPos) : Infinity;
+    if (moved > CONFIG.MIN_DISPLACEMENT_M || !this._lastDistPos) {
       this._lastDistPos = convPos;
       this._updateCircleList(true);
+      this._updateStatusBar(true);
+      this._updateInfo();
+      this._lastFullUpdate = now;
+    } else if (now - this._lastFullUpdate > 30000) {
+      // 30s 强制一次全量更新（保证时间/过期状态准确）
+      this._lastDistPos = convPos;
+      this._updateCircleList(true);
+      this._updateStatusBar(true);
+      this._updateInfo();
+      this._lastFullUpdate = now;
+    } else {
+      // 微动：仅刷新状态条（节流）+ 叠加层标注
+      this._updateStatusBar();
+      this.mapManager._scheduleRedrawOverlay();
     }
-    this._updateStatusBar(true); // 刷新状态条（含 elapsed 时间）
-    this._updateInfo();
 
     // 多人房间：发送位置
     if (this.roomManager && this.roomManager.isConnected()) {
@@ -2907,7 +2930,17 @@ class App {
    */
   _fetchWeather() {
     if (!navigator.onLine) return;
-    if (this.gpsManager.isPowerSaving) return; // 省电模式下跳过天气请求
+    if (this.gpsManager.isPowerSaving) return;
+    // 节流：5 分钟内不重复请求
+    const now = Date.now();
+    if (this._lastWeatherFetch && now - this._lastWeatherFetch < 300000) return;
+    // 位移 < 1km 不刷新（坐标精度不需要）
+    if (this._lastWeatherPos && this.myPosition) {
+      const d = calcDistance(this.myPosition, this._lastWeatherPos);
+      if (d < 1000 && now - this._lastWeatherFetch < 1800000) return;
+    }
+    this._lastWeatherFetch = now;
+    this._lastWeatherPos = this.myPosition ? { lat: this.myPosition.lat, lng: this.myPosition.lng } : this._lastWeatherPos;
     const pos = this.myPosition;
     const lat = pos?.lat ?? 39.9;
     const lng = pos?.lng ?? 116.4;
@@ -3067,6 +3100,8 @@ class App {
    */
   _updateInfo() {
     const infoArea = document.getElementById('infoArea');
+    // 无选中圆时跳过全部 DOM 操作（60s 定时器也会调用此方法）
+    if (this.mapManager.selectedCircleId === null && infoArea.classList.contains('hidden')) return;
     const sel = this.mapManager.getSelectedCircle();
 
     if (!sel) {
@@ -3786,20 +3821,34 @@ class App {
   _bindRoomEvents() {
     if (!this.roomManager) return;
 
-    this.roomManager.onPositionUpdate = (players) => {
+    this.roomManager.onPositionUpdate = (players, changedIds) => {
       this._updateRoomPlayerList();
       this._updateRoomHealthPanel();
-      // 更新地图标记（带游戏可见性规则）
       const myInfo = this.roomManager.getMyInfo();
       const now = Date.now();
       const POSITION_STALE_MS = 30000;
-      this.mapManager.clearPlayerMarkers();
-      this.mapManager.clearPlayerPredictions();
-      Object.values(players).forEach((p) => {
-        if (p.id !== myInfo.id && p.online && !p.spectator) {
-          this._renderPlayerMarker(p, myInfo, now, POSITION_STALE_MS);
+
+      // 有变更集 → 增量更新（仅重绘变更玩家的标记）
+      if (changedIds && changedIds.size > 0) {
+        for (const id of changedIds) {
+          const p = players[id];
+          if (!p || p.id === myInfo.id || !p.online || p.spectator) {
+            this.mapManager.removePlayerMarker(id);
+            this.mapManager.removePlayerPrediction(id);
+          } else {
+            this._renderPlayerMarker(p, myInfo, now, POSITION_STALE_MS);
+          }
         }
-      });
+      } else {
+        // 无变更集 → 全量重绘（队伍/游戏事件等批量变更）
+        this.mapManager.clearPlayerMarkers();
+        this.mapManager.clearPlayerPredictions();
+        Object.values(players).forEach((p) => {
+          if (p.id !== myInfo.id && p.online && !p.spectator) {
+            this._renderPlayerMarker(p, myInfo, now, POSITION_STALE_MS);
+          }
+        });
+      }
     };
 
     this.roomManager.onTeamUpdate = (teams, myTeamId) => {

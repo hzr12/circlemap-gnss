@@ -34,6 +34,8 @@ class MapManager {
     this.marker = null;
     this.canvas = null;
     this.ctx = null;
+    this.overlayCanvas = null;
+    this.overlayCtx = null;
     this.center = null;         // 当前标记位置（用于下一个圆）
     this.mode = 'click';
     this.onMapClick = null;        // 点击地图回调（多人模式：设为我的共享位置）
@@ -44,7 +46,9 @@ class MapManager {
     this.PICK_THRESHOLD = 22;   // 像素距离阈值
 
     this._rafId = null;
+    this._overlayRafId = null;
     this._syncCenter = null;    // 地图实际显示中心（我们追踪，不依赖 getCenter）
+    this._coordCache = new Map(); // 像素坐标缓存：key -> {cx, cy, mp, ip, ts}
 
     this.locationMarker = null; // 我的位置标记（区别于圆心标识）
     this.accuracyCircle = null; // #17 定位精度圆环
@@ -72,6 +76,8 @@ class MapManager {
     // —— Canvas 叠加层 ——
     this.canvas = document.getElementById('circle-canvas');
     this.ctx = this.canvas.getContext('2d');
+    this.overlayCanvas = document.getElementById('overlay-canvas');
+    this.overlayCtx = this.overlayCanvas ? this.overlayCanvas.getContext('2d') : null;
 
     // —— 腾讯地图 ——
     this.map = new qq.maps.Map(mapEl, {
@@ -140,15 +146,18 @@ class MapManager {
     qq.maps.event.addListener(this.map, 'center_changed', () => {
       const c = this.map.getCenter();
       if (c) this._syncCenter = c;
+      this._invalidateCoordCache();
       this._scheduleRedraw();
     });
     qq.maps.event.addListener(this.map, 'zoom_changed', () => {
+      this._invalidateCoordCache();
       this._scheduleRedraw();
     });
     qq.maps.event.addListener(this.map, 'drag', () => {
       this._scheduleRedraw();
     });
     qq.maps.event.addListener(this.map, 'dragend', () => {
+      this._invalidateCoordCache();
       this._scheduleRedraw();
     });
 
@@ -174,7 +183,17 @@ class MapManager {
    * 经纬度 → 容器像素坐标
    * 使用地图投影计算世界坐标，再根据缩放/中心点换算
    */
+  /** 清除像素坐标缓存（地图移动/缩放/圆变更时调用） */
+  _invalidateCoordCache() {
+    this._coordCache.clear();
+  }
+
   _latLngToContainerPoint(latLng) {
+    const key = `${latLng.getLat().toFixed(6)},${latLng.getLng().toFixed(6)}`;
+    const cached = this._coordCache.get(key);
+    const now = performance.now();
+    if (cached && now - cached.ts < 100) return cached;
+
     const proj = this.map.getProjection();
     if (!proj || !this._syncCenter) return null;
 
@@ -189,10 +208,12 @@ class MapManager {
     const h = this.canvas.parentElement.offsetHeight;
     const scale = Math.pow(2, zoom);
 
-    return {
+    const result = {
       x: w / 2 + (wp.x - cwp.x) * scale,
       y: h / 2 + (wp.y - cwp.y) * scale
     };
+    this._coordCache.set(key, { ...result, ts: now });
+    return result;
   }
 
   /**
@@ -201,9 +222,15 @@ class MapManager {
    */
   _metersToPixels(meters, latLng) {
     if (meters <= 0) return 0;
+    const latKey = latLng.getLat().toFixed(6);
+    const cacheKey = `mpp:${latKey}:${this.map.getZoom()}`;
+    const cached = this._coordCache.get(cacheKey);
+    if (cached) return meters / cached.mpp;
+
     const zoom = this.map.getZoom();
     const lat = latLng.getLat();
     const mpp = 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
+    this._coordCache.set(cacheKey, { mpp, ts: performance.now() });
     return meters / mpp;
   }
 
@@ -220,6 +247,12 @@ class MapManager {
     this.canvas.height = Math.round(h * dpr);
     this.canvas.style.width = w + 'px';
     this.canvas.style.height = h + 'px';
+    if (this.overlayCanvas) {
+      this.overlayCanvas.width = Math.round(w * dpr);
+      this.overlayCanvas.height = Math.round(h * dpr);
+      this.overlayCanvas.style.width = w + 'px';
+      this.overlayCanvas.style.height = h + 'px';
+    }
   }
 
   /* ================================================================
@@ -227,12 +260,11 @@ class MapManager {
    * ================================================================ */
 
   _scheduleRedraw() {
-    const minInterval = 1000 / 30; // ~33ms → 30fps 限频
+    const minInterval = 1000 / 30;
 
     if (this._rafId) cancelAnimationFrame(this._rafId);
 
     this._rafId = requestAnimationFrame(() => {
-      // #1 距上次绘制不足 33ms → 再排一次，保证请求不被丢弃
       const now = performance.now();
       if (now - (this._lastRedrawTime || 0) < minInterval) {
         this._rafId = requestAnimationFrame(() => {
@@ -245,6 +277,15 @@ class MapManager {
       this._redraw();
       this._lastRedrawTime = performance.now();
       this._rafId = null;
+    });
+  }
+
+  /** 仅重绘叠加层（轻量，位置更新时调用） */
+  _scheduleRedrawOverlay() {
+    if (this._overlayRafId) cancelAnimationFrame(this._overlayRafId);
+    this._overlayRafId = requestAnimationFrame(() => {
+      this._redrawOverlay();
+      this._overlayRafId = null;
     });
   }
 
@@ -274,21 +315,21 @@ class MapManager {
     return this._offCanvas;
   }
 
-  _redraw() {
-    if (!this.canvas) return; // 防御：destroy 后被调用时直接返回
+  /** 仅重绘圆圈层（增删/选中/拖拽/缩放时触发） */
+  _redrawCircles() {
+    if (!this.canvas) return;
     const parent = this.canvas.parentElement;
-    if (!parent) return; // 防御：canvas 已从 DOM 移除
+    if (!parent) return;
 
     const dpr = window.devicePixelRatio || 1;
     const ctx = this.ctx;
     const w = parent.offsetWidth;
     const h = parent.offsetHeight;
-    if (w === 0 || h === 0) return; // 防御：父容器尺寸为 0（隐藏状态）
+    if (w === 0 || h === 0) return;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    // ── Pass 1: 离屏 Canvas 只画填充（重叠区域自然叠色加深） ──
     if (this.circles.length) {
       const offCanvas = this._getOffscreen(w, h);
       const offCtx = offCanvas.getContext('2d');
@@ -298,25 +339,94 @@ class MapManager {
       for (const c of this.circles) {
         this._drawCircleFill(offCtx, c);
       }
-
-      // ── 合成离屏结果到主 Canvas（整体控制透明度） ──
       ctx.drawImage(offCanvas, 0, 0, offCanvas.width, offCanvas.height, 0, 0, w, h);
 
-      // ── Pass 2: 主 Canvas 画描边 + 圆心 ──
       for (const c of this.circles) {
         this._drawCircleStrokes(ctx, c);
       }
     }
 
-    // ── Pass 2.5: 其他玩家同步的圆（作者色虚线 + 昵称，与本地蓝圆区分） ──
     if (this._remoteCircles.length) {
       for (const c of this._remoteCircles) {
         this._drawRemoteCircle(ctx, c);
       }
     }
+  }
 
-    // ── Pass 3: 玩家预测椭圆（叠加在圆圈之上） ──
+  /** 仅重绘叠加层（预测椭圆、距离标注，位置更新时触发） */
+  _redrawOverlay() {
+    if (!this.overlayCanvas || !this.overlayCtx) return;
+    const parent = this.overlayCanvas.parentElement;
+    if (!parent) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const ctx = this.overlayCtx;
+    const w = parent.offsetWidth;
+    const h = parent.offsetHeight;
+    if (w === 0 || h === 0) return;
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    // 叠加层：预测椭圆
     this._drawPlayerPredictions(ctx);
+
+    // 叠加层：圆圈上的距离标注（圆心下方，随位置更新）
+    this._drawOverlayLabels(ctx);
+  }
+
+  /** 绘制叠加层上的距离标注（从 _drawCircleStrokes 移出，仅位置更新时重绘此层） */
+  _drawOverlayLabels(ctx) {
+    if (!this._myPos && !this._targetPos) return;
+    for (const circle of this.circles) {
+      const latLng = new qq.maps.LatLng(circle.center.lat, circle.center.lng);
+      const cp = this._latLngToContainerPoint(latLng);
+      if (!cp) continue;
+      const { x: cx, y: cy } = cp;
+      const dotR = circle.id === this.selectedCircleId ? 9 : 6;
+      let offsetY = 0;
+
+      // 距对方距离
+      if (this._targetPos) {
+        const dist = calcDistance(circle.center, this._targetPos);
+        const distLabel = formatDistance(dist);
+        ctx.font = '500 9px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        const dtw = ctx.measureText(distLabel).width;
+        const dly = cy + dotR + 4;
+        ctx.fillStyle = 'rgba(255, 140, 0, 0.8)';
+        ctx.beginPath();
+        ctx.roundRect(cx - dtw / 2 - 3, dly - 1, dtw + 6, 14, 3);
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.fillText(distLabel, cx, dly + 1);
+        offsetY = 18;
+      }
+
+      // 距我距离
+      if (this._myPos) {
+        const dist = calcDistance(circle.center, this._myPos);
+        const distLabel = formatDistance(dist);
+        ctx.font = '500 9px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        const dtw = ctx.measureText(distLabel).width;
+        const dly = cy + dotR + 4 + offsetY;
+        ctx.fillStyle = 'rgba(0, 136, 255, 0.8)';
+        ctx.beginPath();
+        ctx.roundRect(cx - dtw / 2 - 3, dly - 1, dtw + 6, 14, 3);
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.fillText(distLabel, cx, dly + 1);
+      }
+    }
+  }
+
+  /** 全量重绘（圆圈+叠加层，增删圆/拖拽/缩放时调用） */
+  _redraw() {
+    this._redrawCircles();
+    this._redrawOverlay();
   }
 
   /**
@@ -462,45 +572,6 @@ class MapManager {
     ctx.fillStyle = dotFill;
     ctx.fill();
 
-    // ── 相对方距离标注（圆心下方） ──
-    if (this._targetPos) {
-      const dist = calcDistance(circle.center, this._targetPos);
-      const distLabel = formatDistance(dist);
-      ctx.font = '500 9px -apple-system, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      const dtw = ctx.measureText(distLabel).width;
-      const dly = cy + dotR + 4;
-      // 底色
-      ctx.fillStyle = 'rgba(255, 140, 0, 0.8)';
-      ctx.beginPath();
-      ctx.roundRect(cx - dtw / 2 - 3, dly - 1, dtw + 6, 14, 3);
-      ctx.fill();
-      // 文字
-      ctx.fillStyle = '#fff';
-      ctx.fillText(distLabel, cx, dly + 1);
-    }
-
-    // ── 距我距离标注（圆心下方，第二行） ──
-    if (this._myPos) {
-      const dist = calcDistance(circle.center, this._myPos);
-      const distLabel = formatDistance(dist);
-      ctx.font = '500 9px -apple-system, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      const dtw = ctx.measureText(distLabel).width;
-      const offsetY = this._targetPos ? 18 : 0;
-      const dly = cy + dotR + 4 + offsetY;
-      // 底色
-      ctx.fillStyle = 'rgba(0, 136, 255, 0.8)';
-      ctx.beginPath();
-      ctx.roundRect(cx - dtw / 2 - 3, dly - 1, dtw + 6, 14, 3);
-      ctx.fill();
-      // 文字
-      ctx.fillStyle = '#fff';
-      ctx.fillText(distLabel, cx, dly + 1);
-    }
-
     // ── 圆圈距离标注 ──
     if (mp >= 30) {
       const labelR = mp;
@@ -590,7 +661,7 @@ class MapManager {
    * @returns {number} 新圆的 id
    */
   addCircle(center, maxRadius, interval) {
-    const id = this._idCounter++; // #3 递增计数器，避免 Date.now() 碰撞
+    const id = this._idCounter++;
     this.circles.push({
       id,
       center: { lat: center.lat, lng: center.lng },
@@ -598,7 +669,7 @@ class MapManager {
       interval: interval || CONFIG.CONCENTRIC_INTERVAL,
       createdAt: Date.now()
     });
-    // 不自动选中——创建后保持在"创建"状态，不进入编辑模式
+    this._invalidateCoordCache();
     this._scheduleRedraw();
     this._zoomToRadius(maxRadius);
     return id;
@@ -610,6 +681,7 @@ class MapManager {
   removeCircle(id) {
     this.circles = this.circles.filter(c => c.id !== id);
     if (this.selectedCircleId === id) this.selectedCircleId = null;
+    this._invalidateCoordCache();
     this._scheduleRedraw();
   }
 
@@ -619,6 +691,7 @@ class MapManager {
   clearCircles() {
     this.circles = [];
     this.selectedCircleId = null;
+    this._invalidateCoordCache();
     this._scheduleRedraw();
   }
 
@@ -1110,7 +1183,8 @@ class MapManager {
   setMyPos(pos) {
     if (!this.map) return;
     this._myPos = pos;
-    this._scheduleRedraw();
+    // 仅重绘叠加层（预测/标注），不触发圆圈全量重绘
+    this._scheduleRedrawOverlay();
   }
 
   /**
@@ -1126,7 +1200,7 @@ class MapManager {
         this.targetMarker = null;
       }
       this.setTargetRange(0);
-      this._scheduleRedraw();
+      this._scheduleRedrawOverlay();
       return;
     }
     this._targetPos = center;
@@ -1142,7 +1216,7 @@ class MapManager {
       });
     }
     if (range > 0) this.setTargetRange(range);
-    this._scheduleRedraw();
+    this._scheduleRedrawOverlay();
   }
 
   /**
@@ -1311,7 +1385,7 @@ class MapManager {
   setPlayerPrediction(id, lat, lng, bearing, speed, acc) {
     if (!CONFIG.ENABLE_PREDICTION) return;
     this._playerPredictions[id] = { lat, lng, bearing, speed, acc, ts: Date.now() };
-    this._scheduleRedraw();
+    this._scheduleRedrawOverlay();
   }
 
   /**
@@ -1319,7 +1393,7 @@ class MapManager {
    */
   removePlayerPrediction(id) {
     delete this._playerPredictions[id];
-    this._scheduleRedraw();
+    this._scheduleRedrawOverlay();
   }
 
   /**
@@ -1327,7 +1401,7 @@ class MapManager {
    */
   clearPlayerPredictions() {
     this._playerPredictions = {};
-    this._scheduleRedraw();
+    this._scheduleRedrawOverlay();
   }
 
   /**
@@ -1434,6 +1508,10 @@ class MapManager {
     if (this._rafId) {
       cancelAnimationFrame(this._rafId);
       this._rafId = null;
+    }
+    if (this._overlayRafId) {
+      cancelAnimationFrame(this._overlayRafId);
+      this._overlayRafId = null;
     }
 
     // 移除窗口 resize 监听
