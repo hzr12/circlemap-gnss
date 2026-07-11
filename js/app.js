@@ -210,6 +210,9 @@ class App {
       }
       this._saveState();
     }, CONFIG.POSITION_STALE_MS / 10); // 每 60s
+
+    // 自动重连上次的房间（异步，不阻塞）
+    this._autoRejoinRoom();
   }
 
   /* ============= UI 事件绑定 ============= */
@@ -570,6 +573,10 @@ class App {
     // —— 路径预测 ——
     this._roomPredictionSection = document.getElementById('room-prediction-section');
     this._roomPredictionEnable = document.getElementById('room-prediction-enable');
+
+    // —— 团队健康度 ——
+    this._roomHealthSection = document.getElementById('room-health-section');
+    this._roomHealthContent = document.getElementById('room-health-content');
 
     // 倒计时按钮
     this._roomTimerSetBtn.addEventListener('click', () => this._roomSetTimer());
@@ -2977,6 +2984,7 @@ class App {
       this._batteryCharging = battery.charging;
       this._batteryTime = battery.dischargingTime; // 剩余时间（秒），Infinity 表示充电中
       this._updateStatusBar(true);
+      this._pushBatteryToRoom();
 
       // 记录电量变化时间点，用于计算消耗速率
       this._batteryLastLevel = battery.level;
@@ -2996,6 +3004,7 @@ class App {
         this._batteryCharging = battery.charging;
         this._batteryTime = battery.dischargingTime;
         this._updateStatusBar(true);
+        this._pushBatteryToRoom();
         // 低电量警告
         if (battery.level <= 0.15 && !battery.charging) {
           Toast.show('电量不足 15%，建议开启省电模式');
@@ -3007,6 +3016,7 @@ class App {
         this._batteryCharging = battery.charging;
         this._batteryTime = battery.dischargingTime;
         this._updateStatusBar(true);
+        this._pushBatteryToRoom();
       };
       battery.addEventListener('chargingchange', this._batteryChargingHandler);
 
@@ -3365,6 +3375,79 @@ class App {
 
   /* ============= 多人房间 ============= */
 
+  // ---------- 房间会话持久化（自动重连） ----------
+
+  /**
+   * 保存房间会话到 localStorage
+   */
+  _saveRoomSession(code, nick, spectator) {
+    try {
+      const session = {
+        roomCode: code,
+        nickname: nick,
+        spectator: !!spectator,
+        timestamp: Date.now()
+      };
+      localStorage.setItem('circlemap_room_session', JSON.stringify(session));
+    } catch (e) {
+      console.warn('[Room] 保存房间会话失败:', e.message);
+    }
+  }
+
+  /**
+   * 清除房间会话
+   */
+  _clearRoomSession() {
+    try {
+      localStorage.removeItem('circlemap_room_session');
+    } catch (e) { /* 静默 */ }
+  }
+
+  /**
+   * 自动重连上次的房间（页面加载时调用）
+   * 24 小时内有效，过期或失败自动清除
+   */
+  async _autoRejoinRoom() {
+    let raw;
+    try {
+      raw = localStorage.getItem('circlemap_room_session');
+    } catch (e) { return; }
+    if (!raw) return;
+    let session;
+    try {
+      session = JSON.parse(raw);
+    } catch (e) { return; }
+    if (!session || !session.roomCode || !session.nickname) return;
+    // 24 小时过期
+    if (Date.now() - session.timestamp > 24 * 60 * 60 * 1000) {
+      this._clearRoomSession();
+      return;
+    }
+    // 短时间内的页面刷新（5 秒内）也跳过，由 MQTT 重连机制自行恢复
+    if (Date.now() - session.timestamp < 5000) return;
+
+    Toast.show(' 检测到上次的房间，正在自动重连...');
+    try {
+      this.roomManager = new RoomManager();
+      this._bindRoomEvents();
+      await this.roomManager.joinRoom(session.roomCode, session.nickname, session.spectator);
+      this._roomJoined = true;
+      this._showRoomCode(session.roomCode);
+      this._roomFormCreate.classList.add('hidden');
+      this._roomFormJoin.classList.add('hidden');
+      this._updateRoomPlayerList();
+      this._showRoomExtras();
+      // 更新会话时间戳
+      this._saveRoomSession(session.roomCode, session.nickname, session.spectator);
+      Toast.show(` 已自动重连至房间：${session.roomCode}`);
+    } catch (e) {
+      console.warn('[Room] 自动重连失败:', e.message);
+      this._roomCleanup();
+      this._clearRoomSession();
+      Toast.show(' 房间已过期，已自动断开');
+    }
+  }
+
   /**
    * 创建房间
    */
@@ -3382,6 +3465,7 @@ class App {
       this._roomFormJoin.classList.add('hidden');
       this._updateRoomPlayerList();
       this._showRoomExtras();
+      this._saveRoomSession(code, nick, spectator);
       Toast.show(` 房间已创建：${code}，分享给队友`);
     } catch (e) {
       console.error('[Room] 创建失败:', e);
@@ -3412,6 +3496,7 @@ class App {
       this._roomFormJoin.classList.add('hidden');
       this._updateRoomPlayerList();
       this._showRoomExtras();
+      this._saveRoomSession(code, nick, spectator);
       Toast.show(` 已加入房间：${code}`);
     } catch (e) {
       console.error('[Room] 加入失败:', e);
@@ -3430,6 +3515,7 @@ class App {
       this.roomManager = null;
     }
     this._roomJoined = false;
+    this._clearRoomSession();
     this.mapManager.clearPlayerMarkers();
     this.mapManager.clearPlayerPredictions();
     this.mapManager.setRemoteCircles([]);
@@ -3483,6 +3569,83 @@ class App {
     this._roomSharingBtn.disabled = false;
     this._roomSharingBtn.textContent = sharing ? ' 共享定位' : ' 定位已关闭';
     this._roomSharingBtn.classList.toggle('sharing-off', !sharing);
+  }
+
+  // ---------- 团队健康度 ----------
+
+  /**
+   * 将本地电量注入 roomManager，下次 ping 时发送给其他玩家
+   */
+  _pushBatteryToRoom() {
+    if (this.roomManager && this._batteryLevel != null) {
+      this.roomManager.setBatteryInfo(this._batteryLevel, !!this._batteryCharging);
+    }
+  }
+
+  /**
+   * 更新团队健康度面板
+   */
+  _updateRoomHealthPanel() {
+    if (!this._roomHealthContent || !this.roomManager) return;
+    const players = this.roomManager.getPlayers();
+    const myInfo = this.roomManager.getMyInfo();
+    const now = Date.now();
+    const teams = this.roomManager.getTeams();
+    let html = '';
+    // 自己
+    if (myInfo) {
+      html += this._buildHealthRow(myInfo.name, myInfo.color, true, this._batteryLevel, this._lastAccuracy, now, this.myPositionTime || now, '');
+    }
+    // 其他玩家
+    Object.values(players).forEach((p) => {
+      if (p.id === (myInfo && myInfo.id)) return;
+      if (!p.online) return;
+      const teamName = (p.teamId && teams[p.teamId]) ? teams[p.teamId].name : '';
+      html += this._buildHealthRow(p.name, p.color, p.online, p.batteryLevel, p.acc, now, p.ts, teamName);
+    });
+    this._roomHealthContent.innerHTML = html || '<div class="room-empty">暂无在线玩家</div>';
+  }
+
+  /**
+   * 构建一行健康度条目
+   */
+  _buildHealthRow(name, color, online, batteryLvl, acc, now, ts, teamName) {
+    const isOffline = !online;
+    // 电量
+    let battHtml = '<span class="health-na">—</span>';
+    if (batteryLvl != null && !isOffline) {
+      const pct = Math.round(batteryLvl * 100);
+      const cls = pct > 50 ? 'health-batt-good' : (pct > 20 ? 'health-batt-warn' : 'health-batt-low');
+      battHtml = `<span class="${cls}">${pct}%</span>`;
+    }
+    // 精度
+    let accHtml = '<span class="health-na">—</span>';
+    if (acc != null && acc > 0 && !isOffline) {
+      const cls = acc <= 15 ? 'health-acc-good' : (acc <= 50 ? 'health-acc-ok' : 'health-acc-poor');
+      accHtml = `<span class="${cls}">${acc < 1 ? '<1' : Math.round(acc)}m</span>`;
+    }
+    // 最后更新
+    let timeHtml = '<span class="health-na">—</span>';
+    if (ts && !isOffline) {
+      const ago = Math.round((now - ts) / 1000);
+      const cls = ago <= 10 ? 'health-time-fresh' : (ago <= 60 ? 'health-time-ok' : 'health-time-stale');
+      timeHtml = `<span class="${cls}">${ago <= 1 ? '刚刚' : ago + 's前'}</span>`;
+    }
+    // 队伍标签
+    const teamHtml = teamName ? `<span class="health-team-tag">${teamName}</span>` : '';
+    const dot = isOffline ? 'offline' : 'online';
+    return `<div class="health-row">
+      <span class="health-dot health-dot-${dot}" style="${isOffline ? '' : 'background:' + color}"></span>
+      <span class="health-name">${this._escapeHtml(name)}${teamHtml}</span>
+      <span class="health-metrics">${battHtml} ${accHtml} ${timeHtml}</span>
+    </div>`;
+  }
+
+  _escapeHtml(str) {
+    if (!str) return '';
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
   }
 
   // ============================================================
@@ -3625,6 +3788,7 @@ class App {
 
     this.roomManager.onPositionUpdate = (players) => {
       this._updateRoomPlayerList();
+      this._updateRoomHealthPanel();
       // 更新地图标记（带游戏可见性规则）
       const myInfo = this.roomManager.getMyInfo();
       const now = Date.now();
@@ -4051,6 +4215,7 @@ class App {
     if (this._roomTimerSection) this._roomTimerSection.classList.remove('visible');
     if (this._roomBurstSection) this._roomBurstSection.classList.remove('visible');
     if (this._roomPredictionSection) this._roomPredictionSection.classList.remove('visible');
+    if (this._roomHealthSection) this._roomHealthSection.classList.remove('visible');
     if (this._roomGameSection) this._roomGameSection.classList.remove('visible');
     if (this._roomStatsModal) this._roomStatsModal.classList.remove('visible');
     if (this._roomTimerCountdown) this._roomTimerCountdown.classList.add('hidden');
@@ -4076,7 +4241,9 @@ class App {
     if (this._roomTimerSection) this._roomTimerSection.classList.add('visible');
     if (this._roomBurstSection) this._roomBurstSection.classList.add('visible');
     if (this._roomPredictionSection) this._roomPredictionSection.classList.add('visible');
+    if (this._roomHealthSection) this._roomHealthSection.classList.add('visible');
     this._updateGameUI();
+    this._updateRoomHealthPanel();
   }
 
   // ================================================================

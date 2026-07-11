@@ -516,6 +516,70 @@
   display: flex;
 }
 
+/* 团队健康度面板 */
+.room-health-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.health-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  font-size: 12px;
+  min-height: 28px;
+}
+.health-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.health-dot-online {
+  box-shadow: 0 0 4px currentColor;
+}
+.health-dot-offline {
+  background: var(--text-tertiary) !important;
+  opacity: 0.4;
+}
+.health-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.health-team-tag {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-left: 4px;
+  background: var(--bg-card);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+.health-metrics {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.health-batt-good { color: var(--color-green, #4CAF50); }
+.health-batt-warn  { color: var(--color-orange, #FF9800); }
+.health-batt-low   { color: var(--color-red, #f44336); }
+.health-acc-good   { color: var(--color-green, #4CAF50); }
+.health-acc-ok     { color: var(--color-orange, #FF9800); }
+.health-acc-poor   { color: var(--color-red, #f44336); }
+.health-time-fresh { color: var(--color-green, #4CAF50); }
+.health-time-ok    { color: var(--text-secondary); }
+.health-time-stale { color: var(--color-red, #f44336); }
+.health-na { color: var(--text-tertiary); }
+
 /* 倒计时输入 */
 .room-timer-input {
   background: var(--bg-input);

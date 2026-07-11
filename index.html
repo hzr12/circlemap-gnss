@@ -17,7 +17,7 @@
   <link rel="stylesheet" href="css/toast-modal.css?t=20260710v1">
   <link rel="stylesheet" href="css/onboarding.css?t=20260710v1">
   <link rel="stylesheet" href="css/responsive.css?t=20260710v1">
-  <link rel="stylesheet" href="css/room.css?t=20260710v1">
+  <link rel="stylesheet" href="css/room.css?t=20260710v2">
 </head>
 <body>
   <div id="map">
@@ -212,6 +212,18 @@
                 <input type="checkbox" id="room-prediction-enable">
                 <span class="toggle-slider"></span>
               </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- 团队健康度 -->
+        <div class="room-section-block hidden" id="room-health-section">
+          <div class="room-form">
+            <div class="room-form-row">
+              <span class="field-label"> 团队健康度</span>
+            </div>
+            <div class="room-health-list" id="room-health-content">
+              <div class="room-empty">暂无在线玩家</div>
             </div>
           </div>
         </div>
@@ -482,9 +494,9 @@
 
   <!-- MQTT（多人位置共享） -->
   <script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
-  <script src="js/room.js?t=20260710v1"></script>
+  <script src="js/room.js?t=20260710v2"></script>
 
-  <script src="js/app.js?t=20260710v1"></script>
+  <script src="js/app.js?t=20260710v2"></script>
 
 <!-- 功能提示浮层（逐个显示在对应功能旁） -->
 <div id="hint-tooltip" class="hint-tooltip" style="display:none">

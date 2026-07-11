@@ -131,6 +131,10 @@ class RoomManager {
     this._isHost = false;            // 创建房间的玩家为房主
     this._playerRoles = {};          // { playerId: 'ghost' | 'hunter' }
     this._caughtPlayers = {};        // { playerId: { caughtBy, ts } }
+
+    // 设备健康信息（由 app 层注入）
+    this._batteryLevel = 1;
+    this._batteryCharging = false;
     this._gameEvents = [];           // 事件日志 [{ type, playerId, ghostId, ts }]
     this._gameStartTs = 0;
     this._gameEndTs = 0;
@@ -794,6 +798,8 @@ class RoomManager {
     player.spectator = flags.spectator;
     player.teamBroadcaster = flags.teamBroadcaster;
     player.teamSeparation = flags.teamSeparation;
+    if (flags.batteryLevel != null) player.batteryLevel = flags.batteryLevel;
+    if (flags.charging != null) player.charging = flags.charging;
     // 队伍发报员选举（原 pos 分支逻辑迁移）
     if (player.teamId === this._myTeamId && flags.teamBroadcaster) {
       this._teamBroadcasterId = senderId;
@@ -874,28 +880,42 @@ class RoomManager {
     };
   }
 
-  // 心跳包 1 字节：bit0 sharing / bit1 teamBroadcaster / bit2 teamSeparation / bit3 spectator
+  // 心跳包 4 字节：bit0-3 flags (sharing/broadcaster/separation/spectator), bit4=charging, 保留 bit5-7
+  //   字节 1-2 预留给信号强度/延迟（未用）
+  //   字节 3 电量 0-100
   _encodePing(flags) {
-    const buf = new ArrayBuffer(1);
+    const buf = new ArrayBuffer(4);
     const dv = new DataView(buf);
     let b = 0;
     if (flags.sharing) b |= 1;
     if (flags.teamBroadcaster) b |= 2;
     if (flags.teamSeparation) b |= 4;
     if (flags.spectator) b |= 8;
+    if (flags.charging) b |= 16;
     dv.setUint8(0, b);
+    dv.setUint8(1, 0); // 保留
+    dv.setUint8(2, 0); // 保留
+    dv.setUint8(3, Math.max(0, Math.min(100, Math.round((flags.batteryLevel || 1) * 100))));
     return new Uint8Array(buf);
   }
 
   _decodePing(payload) {
     const dv = this._asDataView(payload);
+    const len = dv.byteLength;
     const b = dv.getUint8(0);
-    return {
+    const out = {
       sharing: !!(b & 1),
       teamBroadcaster: !!(b & 2),
       teamSeparation: !!(b & 4),
       spectator: !!(b & 8),
+      charging: !!(b & 16),
+      batteryLevel: null,
     };
+    // 兼容旧版 1 字节 ping
+    if (len >= 4) {
+      out.batteryLevel = dv.getUint8(3) / 100;
+    }
+    return out;
   }
 
   // 圆同步包（二进制，像 pos/ping/presence）：
@@ -1056,6 +1076,8 @@ class RoomManager {
       teamBroadcaster: this._myAmBroadcaster,
       teamSeparation: this._teamSeparation,
       spectator: this._isSpectator,
+      batteryLevel: this._batteryLevel,
+      charging: this._batteryCharging,
     });
     this._publishWithAlias(topic, bytes, { qos: 1, retain: false, binary: true });
   }
@@ -1179,6 +1201,15 @@ class RoomManager {
 
   isSharingEnabled() {
     return this._sharingEnabled;
+  }
+
+  /**
+   * 注入本机电量和充电状态（由 app 层 Battery API 定期调用）
+   * 数据在下次 ping 时发送给其他玩家
+   */
+  setBatteryInfo(level, charging) {
+    this._batteryLevel = level;
+    this._batteryCharging = charging;
   }
 
   /**
