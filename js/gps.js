@@ -54,12 +54,16 @@ class KalmanFilter {
       return z;
     }
 
+    // 动态 Q：精度好时跟手（响应快），精度差时平滑（抑制噪声）
+    const accClamped = Math.max(Math.min(accuracy || 10, 100), 1);
+    this._Q = Math.max(0.001, 0.005 * (10 / accClamped));
+
     // ── Predict（预测） ──
     this._x = this._x + this._v * dt;
     this._P = this._P + this._Q * dt;
 
     // 根据 accuracy 动态调整测量噪声
-    this._R = Math.max(3, Math.min(accuracy || 10, 100));
+    this._R = Math.max(3, Math.min(accClamped, 100));
 
     // ── Update（更新） ──
     const K = this._P / (this._P + this._R); // 卡尔曼增益
@@ -142,6 +146,7 @@ class GPSManager {
     this._gpsMinInterval = 5000;
     this._gpsPowerSavingInterval = 30000;   // 省电模式间隔
     this._gpsBackgroundInterval = 60000;    // 后台定位间隔
+    this._bestPendingPosition = null;       // 节流窗口内精度最优的位置缓存
   }
 
   /**
@@ -251,7 +256,7 @@ class GPSManager {
         this.startWatching({ enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 });
       } else {
         // 标准模式：高精度 + 短超时
-        this.startWatching({ enableHighAccuracy: true, timeout: CONFIG.GPS_WATCH_TIMEOUT, maximumAge: 5000 });
+        this.startWatching({ enableHighAccuracy: true, timeout: CONFIG.GPS_WATCH_TIMEOUT, maximumAge: 2000 });
       }
     }
     return this._powerSaving;
@@ -567,7 +572,7 @@ class GPSManager {
         this.startWatching({
           enableHighAccuracy: true,
           timeout: CONFIG.GPS_WATCH_TIMEOUT,
-          maximumAge: 5000
+          maximumAge: 2000
         });
       }
     } catch (err) {
@@ -678,24 +683,17 @@ class GPSManager {
     const opts = Object.assign({
       enableHighAccuracy: true,
       timeout: CONFIG.GPS_WATCH_TIMEOUT,
-      maximumAge: 5000
+      maximumAge: 2000
     }, options || {});
 
     this.isWatching = true;
 
     this.watchId = navigator.geolocation.watchPosition(
       (position) => {
-        // 节流：最多每 _gpsMinInterval 毫秒处理一次
         const now = Date.now();
-        if (now - this._lastProcessedTime < this._gpsMinInterval) {
-          // 即使节流，也要更新超时检测时间，避免误判超时
-          this._lastPositionTime = now;
-          this._consecutiveTimeouts = 0; // 节流丢弃的位置仍视为有效信号，重置超时计数
-          return;
-        }
-        this._lastProcessedTime = now;
 
-        const pos = {
+        // 构造统一位置对象
+        const buildPos = () => ({
           lat: position.coords.latitude,
           lng: position.coords.longitude,
           accuracy: position.coords.accuracy,
@@ -703,7 +701,29 @@ class GPSManager {
           speed: position.coords.speed,
           heading: position.coords.heading,
           timestamp: position.timestamp
-        };
+        });
+
+        if (now - this._lastProcessedTime < this._gpsMinInterval) {
+          // 择优缓存：节流窗口内保留精度最佳的位置，而非直接丢弃
+          const curAcc = position.coords.accuracy || Infinity;
+          if (!this._bestPendingPosition || curAcc < this._bestPendingPosition.accuracy) {
+            this._bestPendingPosition = buildPos();
+          }
+          // 仍视为有效信号，更新超时检测
+          this._lastPositionTime = now;
+          this._consecutiveTimeouts = 0;
+          return;
+        }
+        this._lastProcessedTime = now;
+
+        // 窗口到期：从缓存和当前信号中选精度最优者
+        const currentPos = buildPos();
+        const bestPos = this._bestPendingPosition &&
+          this._bestPendingPosition.accuracy <= currentPos.accuracy
+          ? this._bestPendingPosition : currentPos;
+        this._bestPendingPosition = null;
+
+        const pos = { ...bestPos };
 
         // 保存原始位置（滤波前）
         this._rawPosition = { lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, speed: pos.speed, heading: pos.heading, timestamp: pos.timestamp };
