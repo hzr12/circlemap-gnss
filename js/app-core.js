@@ -93,10 +93,12 @@ class App {
     this._onboardingStep = 0;         // 引导当前步骤
     this._onboardingActive = false;   // 引导是否正在显示
     this._processQueue = Promise.resolve(); // GPS 位置处理串行队列
+    this._queuePending = 0;                 // GPS 位置队列积压计数
 
     // 多人房间
     this.roomManager = null;
     this._roomJoined = false;
+    this._gameDurationInterval = null; // 游戏倒计时定时器
   }
 
   /**
@@ -2723,6 +2725,8 @@ class App {
             center: c.center,
             maxRadius: c.maxRadius,
             interval: c.interval || CONFIG.CONCENTRIC_INTERVAL,
+            name: c.name || '',
+            color: c.color || '',
             createdAt: c.createdAt || Date.now()
           });
         }
