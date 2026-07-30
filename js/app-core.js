@@ -2117,8 +2117,10 @@ class App {
         this.center = convPos;
       }
       // 同步到输入框（保持输入坐标与当前位置一致）
-      this._latInput.value = convPos.lat.toFixed(6);
-      this._lngInput.value = convPos.lng.toFixed(6);
+      if (!this._manualCenter) {
+        this._latInput.value = convPos.lat.toFixed(6);
+        this._lngInput.value = convPos.lng.toFixed(6);
+      }
       // #12 — 跟随模式：每次位置更新都移动地图视角
       if (this._followMode) {
         this.mapManager.flyTo(convPos);
@@ -2821,7 +2823,7 @@ class App {
     const lng = pos?.lng ?? 116.4;
     // 主用 Open-Meteo（免费、快速、无需注册）
     this._fetchWeatherOpenMeteo(lat, lng)
-      .catch(() => this._fetchWeatherWttr(lat, lng));
+      .catch(() => { this._fetchWeatherWttr(lat, lng).catch(() => {}); });
   }
 
   /**

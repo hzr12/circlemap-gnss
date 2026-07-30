@@ -638,6 +638,7 @@ class RoomManager {
             if (this._players[playerId]) {
               this._players[playerId].teamId = teamId;
               this._players[playerId].isNpc = (this._teams[teamId] && this._teams[teamId].isNpc) || false;
+              delete this._pendingPlayerTeams[playerId];
             }
           }
           // 缓存尚未到位的玩家队伍，待 position/presence 到达时回填
@@ -748,6 +749,8 @@ class RoomManager {
     // 清除远程圆过期定时器
     Object.values(this._remoteCircleTimers).forEach(t => clearTimeout(t));
     this._remoteCircleTimers = {};
+    this._pendingPlayerTeams = {};
+    this._backgroundMode = false;
     // 重置发报员状态
     this._teamBroadcasterId = null;
     this._lastBroadcastTs = 0;
@@ -1457,6 +1460,8 @@ class RoomManager {
    * @param {boolean} enabled true=进入后台，false=回到前台
    */
   setBackgroundMode(enabled) {
+    if (this._backgroundMode === enabled) return;
+    this._backgroundMode = enabled;
     if (enabled) {
       console.log('[Room] 后台模式：降低心跳频率');
       // 重置心跳定时器 → 60s
@@ -2108,7 +2113,7 @@ class RoomManager {
     Object.keys(this._players).forEach((id) => {
       if (id === this._deviceId) return;
       const p = this._players[id];
-      if (!p.online || !p._lastSeen) return;
+      if (!p || !p.online || !p._lastSeen) return;
       if (now - p._lastSeen > ROOM_CONFIG.OFFLINE_GRACE_MS && !this._offlineTimers[id]) {
         this._schedulePendingOffline(id);
       }

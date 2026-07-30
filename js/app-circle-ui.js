@@ -9,6 +9,7 @@
 
 App.prototype._updateInfo = function () {
   const infoArea = this._infoAreaEl || (this._infoAreaEl = document.getElementById('infoArea'));
+  if (!infoArea) return;
   if (this.mapManager.selectedCircleId === null && infoArea.classList.contains('hidden')) return;
   const sel = this.mapManager.getSelectedCircle();
 

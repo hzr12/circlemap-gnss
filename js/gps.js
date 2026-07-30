@@ -404,10 +404,13 @@ class GPSManager {
         this._stopGnssPollFallback();
         return;
       }
+      if (this._gnssPollRunning) return;
+      this._gnssPollRunning = true;
       // 如果事件已收到卫星数据，提前停止轮询
       if (this._gnssSatellites.length > 0) {
         console.log('[GPS] GNSS 轮询兜底：已收到卫星数据，停止轮询');
         this._stopGnssPollFallback();
+        this._gnssPollRunning = false;
         return;
       }
       try {
@@ -416,6 +419,7 @@ class GPSManager {
         // 此时任何回写都会让 _gnssSatellites 显示陈旧数据
         if (!this._gnssListeningStarted || !this._gnssPlugin) {
           this._stopGnssPollFallback();
+          this._gnssPollRunning = false;
           return;
         }
         if (data && data.satellites && data.satellites.length > 0) {
@@ -426,6 +430,7 @@ class GPSManager {
       } catch (e) {
         console.warn('[GPS] GNSS 轮询兜底失败:', e.message);
       }
+      this._gnssPollRunning = false;
       if (elapsed >= maxDuration) {
         this._stopGnssPollFallback();
         if (this._gnssSatellites.length === 0 && !toastedNoData) {
@@ -437,6 +442,7 @@ class GPSManager {
   }
 
   _stopGnssPollFallback() {
+    this._gnssPollRunning = false;
     if (this._gnssPollId) {
       clearInterval(this._gnssPollId);
       this._gnssPollId = null;
