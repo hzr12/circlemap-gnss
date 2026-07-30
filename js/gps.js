@@ -13,9 +13,9 @@ class KalmanFilter {
   constructor() {
     this._x = 0;        // 位置估计
     this._v = 0;        // 速度估计 (单位/秒)
-    this._P = 1;        // 估计误差协方差
-    this._Q = 0.005;    // 过程噪声（加速度不确定性）
-    this._R = 30;       // 测量噪声（最新 accuracy 动态调整）
+    this._P = Math.pow(50 / 111111, 2); // ~2e-7 deg²（50m 初始不确定度）
+    this._Q = 0;                        // update() 中动态设
+    this._R = 0;                        // update() 中动态设
     this._lastTime = 0;
     this._initialized = false;
   }
@@ -26,7 +26,7 @@ class KalmanFilter {
   init(x, time) {
     this._x = x;
     this._v = 0;
-    this._P = 1;
+    this._P = Math.pow(50 / 111111, 2);
     this._lastTime = time;
     this._initialized = true;
   }
@@ -36,9 +36,10 @@ class KalmanFilter {
    * @param {number} z 测量值
    * @param {number} accuracy GPS 精度（米）
    * @param {number} time 时间戳（毫秒）
+   * @param {number} [speed] 速度（m/s），用于动态调整响应
    * @returns {number} 滤波后值
    */
-  update(z, accuracy, time) {
+  update(z, accuracy, time, speed) {
     if (!this._initialized || accuracy > 200) {
       // 精度太差或未初始化 → 直接接受测量值
       this.init(z, time);
@@ -56,14 +57,16 @@ class KalmanFilter {
 
     // 动态 Q：精度好时跟手（响应快），精度差时平滑（抑制噪声）
     const accClamped = Math.max(Math.min(accuracy || 10, 100), 1);
-    this._Q = Math.max(0.001, 0.005 * (10 / accClamped));
+    const Q_BASE = Math.pow(1 / 111111, 2);  // ~8.1e-11 deg²/s，对应 1m/s²
+    const speedFactor = (speed || 0) > 0.5 ? 3 : 1; // 移动时提高响应
+    this._Q = Math.max(Q_BASE / 10, Q_BASE * (10 / accClamped) * speedFactor);
 
     // ── Predict（预测） ──
     this._x = this._x + this._v * dt;
     this._P = this._P + this._Q * dt;
 
-    // 根据 accuracy 动态调整测量噪声
-    this._R = Math.max(3, Math.min(accClamped, 100));
+    // 根据 accuracy 动态调整测量噪声（米转度²）
+    this._R = Math.pow(Math.max(3, Math.min(accClamped, 100)) / 111111, 2);
 
     // ── Update（更新） ──
     const K = this._P / (this._P + this._R); // 卡尔曼增益
@@ -143,7 +146,7 @@ class GPSManager {
 
     // GPS 节流：动态间隔（正常 5s，省电模式 30s，后台 60s）
     this._lastProcessedTime = 0;
-    this._gpsMinInterval = 5000;
+    this._gpsMinInterval = 2000;
     this._gpsPowerSavingInterval = 30000;   // 省电模式间隔
     this._gpsBackgroundInterval = 60000;    // 后台定位间隔
     this._bestPendingPosition = null;       // 节流窗口内精度最优的位置缓存
@@ -238,7 +241,7 @@ class GPSManager {
     console.log(`[GPS] 省电模式: ${next ? '开启' : '关闭'}`);
 
     // 调整处理间隔
-    this._gpsMinInterval = next ? this._gpsPowerSavingInterval : 5000;
+    this._gpsMinInterval = next ? this._gpsPowerSavingInterval : 2000;
 
     // 省电模式下关闭 GNSS 卫星监听（节省 CPU + 电池）
     if (next && this._gnssListeningStarted) {
@@ -348,7 +351,7 @@ class GPSManager {
       };
       const nmeaHandler = (nmea) => {
         if (nmea) {
-          console.log('[GPS] NMEA:', nmea.sentence?.substring(0, 20) + '...');
+          if (CONFIG.DEBUG) console.log('[GPS] NMEA:', nmea.sentence?.substring(0, 20) + '...');
         }
       };
 
@@ -719,7 +722,7 @@ class GPSManager {
         // 窗口到期：从缓存和当前信号中选精度最优者
         const currentPos = buildPos();
         const bestPos = this._bestPendingPosition &&
-          this._bestPendingPosition.accuracy <= currentPos.accuracy
+          this._bestPendingPosition.accuracy <= (currentPos.accuracy || Infinity) / 2
           ? this._bestPendingPosition : currentPos;
         this._bestPendingPosition = null;
 
@@ -732,8 +735,8 @@ class GPSManager {
         if (this._useFilter && pos.accuracy > 0 && pos.accuracy < 200) {
           const ts = pos.timestamp || now;
           const acc = pos.accuracy || 10;
-          pos.lat = this._latFilter.update(pos.lat, acc, ts);
-          pos.lng = this._lngFilter.update(pos.lng, acc, ts);
+          pos.lat = this._latFilter.update(pos.lat, acc, ts, pos.speed);
+          pos.lng = this._lngFilter.update(pos.lng, acc, ts, pos.speed);
         } else {
           // 精度太差或滤波关闭 → 重置滤波器
           this._latFilter.reset();

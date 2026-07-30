@@ -49,6 +49,19 @@
 .room-input::placeholder {
   color: var(--text-tertiary);
 }
+.room-select {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: 4px 8px;
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+}
+.room-select:focus {
+  border-color: var(--accent);
+}
 
 /* 房间号输入（居中大字） */
 .room-code-input {
@@ -788,6 +801,26 @@
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+.room-game-timer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+}
+#room-game-time-remaining {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  flex: 1;
+}
+#room-game-end-short-btn {
+  font-size: 12px;
+  padding: 2px 10px;
 }
 
 /* 角色标签 */

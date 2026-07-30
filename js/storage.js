@@ -1,5 +1,5 @@
 /**
- * 数据持久化 — 从 app.js 拆出的独立模块 (#18)
+ * 数据持久化
  * =============================================
  * localStorage 读写，仅处理纯数据
  */
@@ -19,6 +19,8 @@ class Storage {
           center: c.center,
           maxRadius: c.maxRadius,
           interval: c.interval,
+          name: c.name || '',
+          color: c.color || '',
           createdAt: c.createdAt
         })),
         selectedCircleId: mapManager.selectedCircleId,

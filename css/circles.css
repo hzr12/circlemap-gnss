@@ -148,6 +148,7 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background 0.15s;
+  border-left: 3px solid transparent;
 }
 
 .circle-item:hover {
@@ -398,5 +399,70 @@
 .npc-dist-line .player-tag {
   font-size: 9px;
   padding: 0 3px;
+}
+
+/* ── 圆圈自定义（圈距/名称/颜色） ─────────────── */
+.circle-custom-section {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-color);
+}
+.circle-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.circle-custom-row .field-label {
+  min-width: 32px;
+  font-size: 12px;
+}
+.circle-interval-input {
+  width: 80px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 4px 8px;
+  outline: none;
+}
+.circle-interval-input:focus {
+  border-color: var(--accent);
+}
+.circle-name-input {
+  flex: 1;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 4px 8px;
+  outline: none;
+}
+.circle-name-input:focus {
+  border-color: var(--accent);
+}
+.circle-color-presets {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.circle-color-preset {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: var(--c);
+  cursor: pointer;
+  transition: transform 0.15s, border-color 0.15s;
+  padding: 0;
+}
+.circle-color-preset:hover {
+  transform: scale(1.15);
+}
+.circle-color-preset.active {
+  border-color: var(--accent-1);
+  box-shadow: 0 0 0 1px var(--accent-1);
 }
 

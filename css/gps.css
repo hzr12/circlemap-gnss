@@ -111,7 +111,7 @@
   font-weight: 400;
 }
 
-.gps-speed, .gps-altitude {
+.gps-speed, .gps-altitude, .gps-heading {
   color: var(--text-tertiary);
   font-family: var(--font-sans);
   font-weight: 400;

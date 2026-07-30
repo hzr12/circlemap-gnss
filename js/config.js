@@ -82,6 +82,9 @@ const CONFIG = {
   TRAIL_JITTER_FACTOR: 1.5,            // 抖动检测：位移必须 > accuracy × 倍数才记录
   TRAIL_MAX_POINTS: 500,                // 轨迹最大点数
 
+  // ----- Debug -----
+  DEBUG: false,                         // debug 日志开关，true=输出 console.log/console.info
+
   // ----- UI -----
   MOBILE_BREAKPOINT: 480,               // 移动端断点（像素）
   DEFAULT_TOAST_DURATION: 3000,         // Toast 默认显示时长（毫秒）

@@ -75,6 +75,7 @@ class App {
     this._pageShowHandler = null;     // pageshow 处理器引用
     this._lastSpeed = null;           // 上次速度（m/s）
     this._lastAltitude = null;        // 上次海拔（米）
+    this._lastHeading = null;         // 上次方位角（度）
     this._batteryLevel = null;        // 电池电量（0-1）
     this._batteryCharging = false;    // 是否在充电
     this._battery = null;             // BatteryManager 引用（用于清理）
@@ -353,6 +354,56 @@ class App {
       }
     });
 
+    // —— 圆圈自定义：圈距 / 名称 / 颜色 ——
+    this._circleIntervalInput = document.getElementById('circle-interval-input');
+    this._circleNameInput = document.getElementById('circle-name-input');
+    this._circleSelectedColor = '#FF6B6B';
+    this._circleColorPresets = document.getElementById('circle-color-presets');
+    if (this._circleColorPresets) {
+      this._circleColorPresets.querySelectorAll('.circle-color-preset').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          this._circleColorPresets.querySelectorAll('.circle-color-preset').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          this._circleSelectedColor = btn.dataset.color;
+          // 若有选中的圆，实时更新颜色
+          const sel = this.mapManager.getSelectedCircle();
+          if (sel && btn.dataset.color) {
+            this.mapManager.updateCircle(sel.id, { color: btn.dataset.color });
+            this._dirty = true;
+            this._updateCircleList(true);
+            this._updateInfo();
+            if (this.roomManager && this._roomJoined) this.roomManager.publishCircle('update', sel);
+          }
+        });
+      });
+    }
+    // 圈距输入 → 实时更新
+    if (this._circleIntervalInput) {
+      this._circleIntervalInput.addEventListener('change', () => {
+        const sel = this.mapManager.getSelectedCircle();
+        if (!sel) return;
+        const v = parseInt(this._circleIntervalInput.value, 10);
+        if (isNaN(v) || v < 10) return;
+        this.mapManager.updateCircle(sel.id, { interval: v });
+        this._dirty = true;
+        this._updateCircleList(true);
+        this._updateInfo();
+        if (this.roomManager && this._roomJoined) this.roomManager.publishCircle('update', sel);
+      });
+    }
+    // 名称输入 → 实时更新
+    if (this._circleNameInput) {
+      this._circleNameInput.addEventListener('change', () => {
+        const sel = this.mapManager.getSelectedCircle();
+        if (!sel) return;
+        this.mapManager.updateCircle(sel.id, { name: this._circleNameInput.value.trim() || '' });
+        this._dirty = true;
+        this._updateCircleList(true);
+        this._updateInfo();
+        if (this.roomManager && this._roomJoined) this.roomManager.publishCircle('update', sel);
+      });
+    }
+
     // —— 选点至我的位置按钮 ——
     document.getElementById('center-to-me-btn').addEventListener('click', () => {
       if (!this.myPosition) {
@@ -610,6 +661,11 @@ class App {
     this._roomGameRandomBtn = document.getElementById('room-game-random-btn');
     this._roomGameRoleDisplay = document.getElementById('room-game-role-display');
     this._roomGameHostBadge = document.getElementById('room-game-host-badge');
+    this._roomEndTimeSelect = document.getElementById('room-end-time-select');
+    this._roomGameEndInput = document.getElementById('room-game-end-input');
+    this._roomGameTimerRow = document.getElementById('room-game-timer-row');
+    this._roomGameTimeRemaining = document.getElementById('room-game-time-remaining');
+    this._roomGameEndShortBtn = document.getElementById('room-game-end-short-btn');
 
     // —— 赛后统计 ————
     this._roomStatsModal = document.getElementById('room-stats-modal');
@@ -622,6 +678,7 @@ class App {
     this._roomGameEndBtn.addEventListener('click', () => this._roomEndGame());
     this._roomGameAssignBtn.addEventListener('click', () => this._roomAssignRole());
     this._roomGameRandomBtn.addEventListener('click', () => this._roomRandomAssign());
+    if (this._roomGameEndShortBtn) this._roomGameEndShortBtn.addEventListener('click', () => this._roomEndGame());
     const closeStats = () => this._roomStatsModal.classList.remove('visible');
     if (this._roomStatsClose) this._roomStatsClose.addEventListener('click', closeStats);
     if (this._roomStatsBackdrop) this._roomStatsBackdrop.addEventListener('click', closeStats);
@@ -876,6 +933,11 @@ class App {
     this.myPositionTime = Date.now();
     this._isManualPosition = true;
     this._prevDistances = {};
+    this._lastSpeed = null;
+    this._lastAltitude = null;
+    this._lastHeading = null;
+    this._lastCalcPos = null;
+    this._lastCalcTime = null;
     this._lastAccuracy = 50;
     this.mapManager.setMyPos(pos);
     this.mapManager.setLocation(pos, 50); // 手动定位默认精度 50m
@@ -909,7 +971,10 @@ class App {
       return;
     }
 
-    const newCircleId = this.mapManager.addCircle(this.center, this.circleRadius);
+    const interval = parseInt(this._circleIntervalInput?.value, 10) || CONFIG.CONCENTRIC_INTERVAL;
+    const name = this._circleNameInput?.value?.trim() || '';
+    const color = this._circleSelectedColor || '';
+    const newCircleId = this.mapManager.addCircle(this.center, this.circleRadius, interval, name, color);
     this._updateInfo();
     this._updateCircleList(true);
     this._updateStatusBar(true);
@@ -960,6 +1025,7 @@ class App {
       this._isManualPosition = false; // #13 GPS 定位覆盖手动
       this._lastSpeed = pos.speed;
       this._lastAltitude = pos.altitude;
+      this._lastHeading = pos.heading;
       this._lastCalcPos = { lat: convPos.lat, lng: convPos.lng };
       this._lastCalcTime = pos.timestamp || Date.now();
       this._lastAccuracy = pos.accuracy;
@@ -1020,9 +1086,15 @@ class App {
         if (this._speedHistory.length > 500) this._speedHistory.shift();
         this._updateSpeedChart();
       }
+      if (!this._queuePending) this._queuePending = 0;
+      if (this._queuePending >= 3) return;
+      this._queuePending++;
       this._processQueue = this._processQueue
-        .then(() => this._processPosition(pos))
-        .catch(() => {}); // 防止队列断裂
+        .then(() => {
+          this._queuePending--;
+          return this._processPosition(pos);
+        })
+        .catch(() => { this._queuePending--; });
     };
     this.gpsManager.onError = (err) => {
       console.warn('[GPS] 追踪出错:', err.message);
@@ -1247,6 +1319,7 @@ class App {
       this._lastAccuracy = pos.accuracy;
       this._lastSpeed = pos.speed;
       this._lastAltitude = pos.altitude;
+      this._lastHeading = pos.heading;
       this._lastCalcPos = { lat: convPos.lat, lng: convPos.lng };
       this._lastCalcTime = pos.timestamp || Date.now();
       this.mapManager.setMyPos(convPos);
@@ -1280,7 +1353,12 @@ class App {
 
       // 后台定位回调触发 MQTT 发布（原生线程回调不受 WebView 节流）
       if (this.roomManager && this.roomManager.isConnected()) {
-        this.roomManager.publishFromBackground();
+        this.roomManager.publishFromBackground(
+          convPos.lat, convPos.lng,
+          pos.accuracy || 0,
+          this._lastSpeed || 0,
+          pos.heading || 0
+        );
       }
     } catch (e) {
       // 静默
@@ -1320,95 +1398,6 @@ class App {
     console.log('[WakeLock] 已释放唤醒锁');
   }
 
-  /* ── 速度曲线 ─────────────────────────────────────── */
-
-  _showSpeedChart() {
-    const section = document.getElementById('speed-chart-section');
-    if (!section) return;
-    section.classList.remove('hidden');
-    this._initSpeedChart();
-    // 绑定折叠/展开
-    const header = section.querySelector('.speed-chart-header');
-    const body = document.getElementById('speed-chart-body');
-    const toggle = document.getElementById('speed-chart-toggle');
-    if (header && body && toggle) {
-      header.onclick = () => {
-        body.classList.toggle('collapsed');
-        toggle.classList.toggle('collapsed');
-      };
-    }
-  }
-
-  _hideSpeedChart() {
-    const section = document.getElementById('speed-chart-section');
-    if (section) section.classList.add('hidden');
-  }
-
-  _initSpeedChart() {
-    if (this._speedChart) return;
-    const canvas = document.getElementById('speed-chart-canvas');
-    if (!canvas || typeof Chart === 'undefined') return;
-    const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
-    const gridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
-    const textColor = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)';
-    this._speedChart = new Chart(canvas, {
-      type: 'line',
-      data: {
-        datasets: [{
-          data: [],
-          borderColor: '#4fc3f7',
-          backgroundColor: 'rgba(79,195,247,0.15)',
-          borderWidth: 1.5,
-          pointRadius: 0,
-          tension: 0.3,
-          fill: true
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: false,
-        plugins: { legend: { display: false }, tooltip: { enabled: false } },
-        scales: {
-          x: {
-            type: 'linear',
-            title: { display: true, text: '时间(秒)', color: textColor, font: { size: 10 } },
-            grid: { color: gridColor },
-            ticks: { color: textColor, font: { size: 9 }, maxTicksLimit: 6 }
-          },
-          y: {
-            title: { display: true, text: '速度(m/s)', color: textColor, font: { size: 10 } },
-            grid: { color: gridColor },
-            ticks: { color: textColor, font: { size: 9 }, maxTicksLimit: 5 },
-            beginAtZero: true
-          }
-        }
-      }
-    });
-  }
-
-  _updateSpeedChart() {
-    if (!this._speedChart) return;
-    // 节流：每 5 个位置点或间隔 > 30s 才更新
-    const now = Date.now();
-    if (this._lastChartUpdate && (this._speedHistory.length % 5 !== 0) && now - this._lastChartUpdate < 30000) return;
-    this._lastChartUpdate = now;
-    const data = this._speedChart.data.datasets[0].data;
-    // 降采样：只取最近 120 个点（每 5s 一个点 → 10 分钟历史）
-    const window = this._speedHistory.slice(-120);
-    data.length = 0;
-    for (const p of window) data.push(p);
-    this._speedChart.update('none');
-    // 更新信息文字（降采样计算）
-    const infoEl = document.getElementById('speed-chart-info');
-    if (infoEl && window.length) {
-      const last = window[window.length - 1];
-      const avg = window.reduce((s, p) => s + p.y, 0) / window.length;
-      const max = Math.max(...window.map(p => p.y));
-      infoEl.textContent = `当前 ${last.y.toFixed(1)} 平均 ${avg.toFixed(1)} 最高 ${max.toFixed(1)} m/s`;
-    }
-  }
-
   /**
    * 获取渲染用的轨迹坐标数组（根据平滑开关决定是否平滑）
    * @returns {Array}
@@ -1434,7 +1423,7 @@ class App {
     this._trailDirty = true;
     Storage.saveTrail(this.trail); // 清除持久化
 
-    this._showUndoToast('轨迹已清除', () => {
+    Toast.showUndo('轨迹已清除', () => {
       this.trail.positions = savedPositions;
       this.trail.lastPos = savedLastPos;
       this.trail.isRecording = savedRecording;
@@ -1729,8 +1718,19 @@ class App {
       const drawW = mapW - margin * 2;
       const drawH = mapH - margin * 2;
 
-      const toX = (lng) => mapX + margin + ((lng - minLng) / lngSpan) * drawW;
-      const toY = (lat) => mapY + margin + ((maxLat - lat) / latSpan) * drawH; // lat flipped
+      // 纵横比校正：补偿经度在非赤道处的压缩
+      const midLat = (minLat + maxLat) / 2;
+      const cosLat = Math.cos(midLat * Math.PI / 180);
+      const dataW = lngSpan * cosLat;          // 经度跨度"折合"为纬度等效度数
+      const dataH = latSpan;
+      const scale = Math.min(drawW / dataW, drawH / dataH);
+      const usedW = dataW * scale;
+      const usedH = dataH * scale;
+      const originX = mapX + margin + (drawW - usedW) / 2;
+      const originY = mapY + margin + (drawH - usedH) / 2;
+
+      const toX = (lng) => originX + (lng - minLng) * cosLat * scale;
+      const toY = (lat) => originY + (maxLat - lat) * scale; // lat flipped
 
       // 绘制采样点（同心圆中心）
       const circles = this.mapManager.getCircles();
@@ -1739,8 +1739,8 @@ class App {
       for (const c of circles) {
         const cx = toX(c.center.lng);
         const cy = toY(c.center.lat);
-        // 圆圈半径映射
-        const rPx = Math.max(3 * S, (c.maxRadius / 111320) / latSpan * drawH);
+        // 圆圈半径映射（与校正后的投影 scale 一致）
+        const rPx = Math.max(3 * S, c.maxRadius / 111320 * scale);
         ctx.beginPath();
         ctx.arc(cx, cy, rPx, 0, Math.PI * 2);
         ctx.stroke();
@@ -1788,6 +1788,44 @@ class App {
         ctx.font = `${11 * S}px "HarmonyOS Sans", sans-serif`;
         ctx.fillText('起点', toX(first.lng) + 8 * S, toY(first.lat) + 4 * S);
         ctx.fillText('终点', toX(last.lng) + 8 * S, toY(last.lat) + 4 * S);
+      }
+
+      // ── 比例尺 ──
+      {
+        const mpp = 111320 / scale; // 每像素对应米数
+        const targetPx = 100 * S;
+        let barMeters = Math.round(targetPx * mpp);
+        const mag = Math.pow(10, Math.floor(Math.log10(barMeters)));
+        const norm = barMeters / mag;
+        let niceMeters;
+        if (norm < 1.5) niceMeters = 1 * mag;
+        else if (norm < 3.5) niceMeters = 2 * mag;
+        else if (norm < 7.5) niceMeters = 5 * mag;
+        else niceMeters = 10 * mag;
+        const barPx = niceMeters / mpp;
+        const barLabel = niceMeters >= 1000
+          ? (niceMeters / 1000).toFixed(1) + 'km'
+          : niceMeters + 'm';
+        const barX = mapX + margin + 8 * S;
+        const barY = mapY + mapH - margin - 8 * S;
+        ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.5)';
+        ctx.lineWidth = 2 * S;
+        ctx.beginPath();
+        ctx.moveTo(barX, barY);
+        ctx.lineTo(barX + barPx, barY);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(barX, barY - 4 * S);
+        ctx.lineTo(barX, barY + 4 * S);
+        ctx.moveTo(barX + barPx, barY - 4 * S);
+        ctx.lineTo(barX + barPx, barY + 4 * S);
+        ctx.stroke();
+        ctx.fillStyle = isDark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.5)';
+        ctx.font = `${10 * S}px "HarmonyOS Sans", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(barLabel, barX + barPx / 2, barY + 5 * S);
+        ctx.textAlign = 'left';
       }
 
       // ── 速度曲线图（从 SpeedChart canvas 抓取） ──
@@ -1930,24 +1968,16 @@ class App {
   }
 
   /**
-   * 计算轨迹总移动距离
-   */
-  _getTrailDistance() {
-    const dist = this.trail.getDistance();
-    return formatDistance(dist);
-  }
-
-  /**
    * 更新轨迹 UI（按钮状态 + 距离显示）
    */
   _updateTrailUI() {
-    const btn = document.getElementById('trail-record-btn');
-    const pauseBtn = document.getElementById('trail-pause-btn');
-    const clearBtn = document.getElementById('trail-clear-btn');
-    const statsBtn = document.getElementById('trail-stats-btn');
-    const exportBtn = document.getElementById('export-report-btn');
-    const smoothBtn = document.getElementById('trail-smooth-btn');
-    const distEl = document.getElementById('trail-distance');
+    const btn = this._trailRecordBtn || (this._trailRecordBtn = document.getElementById('trail-record-btn'));
+    const pauseBtn = this._trailPauseBtn || (this._trailPauseBtn = document.getElementById('trail-pause-btn'));
+    const clearBtn = this._trailClearBtn || (this._trailClearBtn = document.getElementById('trail-clear-btn'));
+    const statsBtn = this._trailStatsBtn || (this._trailStatsBtn = document.getElementById('trail-stats-btn'));
+    const exportBtn = this._trailExportBtn || (this._trailExportBtn = document.getElementById('export-report-btn'));
+    const smoothBtn = this._trailSmoothBtn || (this._trailSmoothBtn = document.getElementById('trail-smooth-btn'));
+    const distEl = this._trailDistEl || (this._trailDistEl = document.getElementById('trail-distance'));
 
     // 记录按钮
     if (btn) {
@@ -2007,45 +2037,13 @@ class App {
   }
 
   /**
-   * 渲染最近定位列表
-   */
-  _updateRecentFixes() {
-    const listEl = document.getElementById('fix-list');
-    if (!listEl) return;
-    const countEl = document.getElementById('fix-count');
-    if (!this._recentFixes.length) {
-      listEl.innerHTML = '<div class="empty-state">暂无定位数据</div>';
-      if (countEl) countEl.textContent = '0';
-      return;
-    }
-    if (countEl) countEl.textContent = this._recentFixes.length;
-    let html = '';
-    for (let i = this._recentFixes.length - 1; i >= 0; i--) {
-      const f = this._recentFixes[i];
-      const d = new Date(f.time);
-      const pad = (n) => String(n).padStart(2, '0');
-      const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-      const accStr = f.accuracy ? `±${f.accuracy.toFixed(0)}m` : '--';
-      let accClass = 'acc-poor';
-      if (f.accuracy < 15) accClass = 'acc-good';
-      else if (f.accuracy < 50) accClass = 'acc-ok';
-      const manualTag = f.isManual ? ' <span class="fix-manual"> 手动</span>' : '';
-      const bgTag = f.isBackground ? ' <span class="fix-bg">后台</span>' : '';
-      const coordStr = `${f.lat.toFixed(4)}, ${f.lng.toFixed(4)}`;
-      html += `<div class="fix-item">
-        <span class="fix-time">${timeStr}</span>
-        <span class="fix-accuracy ${accClass}">${accStr}</span>
-        <span class="fix-coord">${coordStr}${manualTag}${bgTag}</span>
-      </div>`;
-    }
-    listEl.innerHTML = html;
-  }
-
-  /**
    * 处理位置数据：GCJ-02 转换 + UI 刷新
    */
   async _processPosition(pos) {
     try {
+    // 丢弃过期位置（队列积压时的兜底）
+    const age = Date.now() - (pos.timestamp || Date.now());
+    if (age > CONFIG.GPS_WATCH_TIMEOUT * 3) return;
     // 跟踪原始坐标用于下次位移判断
     this._lastRawPos = {lat: pos.lat, lng: pos.lng};
 
@@ -2057,14 +2055,15 @@ class App {
       this._lastSpeed = pos.speed;
     } else if (this._lastCalcPos) {
       const dt = (pos.timestamp || Date.now()) - this._lastCalcTime;
-      if (dt > 100) { // 至少 100ms 才计算，避免除零或噪音
+      if (dt > 100) {
         const dist = calcDistance(this._lastCalcPos, convPos);
-        this._lastSpeed = dist / (dt / 1000); // m/s
+        this._lastSpeed = dist / (dt / 1000);
       }
     } else {
       this._lastSpeed = null;
     }
     this._lastAltitude = pos.altitude;
+    this._lastHeading = pos.heading;
     this._lastCalcPos = { lat: convPos.lat, lng: convPos.lng };
     this._lastCalcTime = pos.timestamp || Date.now();
     this._lastAccuracy = pos.accuracy;
@@ -2152,8 +2151,8 @@ class App {
       this._updateStatusBar(true);
       this._updateInfo();
       this._lastFullUpdate = now;
-    } else if (now - this._lastFullUpdate > 30000) {
-      // 30s 强制一次全量更新（保证时间/过期状态准确）
+    } else if (now - this._lastFullUpdate > 60000) {
+      // 60s 强制一次全量更新（保证时间/过期状态准确）
       this._lastDistPos = convPos;
       this._updateCircleList(true);
       this._updateStatusBar(true);
@@ -2211,6 +2210,8 @@ class App {
       this.mapManager.setMyPos(convPos);
       this._isManualPosition = false; // #13 GPS 定位覆盖手动
       this._lastAltitude = pos.altitude;
+      this._lastSpeed = pos.speed;
+      this._lastHeading = pos.heading;
       this._lastAccuracy = pos.accuracy;
       this._recordFix(pos, convPos);
       this.mapManager.setLocation(convPos, pos.accuracy, pos.heading); // #17 精度环
@@ -2283,7 +2284,7 @@ class App {
     this._saveState();
     if (this.roomManager && this._roomJoined) this.roomManager.publishCircle('clear');
 
-    this._showUndoToast('已清除全部', () => {
+    Toast.showUndo('已清除全部', () => {
       this.mapManager.circles = savedCircles;
       this.mapManager.selectedCircleId = savedSelectedId;
       this._prevDistances = savedPrevDistances;
@@ -2366,6 +2367,13 @@ class App {
     }
     this._prevDistances[circle.id] = dist;
     return { dist, bearing, bearingStr, within, stale, trend, trendHtml };
+  }
+
+  _escapeHtml(str) {
+    if (!str) return '';
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
   }
 
   /* ============= 主题切换 ============= */
@@ -2741,143 +2749,6 @@ class App {
     }
   }
 
-  /* ============= 状态 & 信息更新 ============= */
-
-  /**
-   * 更新顶部 GPS 状态条
-   */
-  _updateStatusBar(force) {
-    if (!this._statusEl) return;
-    if (!this.myPosition) {
-      this._statusEl.innerHTML = '<div class="gps-line1"><span class="gps-dot"></span><span class="gps-offline">⊙ 未定位，点击 GPS 按钮定位</span></div>';
-      // 未定位时清空底部卫星 bar，避免上一次 '等待卫星...' 残留
-      if (this._gnssBarEl) this._gnssBarEl.innerHTML = '';
-      return;
-    }
-    // 节流：不强制刷新时跳过高频调用
-    const now = Date.now();
-    if (!force && this._lastStatusUpdate && now - this._lastStatusUpdate < CONFIG.STATUS_THROTTLE_MS) return;
-    this._lastStatusUpdate = now;
-    // 找最近圆
-    const circles = this.mapManager.getCircles();
-    let nearest = null;
-    let nearDist = Infinity;
-    for (const c of circles) {
-      const d = calcDistance(this.myPosition, c.center);
-      if (d < nearDist) { nearDist = d; nearest = c; }
-    }
-    let nearStr = '';
-    if (nearest) {
-      const { within } = this._calcCircleTrend(nearest);
-      nearStr = within === 'inrange'
-        ? `最近圆 ≤ ${formatDistance(nearest.maxRadius)} `
-        : within === 'maybe'
-          ? `最近圆 ${formatDistance(nearDist)} `
-          : `最近圆 ${formatDistance(nearDist)}`;
-    }
-    const elapsed = this._formatElapsed();
-    const stale = this._isPositionStale();
-    const isTracking = this._isWatching;
-    const isManual = this._isManualPosition; // #13
-    const isDowngraded = this.gpsManager.isDowngraded; // GPS 降级状态
-    // gps-dot 状态
-    let dotClass = '';
-    if (stale) {
-      dotClass = 'gps-dot stale';
-    } else if (isTracking) {
-      dotClass = 'gps-dot tracking';
-    } else {
-      dotClass = 'gps-dot online';
-    }
-    const watchingIcon = isTracking ? ' <span class="gps-tracking">◉</span>' : '';
-    const staleIcon = stale ? ' <span class="gps-stale"> 已过期</span>' : '';
-    const followIcon = this._followMode ? ' <span class="gps-follow"> 跟随中</span>' : ''; // #12
-    const manualIcon = isManual ? ' <span class="gps-manual"> 手动定位</span>' : ''; // #15
-    const degradedIcon = isDowngraded ? ' <span class="gps-degraded"> 低精度</span>' : '';
-
-    // GNSS 卫星数据（仅 Capacitor 原生端可用），始终渲染
-    let gnssHtml = '';
-    if (this.gpsManager.hasGnssPlugin) {
-      if (this.gpsManager.gnssVisibleCount > 0) {
-        const used = this.gpsManager.gnssUsedCount;
-        const visible = this.gpsManager.gnssVisibleCount;
-        const snr = this.gpsManager.gnssAvgSnr;
-        gnssHtml = `<span class="gnss-indicator" title="参与定位 ${used}/${visible}, 平均信噪比 ${snr.toFixed(0)}dB-Hz">` +
-          ` 定位:${used} 可见:${visible} 信噪比:${snr.toFixed(0)}dB</span>`;
-      } else {
-        gnssHtml = `<span class="gnss-indicator" style="opacity:0.5"> 等待卫星...</span>`;
-      }
-    }
-
-    // 信号强度（基于 GPS 精度）
-    let signalHtml = '';
-    if (this._lastAccuracy != null) {
-      let bars, label;
-      if (this._lastAccuracy <= 10) { bars = 4; label = '极好'; }
-      else if (this._lastAccuracy <= 30) { bars = 3; label = '良好'; }
-      else if (this._lastAccuracy <= 100) { bars = 2; label = '一般'; }
-      else { bars = 1; label = '弱'; }
-      signalHtml = `<span class="gps-signal" title="精度 ±${Math.round(this._lastAccuracy)}m">` +
-        `<span class="signal-bar s1${bars >= 1 ? ' on' : ''}"></span>` +
-        `<span class="signal-bar s2${bars >= 2 ? ' on' : ''}"></span>` +
-        `<span class="signal-bar s3${bars >= 3 ? ' on' : ''}"></span>` +
-        `<span class="signal-bar s4${bars >= 4 ? ' on' : ''}"></span>` +
-        `</span>`;
-    }
-
-    // 第二行：信号 + 速度 + 海拔 + 最近圆（GNSS 数据已移到底部独立 gnss-bar 不再放这行）
-    const line2Parts = [];
-    if (signalHtml) line2Parts.push(signalHtml);
-    if (this._lastSpeed != null) {
-      const kmh = this._lastSpeed * 3.6;
-      line2Parts.push(`<span class="gps-speed">${kmh.toFixed(1)}km/h</span>`);
-    }
-    if (this._lastAltitude != null) {
-      line2Parts.push(`<span class="gps-altitude">${Math.round(this._lastAltitude)}m</span>`);
-    }
-    if (this._batteryLevel != null) {
-      const pct = Math.round(this._batteryLevel * 100);
-      const timeStr = this._getBatteryTimeStr();
-      const label = this._batteryCharging ? '充电中' : (timeStr ? `约${timeStr}` : '');
-      line2Parts.push(`<span class="gps-battery" title="电量 ${pct}%">${pct}%${label ? ' ' + label : ''}</span>`);
-    }
-    if (nearStr) line2Parts.push(nearStr);
-    const line2 = line2Parts.length ? line2Parts.join(' ｜ ') : '<span style="opacity:0.5">位置待更新</span>';
-
-    // 第三行：天气
-    const line3 = this._weatherHtml ? `<div class="gps-line2">${this._weatherHtml}</div>` : '';
-
-    this._statusEl.innerHTML =
-      `<div class="gps-line1"><span class="${dotClass}"></span><span class="gps-online">${isManual ? '' : '◉'} 已定位</span>${degradedIcon}${manualIcon}${watchingIcon}${followIcon} <span class="gps-elapsed">(${elapsed})</span>${staleIcon}</div>` +
-      `<div class="gps-line2">${line2}</div>` +
-      line3;
-
-    // 底部卫星 bar：独立渲染
-    if (this._gnssBarEl) {
-      this._gnssBarEl.innerHTML = gnssHtml || '';
-    }
-  }
-
-  /**
-   * #12 — 点击状态条切换"地图跟随"模式
-   * 跟随模式开启时，每次位置更新都 flyTo 当前位置
-   */
-  _toggleFollowMode() {
-    if (!this.myPosition) {
-      Toast.show(' 请先获取位置');
-      return;
-    }
-    this._followMode = !this._followMode;
-    if (this._followMode) {
-      // 开启时立即飞一次
-      this.mapManager.flyTo(this.myPosition);
-      Toast.show(' 地图跟随已开启');
-    } else {
-      Toast.show(' 地图跟随已关闭');
-    }
-    this._updateStatusBar(true);
-  }
-
   /**
    * Open-Meteo 天气代码 → 中文描述
    */
@@ -3093,282 +2964,6 @@ class App {
       return h > 0 ? `~${h}h${m}m` : `~${m}m`;
     }
     return null;
-  }
-
-  /**
-   * 更新信息展示区（显示选中圆圈的信息）
-   */
-  _updateInfo() {
-    const infoArea = document.getElementById('infoArea');
-    // 无选中圆时跳过全部 DOM 操作（60s 定时器也会调用此方法）
-    if (this.mapManager.selectedCircleId === null && infoArea.classList.contains('hidden')) return;
-    const sel = this.mapManager.getSelectedCircle();
-
-    if (!sel) {
-      infoArea.classList.add('hidden');
-      return;
-    }
-
-    infoArea.classList.remove('hidden');
-
-    document.getElementById('info-center').textContent =
-      `${sel.center.lat.toFixed(6)}, ${sel.center.lng.toFixed(6)}`;
-
-    const dmsEl = document.getElementById('info-center-dms');
-    if (dmsEl) {
-      dmsEl.textContent = `${ddToDms(sel.center.lat, 'lat')}  ${ddToDms(sel.center.lng, 'lng')}`;
-    }
-
-    document.getElementById('info-radius').textContent =
-      sel.maxRadius >= 1000
-        ? `${(sel.maxRadius / 1000).toFixed(2)} km`
-        : `${sel.maxRadius} m`;
-
-    const area = Math.PI * sel.maxRadius * sel.maxRadius;
-    document.getElementById('info-area').textContent =
-      area >= 1e6
-        ? `${(area / 1e6).toFixed(2)} km²`
-        : `${area.toFixed(0)} m²`;
-
-    const ringCount = Math.ceil(sel.maxRadius / sel.interval);
-    document.getElementById('info-rings').textContent = `${ringCount} 圈`;
-
-    // —— 距我距离 ——
-    const distEl = document.getElementById('info-distance');
-    if (this.myPosition && distEl) {
-      const { dist, bearingStr, within, stale, trendHtml } = this._calcCircleTrend(sel);
-      const manualTag = this._isManualPosition ? ' <span class="tag-manual">手动</span>' : ''; // #15
-      let rangeTag = '';
-      if (within === 'inrange') rangeTag = ' <span class="tag-inrange">范围内</span>';
-      else if (within === 'maybe') rangeTag = ' <span class="tag-maybe">可能范围内</span>';
-      distEl.innerHTML = `${formatDistance(dist)} ${trendHtml} · 方位${bearingStr}${rangeTag}${stale ? ' <span class="tag-stale">可能过期</span>' : ''}${manualTag}`;
-    } else if (distEl) {
-      distEl.textContent = '--';
-    }
-  }
-
-  /* ============= 删除恢复（撤销 toast） ============= */
-
-  /**
-   * 显示可撤销操作的 toast
-   * @param {string} message 操作提示
-   * @param {Function} onUndo 撤销回调
-   * @param {number} [duration=5000] 超时自动关闭（毫秒）
-   */
-  _showUndoToast(message, onUndo, duration) {
-    const existing = document.querySelector('.toast-msg');
-    if (existing) existing.remove();
-
-    const ms = duration || 5000;
-    const toast = document.createElement('div');
-    toast.className = 'toast-msg toast-action';
-    toast.innerHTML = `${message} <button class="toast-undo-btn">撤销</button>`;
-    document.body.appendChild(toast);
-
-    requestAnimationFrame(() => toast.classList.add('show'));
-
-    const undoBtn = toast.querySelector('.toast-undo-btn');
-    undoBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      undoBtn.disabled = true;
-      onUndo();
-      toast.classList.remove('show');
-      setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
-    });
-
-    setTimeout(() => {
-      toast.classList.remove('show');
-      setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
-    }, ms);
-  }
-
-  /* ============= 圆列表管理 ============= */
-
-  /**
-   * 选中一个圆
-   */
-  _selectCircle(id) {
-    this.mapManager.selectCircle(id);
-    const sel = this.mapManager.getSelectedCircle();
-    if (sel) {
-      // 同步半径滑块到该圆的数值（#11 对数映射）
-      this._setRadiusSliderValue(sel.maxRadius);
-      // 地图飞到圆心
-      this.mapManager.setCenter(sel.center);
-    }
-    this._updateInfo();
-    this._updateCircleList(true);
-    this._updateStatusBar(true);
-  }
-
-  /**
-   * 删除一个圆（支持撤销）
-   */
-  _deleteCircle(id) {
-    // 保存用于恢复
-    const circle = this.mapManager.circles.find(c => c.id === id);
-    if (!circle) return;
-    const wasSelected = this.mapManager.selectedCircleId === id;
-
-    this.mapManager.removeCircle(id);
-    this._updateInfo();
-    this._updateCircleList(true);
-    this._updateStatusBar(true);
-    this._dirty = true;
-    this._saveState();
-    // 清除已删除圆的趋势缓存
-    delete this._prevDistances[id];
-    if (this.roomManager && this._roomJoined) this.roomManager.publishCircle('remove', { id });
-
-    this._showUndoToast('已删除', () => {
-      this.mapManager.circles.push(circle);
-      if (wasSelected) {
-        this.mapManager.selectedCircleId = circle.id;
-      }
-      this.mapManager._scheduleRedraw();
-      this._updateInfo();
-      this._updateCircleList(true);
-      this._updateStatusBar(true);
-      this._dirty = true;
-      this._saveState();
-      if (this.roomManager && this._roomJoined) this.roomManager.publishCircle('add', circle);
-    });
-  }
-
-  /**
-   * 编辑圆的半径（选中 + 跳转到半径滑块）
-   */
-  _editCircle(id) {
-    this._selectCircle(id);
-    // 滚动面板到半径设置区
-    const radiusSection = document.querySelector('.radius-section');
-    if (radiusSection && this._bottomPanel) {
-      this._bottomPanel.scrollTo({
-        top: radiusSection.offsetTop - this._bottomPanel.offsetTop - 10,
-        behavior: 'smooth'
-      });
-    }
-    // 高亮滑块提示可调
-    this._radiusSlider.classList.add('editing');
-    // 聚焦数字输入
-    this._radiusInput.focus();
-    setTimeout(() => this._radiusSlider.classList.remove('editing'), CONFIG.EDIT_HIGHLIGHT_MS);
-    Toast.show(' 拖动滑块调整半径');
-  }
-
-  /**
-   * 渲染圆列表
-   */
-  _updateCircleList(force) {
-    const circles = this.mapManager.getCircles();
-    const selId = this.mapManager.selectedCircleId;
-
-    // 节流
-    const now = Date.now();
-    if (!force && this._lastCircleUpdate && now - this._lastCircleUpdate < CONFIG.LIST_THROTTLE_MS) return;
-    this._lastCircleUpdate = now;
-
-    // 本地圆列表
-    let html = '';
-    for (let i = 0; i < circles.length; i++) {
-      const c = circles[i];
-      const isSel = c.id === selId;
-      const ringCount = Math.max(1, Math.floor(c.maxRadius / c.interval));
-      const radiusStr = c.maxRadius >= 1000
-        ? (c.maxRadius / 1000).toFixed(1) + ' km'
-        : c.maxRadius + ' m';
-      const coordStr = c.center.lat.toFixed(4) + ', ' + c.center.lng.toFixed(4);
-      // 格式化创建时间
-      const createDate = new Date(c.createdAt || Date.now());
-      const nowDate = new Date();
-      const timeStr = createDate.toTimeString().slice(0, 8); // HH:MM:SS
-      const dateStr = createDate.toDateString() === nowDate.toDateString()
-        ? timeStr
-        : `${createDate.getMonth() + 1}/${createDate.getDate()} ${timeStr}`;
-
-      // 距离信息 + 趋势
-      let distStr = '';
-      let distClass = '';
-      if (this.myPosition) {
-        const { dist, bearingStr, within, stale, trend } = this._calcCircleTrend(c);
-        const rangeTag = within === 'inrange' ? ' [范围内]' : within === 'maybe' ? ' [可能范围内]' : ' [范围外]';
-        distStr = formatDistance(dist) + rangeTag + trend + (stale ? ' ' : '') + (this._isManualPosition ? ' ' : '') + ` 方位${bearingStr}`; // #15 手动标记
-        distClass = within === 'inrange' ? 'dist-within' : within === 'maybe' ? 'dist-maybe' : 'dist-outside';
-      }
-
-      html += `<div class="circle-item${isSel ? ' active' : ''}" data-id="${c.id}">
-        <span class="circle-idx">#${i + 1}</span>
-        <div class="circle-summary">
-          <div class="circle-name">${radiusStr} <span class="circle-created">${dateStr}</span></div>
-          <div class="circle-meta">${ringCount}圈 · ${coordStr}</div>
-        </div>
-        <span class="circle-dist ${distClass}">${distStr}</span>
-        <button class="circle-edit" aria-label="编辑半径">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
-            <path d="m15 5 4 4"/>
-          </svg>
-        </button>
-        <button class="circle-del" aria-label="删除此圆">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
-        </button>
-      </div>`;
-    }
-
-    // NPC 视角：显示其他队伍的圆 + 各队员到圆心的距离
-    if (this.roomManager && this.roomManager.isNpcTeam() && this.roomManager.isConnected()) {
-      const remoteCircles = this.roomManager.getRemoteCircles();
-      const players = this.roomManager.getPlayers();
-      const teams = this.roomManager.getTeams();
-      const myInfo = this.roomManager.getMyInfo();
-      if (remoteCircles.length) {
-        html += `<div class="circle-section-divider">其他队伍的圆</div>`;
-        remoteCircles.forEach((rc, idx) => {
-          const radiusStr = rc.maxRadius >= 1000
-            ? (rc.maxRadius / 1000).toFixed(1) + ' km'
-            : rc.maxRadius + ' m';
-          const authorName = rc.name || '玩家';
-          const teamColor = rc.color || '#888';
-          // 计算每个鬼/人队员到该圆心的距离 + 范围内/外状态
-          const distLines = [];
-          Object.values(players).forEach((p) => {
-            if (p.id === myInfo.id || !p.online || p.spectator || p.isNpc) return;
-            if (p.lat == null || p.lng == null) return;
-            const dist = calcDistance({ lat: p.lat, lng: p.lng }, rc.center);
-            const pName = p.name || '未知';
-            const tag = p.role === 'ghost' ? '鬼' : p.role === 'hunter' ? '人' : '';
-            let rangeTag = '';
-            if (dist <= rc.maxRadius) {
-              rangeTag = ' <span class="tag-inrange">范围内</span>';
-            } else {
-              // 无精度数据时用保守估计 15m
-              const fallbackAcc = Math.max(this._lastAccuracy || 0, 15);
-              if ((dist - fallbackAcc) <= rc.maxRadius) {
-                rangeTag = ' <span class="tag-maybe">可能范围内</span>';
-              } else {
-                rangeTag = ' <span class="tag-outside">范围外</span>';
-              }
-            }
-            distLines.push(`<span class="npc-dist-line"><span class="npc-dist-player" style="color:${p.color || '#ccc'}">${this._escapeHtml(pName)}</span>${tag ? `<span class="player-tag tag-${p.role}">${tag}</span>` : ''} ${formatDistance(dist)}${rangeTag}</span>`);
-          });
-          html += `<div class="circle-item remote" data-remote-idx="${idx}">
-            <span class="circle-idx" style="border-color:${teamColor}">R${idx + 1}</span>
-            <div class="circle-summary">
-              <div class="circle-name">${radiusStr} <span class="circle-created" style="color:${teamColor}">${this._escapeHtml(authorName)}</span></div>
-              ${distLines.length ? `<div class="circle-meta npc-dist-list">${distLines.join('')}</div>` : '<div class="circle-meta">暂无位置数据</div>'}
-            </div>
-          </div>`;
-        });
-      }
-    }
-
-    if (!html) {
-      html = `<div class="empty-state">暂无同心圆，点击「绘制圆形」添加</div>`;
-    }
-    this._circleListEl.innerHTML = html;
-    this._circleCountEl.textContent = circles.length;
   }
 
   /* ============= URL 参数 ============= */
@@ -3591,23 +3186,6 @@ class App {
     }
   }
 
-  _updateSharingBtn() {
-    if (!this._roomSharingBtn || !this.roomManager) return;
-    const sharing = this.roomManager.isSharingEnabled();
-    const npc = this.roomManager.isNpcTeam();
-    if (npc) {
-      this._roomSharingBtn.textContent = ' NPC 持续共享中';
-      this._roomSharingBtn.classList.add('sharing-off');
-      this._roomSharingBtn.disabled = true;
-      return;
-    }
-    this._roomSharingBtn.disabled = false;
-    this._roomSharingBtn.textContent = sharing ? ' 共享定位' : ' 定位已关闭';
-    this._roomSharingBtn.classList.toggle('sharing-off', !sharing);
-  }
-
-  // ---------- 团队健康度 ----------
-
   /**
    * 将本地电量注入 roomManager，下次 ping 时发送给其他玩家
    */
@@ -3615,964 +3193,6 @@ class App {
     if (this.roomManager && this._batteryLevel != null) {
       this.roomManager.setBatteryInfo(this._batteryLevel, !!this._batteryCharging);
     }
-  }
-
-  /**
-   * 更新团队健康度面板
-   */
-  _updateRoomHealthPanel() {
-    if (!this._roomHealthContent || !this.roomManager) return;
-    const players = this.roomManager.getPlayers();
-    const myInfo = this.roomManager.getMyInfo();
-    const now = Date.now();
-    const teams = this.roomManager.getTeams();
-    let html = '';
-    // 自己
-    if (myInfo) {
-      html += this._buildHealthRow(myInfo.name, myInfo.color, true, this._batteryLevel, this._lastAccuracy, now, this.myPositionTime || now, '');
-    }
-    // 其他玩家
-    Object.values(players).forEach((p) => {
-      if (p.id === (myInfo && myInfo.id)) return;
-      if (!p.online) return;
-      const teamName = (p.teamId && teams[p.teamId]) ? teams[p.teamId].name : '';
-      html += this._buildHealthRow(p.name, p.color, p.online, p.batteryLevel, p.acc, now, p.ts, teamName);
-    });
-    this._roomHealthContent.innerHTML = html || '<div class="room-empty">暂无在线玩家</div>';
-  }
-
-  /**
-   * 构建一行健康度条目
-   */
-  _buildHealthRow(name, color, online, batteryLvl, acc, now, ts, teamName) {
-    const isOffline = !online;
-    // 电量
-    let battHtml = '<span class="health-na">—</span>';
-    if (batteryLvl != null && !isOffline) {
-      const pct = Math.round(batteryLvl * 100);
-      const cls = pct > 50 ? 'health-batt-good' : (pct > 20 ? 'health-batt-warn' : 'health-batt-low');
-      battHtml = `<span class="${cls}">${pct}%</span>`;
-    }
-    // 精度
-    let accHtml = '<span class="health-na">—</span>';
-    if (acc != null && acc > 0 && !isOffline) {
-      const cls = acc <= 15 ? 'health-acc-good' : (acc <= 50 ? 'health-acc-ok' : 'health-acc-poor');
-      accHtml = `<span class="${cls}">${acc < 1 ? '<1' : Math.round(acc)}m</span>`;
-    }
-    // 最后更新
-    let timeHtml = '<span class="health-na">—</span>';
-    if (ts && !isOffline) {
-      const ago = Math.round((now - ts) / 1000);
-      const cls = ago <= 10 ? 'health-time-fresh' : (ago <= 60 ? 'health-time-ok' : 'health-time-stale');
-      timeHtml = `<span class="${cls}">${ago <= 1 ? '刚刚' : ago + 's前'}</span>`;
-    }
-    // 队伍标签
-    const teamHtml = teamName ? `<span class="health-team-tag">${teamName}</span>` : '';
-    const dot = isOffline ? 'offline' : 'online';
-    return `<div class="health-row">
-      <span class="health-dot health-dot-${dot}" style="${isOffline ? '' : 'background:' + color}"></span>
-      <span class="health-name">${this._escapeHtml(name)}${teamHtml}</span>
-      <span class="health-metrics">${battHtml} ${accHtml} ${timeHtml}</span>
-    </div>`;
-  }
-
-  _escapeHtml(str) {
-    if (!str) return '';
-    const d = document.createElement('div');
-    d.textContent = str;
-    return d.innerHTML;
-  }
-
-  // ============================================================
-  //  队伍管理 UI
-  // ============================================================
-
-  /**
-   * 创建队伍
-   */
-  /**
-   * 高亮当前选中的预设色（与取色框值匹配时），否则全部取消高亮
-   * @param {string} color 当前颜色（#RRGGBB）
-   */
-  _updateTeamPresetActive(color) {
-    if (!this._roomTeamPresets) return;
-    const norm = (color || '').toUpperCase();
-    this._roomTeamPresets.querySelectorAll('.room-team-preset').forEach((btn) => {
-      btn.classList.toggle('active', (btn.dataset.color || '').toUpperCase() === norm);
-    });
-  }
-  _roomCreateTeam() {
-    if (!this.roomManager || !this.roomManager.isConnected()) return;
-    const name = (this._roomTeamNameInput.value || '').trim() || '我的队伍';
-    const color = this._roomTeamSelectedColor;
-    const isNpc = this._roomTeamNpcCheckbox ? this._roomTeamNpcCheckbox.checked : false;
-    try {
-      this.roomManager.createTeam(name, color, isNpc);
-      this._roomTeamNameInput.value = '';
-      if (this._roomTeamNpcCheckbox) this._roomTeamNpcCheckbox.checked = false;
-      this._roomTeamCreateForm.classList.add('hidden');
-      this._updateTeamUI();
-      this._updateRoomPlayerList();
-      this._updateSharingBtn();
-      Toast.show(isNpc ? ` 已创建 NPC 队（持续共享）：${name}` : ` 已创建队伍：${name}`);
-    } catch (e) {
-      Toast.show(' 创建队伍失败');
-    }
-  }
-
-  /**
-   * 加入队伍
-   */
-  _roomJoinTeam(teamId) {
-    if (!this.roomManager) return;
-    const myTeamId = this.roomManager.getMyTeamId();
-    if (myTeamId) {
-      Toast.show(' 请先离开当前队伍');
-      return;
-    }
-    this.roomManager.joinTeam(teamId);
-    this._updateTeamUI();
-    this._updateRoomPlayerList();
-    Toast.show(' 已加入队伍');
-  }
-
-  /**
-   * 离开队伍
-   */
-  _roomLeaveTeam(teamId) {
-    if (!this.roomManager) return;
-    this.roomManager.leaveTeam(teamId);
-    this._updateTeamUI();
-    this._updateRoomPlayerList();
-    Toast.show(' 已离开队伍');
-  }
-
-  /**
-   * 更新队伍列表 UI
-   */
-  _updateTeamUI() {
-    if (!this._roomTeamList || !this.roomManager) return;
-    const teams = this.roomManager.getTeams();
-    const myTeamId = this.roomManager.getMyTeamId();
-    const myInfo = this.roomManager.getMyInfo();
-
-    if (!Object.keys(teams).length) {
-      this._roomTeamList.innerHTML = '<div class="room-team-empty">暂无队伍，点击上方创建</div>';
-      return;
-    }
-
-    let html = '';
-    const broadcasterId = this.roomManager.getTeamBroadcasterId();
-    Object.values(teams).forEach((team) => {
-      const members = this.roomManager.getTeamMembers(team.id);
-      const isMyTeam = team.id === myTeamId;
-      const isCreator = team.creatorId === myInfo.id;
-      const isSharing = broadcasterId && members.some(m => m.id === broadcasterId);
-      let actionBtn = '';
-      if (isMyTeam) {
-        actionBtn = `<button class="room-btn mini danger" data-team-id="${team.id}" data-action="leave">离开</button>`;
-      } else if (!myTeamId) {
-        actionBtn = `<button class="room-btn mini primary" data-team-id="${team.id}" data-action="join">加入</button>`;
-      }
-
-      const teamColor = this._sanitizeColor(team.color);
-      const teamDot = isMyTeam
-        ? `<span class="room-team-dot" style="background:${teamColor}"></span>`
-        : `<svg class="room-team-dot-radar" viewBox="0 0 24 24" width="14" height="14">
-            <circle cx="12" cy="12" r="11" fill="none" stroke="${teamColor}" stroke-opacity="0.6" stroke-width="2"/>
-            <circle cx="12" cy="12" r="8" fill="none" stroke="${teamColor}" stroke-opacity="0.35" stroke-width="1.2"/>
-            <circle cx="12" cy="12" r="5" fill="none" stroke="${teamColor}" stroke-opacity="0.2" stroke-width="1"/>
-            <circle cx="12" cy="12" r="3" fill="${teamColor}" fill-opacity="0.9"/>
-          </svg>`;
-      const firstChar = (team.name || '?').trim().charAt(0) || '?';
-      const shareBadge = isSharing
-        ? `<span class="room-team-share" style="--tc:${teamColor}" title="位置共享中">${this._escapeHtml(firstChar)}</span>`
-        : '';
-
-      html += `<div class="room-team-card${isSharing ? ' is-sharing' : ''}">
-        <div class="room-team-card-header">
-          ${teamDot}
-          <span class="room-team-name">${this._escapeHtml(team.name)}</span>
-          ${shareBadge}
-          <span class="room-team-meta">${members.length}人${isCreator ? ' · 队长' : ''}</span>
-          <div class="room-team-actions">${actionBtn}</div>
-        </div>
-        <div class="room-team-members">
-          ${members.map(m => `<span class="room-team-member">${this._escapeHtml(m.name)}</span>`).join('')}
-        </div>
-      </div>`;
-    });
-    this._roomTeamList.innerHTML = html;
-
-    // 绑定队伍按钮事件（委托）
-    this._roomTeamList.querySelectorAll('[data-action]').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const teamId = btn.dataset.teamId;
-        if (btn.dataset.action === 'join') this._roomJoinTeam(teamId);
-        else if (btn.dataset.action === 'leave') this._roomLeaveTeam(teamId);
-      });
-    });
-  }
-
-  /**
-   * 绑定 RoomManager 事件回调
-   */
-  _bindRoomEvents() {
-    if (!this.roomManager) return;
-
-    this.roomManager.onPositionUpdate = (players, changedIds) => {
-      this._updateRoomPlayerList();
-      this._updateRoomHealthPanel();
-      const myInfo = this.roomManager.getMyInfo();
-      const now = Date.now();
-      const POSITION_STALE_MS = 30000;
-
-      // 有变更集 → 增量更新（仅重绘变更玩家的标记）
-      if (changedIds && changedIds.size > 0) {
-        for (const id of changedIds) {
-          const p = players[id];
-          if (!p || p.id === myInfo.id || !p.online || p.spectator) {
-            this.mapManager.removePlayerMarker(id);
-            this.mapManager.removePlayerPrediction(id);
-          } else {
-            this._renderPlayerMarker(p, myInfo, now, POSITION_STALE_MS);
-          }
-        }
-      } else {
-        // 无变更集 → 全量重绘（队伍/游戏事件等批量变更）
-        this.mapManager.clearPlayerMarkers();
-        this.mapManager.clearPlayerPredictions();
-        Object.values(players).forEach((p) => {
-          if (p.id !== myInfo.id && p.online && !p.spectator) {
-            this._renderPlayerMarker(p, myInfo, now, POSITION_STALE_MS);
-          }
-        });
-      }
-    };
-
-    this.roomManager.onTeamUpdate = (teams, myTeamId) => {
-      this._updateTeamUI();
-      this._updateRoomPlayerList();
-      // 队伍变更后刷新地图标记
-      if (this.roomManager) {
-        const myInfo = this.roomManager.getMyInfo();
-        const players = this.roomManager.getPlayers();
-        const now = Date.now();
-        const POSITION_STALE_MS = 30000;
-        this.mapManager.clearPlayerMarkers();
-        this.mapManager.clearPlayerPredictions();
-        Object.values(players).forEach((p) => {
-          if (p.id !== myInfo.id && p.online && !p.spectator) {
-            this._renderPlayerMarker(p, myInfo, now, POSITION_STALE_MS);
-          }
-        });
-      }
-    };
-
-    this.roomManager.onConnectionChange = (connected) => {
-      if (this._roomConnDot) {
-        this._roomConnDot.classList.toggle('online', connected);
-      }
-      if (connected) this._updateSharingBtn();
-    };
-
-    this.roomManager.onRoomError = (msg) => {
-      Toast.show(' ' + msg);
-    };
-
-    // 位置共享阶段变化
-    this.roomManager.onBurstPhaseChange = (phase, phaseEnd) => {
-      if (this._burstPhaseInterval) {
-        clearInterval(this._burstPhaseInterval);
-        this._burstPhaseInterval = null;
-      }
-      if (!this._roomBurstPhase) return;
-      if (!phase) {
-        this._roomBurstPhase.textContent = '未激活';
-        return;
-      }
-      this._burstPhase = phase;
-      this._burstPhaseEnd = phaseEnd;
-      const updatePhase = () => {
-        const rem = Math.max(0, this._burstPhaseEnd - Date.now());
-        const m = Math.floor(rem / 60000);
-        const s = Math.floor((rem % 60000) / 1000);
-        const t = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-        this._roomBurstPhase.textContent = this._burstPhase === 'silent' ? ` 静默中 ${t}` : ` 共享中 ${t}`;
-      };
-      updatePhase();
-      this._burstPhaseInterval = setInterval(updatePhase, 1000);
-    };
-
-    // 游戏倒计时更新
-    this.roomManager.onGameTimerUpdate = (startAt) => {
-      if (!this._roomTimerSection) return;
-      this._roomTimerSection.classList.add('visible');
-      // 把开始时间同步进选择框，让所有玩家都能看到设定值
-      if (this._roomTimerInput) {
-        const d = new Date(startAt);
-        const hh = String(d.getHours()).padStart(2, '0');
-        const mm = String(d.getMinutes()).padStart(2, '0');
-        this._roomTimerInput.value = `${hh}:${mm}`;
-      }
-      // 启动每秒更新
-      if (this._timerInterval) clearInterval(this._timerInterval);
-      this._timerInterval = setInterval(() => this._updateTimerCountdown(), 1000);
-      this._updateTimerCountdown();
-    };
-
-    this.roomManager.onGameTimerAborted = () => {
-      if (this._timerInterval) {
-        clearInterval(this._timerInterval);
-        this._timerInterval = null;
-      }
-      if (this._roomTimerInput) this._roomTimerInput.value = '';
-      this._roomTimerValue.textContent = '--:--';
-      this._roomTimerCountdown.classList.add('hidden');
-      this._roomTimerSetFrm.classList.remove('hidden');
-      this._roomTimerAbortBtn.classList.add('hidden');
-    };
-
-    // —— 游戏角色 ————
-    this.roomManager.onGameStateChange = (state) => {
-      this._updateGameUI();
-      if (state === 'playing') {
-        // 游戏开始/重加入：room.js 已同步 burst 状态，此处恢复定时器 + 同步 UI
-        if (this.roomManager) {
-          this.roomManager.setSharingEnabled(true);
-          this.roomManager.resumeBurstCycle(); // 根据已同步的 phase/phaseEnd 恢复定时器
-          const settings = this.roomManager.getBurstSettings();
-          const burst = this.roomManager.isBurstEnabled();
-          const phase = this.roomManager.getBurstPhase();
-          // 同步 UI 显示
-          if (this._roomBurstSilent) this._roomBurstSilent.value = settings.silent;
-          if (this._roomBurstShare) this._roomBurstShare.value = settings.share;
-          if (this._roomBurstEnable) this._roomBurstEnable.checked = burst;
-          this.roomManager.flushPositionNow();
-        }
-        if (this._roomSharingBtn) {
-          this._roomSharingBtn.disabled = true;
-          this._roomSharingBtn.textContent = ' 游戏中·带静默共享';
-          this._roomSharingBtn.classList.remove('sharing-off');
-        }
-        Toast.show(' 游戏开始！带静默位置共享已开启');
-        this._updateRoomPlayerList();
-        this._updateCircleList();
-      } else if (state === 'finished') {
-        // 游戏结束：停止开局强制的带静默周期，恢复可手动切换；共享保持开启（与原行为一致）
-        if (this.roomManager) this.roomManager.stopBurstCycle();
-        if (this._roomBurstEnable) this._roomBurstEnable.checked = false;
-        if (this._roomSharingBtn) {
-          this._roomSharingBtn.disabled = false;
-          this._updateSharingBtn();
-        }
-        Toast.show(' 游戏结束！位置共享可手动关闭');
-        this._updateRoomPlayerList();
-      } else {
-        if (this._roomSharingBtn) {
-          this._roomSharingBtn.disabled = false;
-          this._updateSharingBtn();
-        }
-      }
-    };
-
-    this.roomManager.onRoleAssigned = (playerId, role, assignerId) => {
-      this._updateGameUI();
-      this._updateRoomPlayerList();
-      const myInfo = this.roomManager.getMyInfo();
-      if (playerId === myInfo.id) {
-        const roleName = role === 'ghost' ? ' 鬼' : ' 人';
-        Toast.show(`你的角色：${roleName}`);
-      }
-    };
-
-    this.roomManager.onPlayerCaught = (targetId, ghostId) => {
-      this._updateRoomPlayerList();
-      const players = this.roomManager.getPlayers();
-      const targetName = players[targetId] ? players[targetId].name : '未知';
-      const ghostName = players[ghostId] ? players[ghostId].name : '未知';
-      Toast.show(` ${targetName} 被 ${ghostName} 抓住了！`);
-      // 刷新地图标记（被抓者标记更新）
-      if (this.roomManager) {
-        const myInfo = this.roomManager.getMyInfo();
-        const allPlayers = this.roomManager.getPlayers();
-        const now = Date.now();
-        const POSITION_STALE_MS = 30000;
-        this.mapManager.clearPlayerMarkers();
-        this.mapManager.clearPlayerPredictions();
-        Object.values(allPlayers).forEach((p) => {
-          if (p.id !== myInfo.id && p.online && !p.spectator) this._renderPlayerMarker(p, myInfo, now, POSITION_STALE_MS);
-        });
-      }
-    };
-
-    this.roomManager.onGameStatsReady = (stats) => {
-      this._roomShowGameStats(stats);
-    };
-    this.roomManager.onCircleSync = (circles) => {
-      this.mapManager.setRemoteCircles(circles);
-    };
-  }
-
-  /**
-   * 渲染一个玩家标记（带游戏模式可见性）
-   */
-  _renderPlayerMarker(p, myInfo, now, staleMs) {
-    if (!this.roomManager) return;
-    // 游戏进行中：所有玩家位置互相可见（含其他队 / 其他猎人 / 被抓者）
-
-    const teams = this.roomManager.getTeams();
-    const broadcasterId = this.roomManager.getTeamBroadcasterId();
-    const myTeamId = this.roomManager.getMyTeamId();
-
-    if (p.teamId && p.teamId === myTeamId && p.id !== broadcasterId && !p.teamSeparation) return;
-    const stale = p.lastPosUpdate && (now - p.lastPosUpdate > staleMs);
-    const color = p.teamId && teams[p.teamId] ? teams[p.teamId].color : p.color;
-    let opacity = stale ? 0.3 : p.teamSeparation ? 0.5 : 1;
-    if (p.caught) opacity = 0.2; // 被抓的人几乎不可见
-    // 有队伍时标记显示队伍首字，否则显示昵称首字
-    const teamLabel = (p.teamId && teams[p.teamId]) ? (teams[p.teamId].name || '').trim().charAt(0) || '' : '';
-    this.mapManager.updatePlayerMarker(p.id, p.lat, p.lng, p.name, color, opacity, p.acc, teamLabel);
-    if (!stale && p.lat != null && p.lng != null && p.bearing != null && !p.caught) {
-      this.mapManager.setPlayerPrediction(p.id, p.lat, p.lng, p.bearing, p.speed || 0, p.acc || 0);
-    }
-  }
-
-  /**
-   * 显示房间码
-   */
-  _showRoomCode(code) {
-    if (this._roomCodeDisplay) this._roomCodeDisplay.classList.remove('hidden');
-    if (this._roomCodeValue) {
-      this._roomCodeValue.textContent = code;
-      this._roomCodeValue.title = '点击复制房间码';
-    }
-    if (this._roomStatus) this._roomStatus.classList.remove('hidden');
-    if (this._roomTeamsSection) this._roomTeamsSection.classList.remove('hidden');
-    this._updateSharingBtn();
-    // 加入房间后广播自己已有的圆，让其他队伍立即看到
-    if (this.roomManager && this._roomJoined) {
-      this.mapManager.getCircles().forEach((c) => this.roomManager.publishCircle('add', c));
-    }
-  }
-
-  /**
-   * 更新参与者列表
-   */
-  _updateRoomPlayerList() {
-    if (!this._roomPlayerList || !this.roomManager) return;
-    const players = this.roomManager.getPlayers();
-    const teams = this.roomManager.getTeams();
-    const myInfo = this.roomManager.getMyInfo();
-    const mySharing = this.roomManager.isSharingEnabled();
-    const myTeamId = this.roomManager.getMyTeamId();
-    const count = Object.values(players).filter(p => p.online).length + (this.roomManager.isConnected() ? 1 : 0);
-    if (this._roomPlayerCount) this._roomPlayerCount.textContent = String(count);
-
-    const broadcasterId = this.roomManager.getTeamBroadcasterId();
-    const amBroadcaster = this.roomManager.isTeamBroadcaster();
-    const amSeparated = this.roomManager.isTeamSeparated();
-
-    // 按队伍分组
-    const grouped = {}; // teamId → [{id, name, color, status...}]
-    const ungrouped = [];
-    const myself = {
-      id: myInfo.id,
-      name: this._escapeHtml(myInfo.name) + ' (我)',
-      color: myInfo.color,
-      teamId: myTeamId,
-      spectator: this.roomManager.isSpectator(),
-      role: this.roomManager.getPlayerRole(myInfo.id),
-      isNpc: this.roomManager.isNpcTeam(),
-      caught: this.roomManager.isPlayerCaught(myInfo.id),
-      statusText: this.roomManager.isSpectator() ? '观战中' : (mySharing ? '在线' : '定位关闭'),
-      statusClass: this.roomManager.isSpectator() ? 'spectator' : (mySharing ? 'online' : 'sharing-off'),
-      isSelf: true,
-      isBroadcaster: amBroadcaster,
-      teamSeparation: amSeparated,
-    };
-    const POSITION_STALE_MS = 30000;
-    Object.values(players).forEach((p) => {
-      if (p.id === myInfo.id) return;
-      const stale = p.lastPosUpdate && (Date.now() - p.lastPosUpdate > POSITION_STALE_MS);
-      let statusText = '离线';
-      let statusClass = '';
-      if (p.spectator) {
-        statusText = '观战中';
-        statusClass = 'spectator';
-      } else if (p.online) {
-        if (p.sharing === false) {
-          statusText = '定位关闭';
-          statusClass = 'sharing-off';
-        } else if (stale) {
-          statusText = '位置过期';
-          statusClass = 'stale';
-        } else {
-          statusText = '在线';
-          statusClass = 'online';
-        }
-      }
-      const entry = {
-        id: p.id,
-        name: this._escapeHtml(p.name),
-        color: p.teamId && teams[p.teamId] ? teams[p.teamId].color : p.color,
-        teamId: p.teamId,
-        statusText,
-        statusClass,
-        isSelf: false,
-        isBroadcaster: p.teamBroadcaster === true,
-        teamSeparation: p.teamSeparation === true,
-        spectator: p.spectator === true,
-        role: p.role || null,
-        caught: p.caught === true,
-      };
-      if (p.teamId && teams[p.teamId]) {
-        if (!grouped[p.teamId]) grouped[p.teamId] = [];
-        grouped[p.teamId].push(entry);
-      } else {
-        ungrouped.push(entry);
-      }
-    });
-
-    let html = '';
-
-    // 自己的队伍分组
-    if (myTeamId && teams[myTeamId]) {
-      const team = teams[myTeamId];
-      html += `<div class="room-player-group">
-        <div class="room-player-group-label" style="color:${team.color}">
-          <span class="room-team-dot" style="background:${this._sanitizeColor(team.color)}"></span>
-          ${this._escapeHtml(team.name)} (<span class="room-player-group-count">${1 + (grouped[myTeamId] ? grouped[myTeamId].length : 0)} 人</span>)
-        </div>
-        <div class="room-player-item">
-          <span class="room-player-dot" style="background:${this._sanitizeColor(myself.color)}"></span>
-          <span class="room-player-name self">${this._escapeHtml(myself.name)}</span>
-          <span class="room-player-status ${myself.statusClass}">${this._getPlayerTagsHtml(myself)}${myself.statusText}</span>
-        </div>`;
-      if (grouped[myTeamId]) {
-        grouped[myTeamId].forEach(p => {
-          html += `<div class="room-player-item">
-            <span class="room-player-dot" style="background:${this._sanitizeColor(p.color)}"></span>
-            <span class="room-player-name">${this._escapeHtml(p.name)}</span>
-            <span class="room-player-status ${p.statusClass}">${this._getPlayerTagsHtml(p)}${p.statusText}</span>
-          </div>`;
-        });
-      }
-      html += `</div>`;
-      delete grouped[myTeamId]; // 已显示
-    } else {
-      // 自己无队伍，显示在"无队伍"区
-      ungrouped.unshift(myself);
-    }
-
-    // 其他队伍
-    Object.entries(grouped).forEach(([teamId, members]) => {
-      const team = teams[teamId];
-      if (!team) return;
-      html += `<div class="room-player-group">
-        <div class="room-player-group-label" style="color:${team.color}">
-          <span class="room-team-dot" style="background:${this._sanitizeColor(team.color)}"></span>
-          ${this._escapeHtml(team.name)} (<span class="room-player-group-count">${members.length} 人</span>)
-        </div>`;
-      members.forEach(p => {
-        html += `<div class="room-player-item">
-          <span class="room-player-dot" style="background:${this._sanitizeColor(p.color)}"></span>
-          <span class="room-player-name">${this._escapeHtml(p.name)}</span>
-          <span class="room-player-status ${p.statusClass}">${this._getPlayerTagsHtml(p)}${p.statusText}</span>
-        </div>`;
-      });
-      html += `</div>`;
-    });
-
-    // 无队伍玩家
-    if (ungrouped.length > 0) {
-      html += `<div class="room-player-group">
-        <div class="room-player-group-label room-player-group-label-none"> 无队伍（<span class="room-player-group-count">${ungrouped.length} 人</span>）</div>`;
-      ungrouped.forEach(p => {
-        html += `<div class="room-player-item">
-          <span class="room-player-dot" style="background:${this._sanitizeColor(p.color)}"></span>
-          <span class="room-player-name${p.isSelf ? ' self' : ''}">${this._escapeHtml(p.name)}</span>
-          <span class="room-player-status ${p.statusClass}">${this._getPlayerTagsHtml(p)}${p.statusText}</span>
-        </div>`;
-      });
-      html += `</div>`;
-    }
-
-    if (Object.keys(players).length === 0 && this.roomManager.isConnected()) {
-      html = `<div class="room-empty">等待队友加入...</div>`;
-    }
-    this._roomPlayerList.innerHTML = html;
-  }
-
-  /** 构建玩家标签 HTML（角色/观战/发报/被抓等） */
-  _getPlayerTagsHtml(p) {
-    let tags = '';
-    const gameState = this.roomManager ? this.roomManager.getGameState() : 'idle';
-    if (p.isNpc) {
-      tags += '<span class="player-tag tag-npc"> NPC</span> ';
-    } else if (p.spectator) {
-      tags += '<span class="player-tag tag-spectator"> 观战</span> ';
-    } else if (p.role === 'ghost') {
-      tags += '<span class="player-tag tag-ghost"> 鬼</span> ';
-    } else if (p.role === 'hunter') {
-      tags += '<span class="player-tag tag-hunter"> 人</span> ';
-    }
-    if (p.caught) {
-      tags += '<span class="player-tag tag-caught"> 被抓</span> ';
-    }
-    if (p.isBroadcaster) {
-      tags += '<span class="player-tag tag-broadcaster"> 发报中</span> ';
-    }
-    if (p.teamSeparation) {
-      tags += '<span class="player-tag tag-separated">已分离 </span> ';
-    }
-    return tags;
-  }
-
-  /**
-   * 清理房间 UI 到初始状态
-   */
-  _roomCleanup() {
-    this._roomJoined = false;
-    if (this._roomCodeDisplay) this._roomCodeDisplay.classList.add('hidden');
-    if (this._roomStatus) this._roomStatus.classList.add('hidden');
-    if (this._roomTeamsSection) this._roomTeamsSection.classList.add('hidden');
-    if (this._roomTeamCreateForm) this._roomTeamCreateForm.classList.add('hidden');
-    if (this._roomFormCreate) this._roomFormCreate.classList.remove('hidden');
-    if (this._roomFormJoin) this._roomFormJoin.classList.remove('hidden');
-    if (this._roomPlayerCount) this._roomPlayerCount.textContent = '0';
-    if (this._roomPlayerList) this._roomPlayerList.innerHTML = '<div class="room-empty">尚未加入房间</div>';
-    if (this._roomConnDot) this._roomConnDot.classList.remove('online');
-    if (this._roomCodeValue) this._roomCodeValue.textContent = '------';
-    // 游戏 UI 复位（roomManager 已置空，无法走 _updateGameUI，改为手动还原）
-    if (this._roomGameStatus) this._roomGameStatus.textContent = ' 等待开始';
-    if (this._roomGameRoleDisplay) this._roomGameRoleDisplay.textContent = '';
-    if (this._roomGameHostBadge) this._roomGameHostBadge.classList.add('hidden');
-    if (this._roomGameStartBtn) {
-      this._roomGameStartBtn.textContent = ' 开始游戏';
-      this._roomGameStartBtn.classList.remove('hidden');
-    }
-    if (this._roomGameEndBtn) this._roomGameEndBtn.classList.add('hidden');
-    if (this._roomGameAssignBtn) this._roomGameAssignBtn.classList.add('hidden');
-    if (this._roomGameRandomBtn) this._roomGameRandomBtn.classList.add('hidden');
-    if (this._roomSharingBtn) {
-      this._roomSharingBtn.textContent = ' 共享定位';
-      this._roomSharingBtn.classList.remove('sharing-off');
-    }
-    // 隐藏扩展区块
-    if (this._roomTimerSection) this._roomTimerSection.classList.remove('visible');
-    if (this._roomBurstSection) this._roomBurstSection.classList.remove('visible');
-    if (this._roomPredictionSection) this._roomPredictionSection.classList.remove('visible');
-    if (this._roomHealthSection) this._roomHealthSection.classList.remove('visible');
-    if (this._roomGameSection) this._roomGameSection.classList.remove('visible');
-    if (this._roomStatsModal) this._roomStatsModal.classList.remove('visible');
-    if (this._roomTimerCountdown) this._roomTimerCountdown.classList.add('hidden');
-    if (this._roomTimerSetFrm) this._roomTimerSetFrm.classList.remove('hidden');
-    if (this._roomTimerAbortBtn) this._roomTimerAbortBtn.classList.add('hidden');
-    if (this._roomTimerValue) this._roomTimerValue.textContent = '--:--';
-    if (this._roomBurstPhase) this._roomBurstPhase.textContent = '未激活';
-    // 停止定时器
-    if (this._timerInterval) {
-      clearInterval(this._timerInterval);
-      this._timerInterval = null;
-    }
-    if (this._burstPhaseInterval) {
-      clearInterval(this._burstPhaseInterval);
-      this._burstPhaseInterval = null;
-    }
-  }
-
-  /**
-   * 加入/创建成功后显示扩展模块
-   */
-  _showRoomExtras() {
-    if (this._roomTimerSection) this._roomTimerSection.classList.add('visible');
-    if (this._roomBurstSection) this._roomBurstSection.classList.add('visible');
-    if (this._roomPredictionSection) this._roomPredictionSection.classList.add('visible');
-    if (this._roomHealthSection) this._roomHealthSection.classList.add('visible');
-    this._updateGameUI();
-    this._updateRoomHealthPanel();
-  }
-
-  // ================================================================
-  //  游戏倒计时
-  // ================================================================
-
-  _roomSetTimer() {
-    if (!this.roomManager || !this._roomTimerInput) return;
-    const val = this._roomTimerInput.value;
-    if (!val) { Toast.show(' 请选择时间'); return; }
-    const [h, m] = val.split(':').map(Number);
-    const now = new Date();
-    const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0);
-    // 如果已过今日此时 → 设为明天
-    if (target <= now) target.setDate(target.getDate() + 1);
-    const startAt = target.getTime();
-    this.roomManager.setGameTimer(startAt);
-    this._roomTimerSetFrm.classList.add('hidden');
-    this._roomTimerAbortBtn.classList.remove('hidden');
-    Toast.show(` 游戏开始时间已设为 ${val}`);
-  }
-
-  _roomAbortTimer() {
-    if (!this.roomManager) return;
-    this.roomManager.abortGameTimer();
-    this._roomTimerSetFrm.classList.remove('hidden');
-    this._roomTimerCountdown.classList.add('hidden');
-    this._roomTimerAbortBtn.classList.add('hidden');
-    this._roomTimerValue.textContent = '--:--';
-    Toast.show(' 已取消游戏倒计时');
-  }
-
-  /** 更新倒计时显示（每秒调用） */
-  _updateTimerCountdown() {
-    if (!this.roomManager) return;
-    const startAt = this.roomManager.getGameStartAt();
-    if (!startAt) {
-      this._roomTimerCountdown.classList.add('hidden');
-      this._roomTimerSetFrm.classList.remove('hidden');
-      return;
-    }
-    const remaining = Math.max(0, startAt - Date.now());
-    if (remaining <= 0) {
-      this._roomTimerValue.textContent = '00:00';
-      this._roomTimerCountdown.classList.remove('hidden');
-      this._roomTimerSetFrm.classList.add('hidden');
-      Toast.show(' 游戏开始！');
-      // 倒计时归零时，房主自动开局（非房主的 startGame 会被 isHost 守卫拦截）
-      // idle 或 finished 均可开新局，与 startGame() 自身守卫一致
-      if (this.roomManager.isHost()) {
-        const st = this.roomManager.getGameState();
-        if (st === 'idle' || st === 'finished') {
-          const silent = parseInt(this._roomBurstSilent.value) || 25;
-          const share = parseInt(this._roomBurstShare.value) || 5;
-          this.roomManager.startGame(silent, share);
-        }
-      }
-      // 到 0 后自动清除定时器
-      if (this._timerInterval) {
-        clearInterval(this._timerInterval);
-        this._timerInterval = null;
-      }
-      return;
-    }
-    const mins = Math.floor(remaining / 60000);
-    const secs = Math.floor((remaining % 60000) / 1000);
-    this._roomTimerValue.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-    this._roomTimerCountdown.classList.remove('hidden');
-    this._roomTimerSetFrm.classList.add('hidden');
-    this._roomTimerAbortBtn.classList.remove('hidden');
-  }
-
-  // ================================================================
-  //  位置共享
-  // ================================================================
-
-  _roomToggleBurst() {
-    if (!this.roomManager) return;
-    if (this._roomBurstEnable.checked) {
-      const silent = parseInt(this._roomBurstSilent.value) || 25;
-      const share = parseInt(this._roomBurstShare.value) || 5;
-      if (silent < 1 || share < 1) {
-        Toast.show(' 静默和共享时长必须 ≥ 1 分钟');
-        this._roomBurstEnable.checked = false;
-        return;
-      }
-      this.roomManager.startBurstCycle(silent, share);
-      Toast.show(` 位置共享已开启：静默 ${silent} 分 / 共享 ${share} 分`);
-    } else {
-      this.roomManager.stopBurstCycle();
-      this._roomBurstPhase.textContent = '未激活';
-      if (this._burstPhaseInterval) {
-        clearInterval(this._burstPhaseInterval);
-        this._burstPhaseInterval = null;
-      }
-      Toast.show(' 位置共享已关闭');
-    }
-  }
-
-  /**
-   * 切换路径预测显示
-   */
-  _roomTogglePrediction() {
-    const enabled = this._roomPredictionEnable.checked;
-    CONFIG.ENABLE_PREDICTION = enabled;
-    localStorage.setItem('circlemap_prediction', enabled ? '1' : '0');
-    if (!enabled) {
-      this.mapManager.clearPlayerPredictions();
-    } else {
-      this.mapManager._scheduleRedraw();
-    }
-    Toast.show(enabled ? ' 路径预测已开启' : ' 路径预测已关闭');
-  }
-
-  _escapeHtml(str) {
-    const div = document.createElement('div');
-    div.appendChild(document.createTextNode(str));
-    return div.innerHTML;
-  }
-
-  // 仅允许安全的 CSS 颜色（#hex / rgb()），其余一律回退 #888，
-  // 防止队伍色/玩家色被构造为 "red" onmouseover="..." 触发属性注入 XSS
-  _sanitizeColor(c) {
-    if (typeof c !== 'string') return '#888';
-    const s = c.trim();
-    if (/^#[0-9a-fA-F]{3,8}$/.test(s)) return s;
-    if (/^rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(,\s*[\d.]+\s*)?\)$/.test(s)) return s;
-    return '#888';
-  }
-
-  // ================================================================
-  //  游戏控制
-  // ================================================================
-
-  _roomStartGame() {
-    if (!this.roomManager || !this.roomManager.isHost()) return;
-    const restart = this.roomManager.getGameState() === 'finished';
-    const silent = parseInt(this._roomBurstSilent.value) || 25;
-    const share = parseInt(this._roomBurstShare.value) || 5;
-    this.roomManager.startGame(silent, share);
-    Toast.show(restart ? ' 新一局开始！鬼去抓人吧！' : ' 游戏开始！鬼去抓人吧！');
-  }
-
-  _roomEndGame() {
-    if (!this.roomManager || !this.roomManager.isHost()) return;
-    this.roomManager.endGame();
-  }
-
-  _roomAssignRole() {
-    if (!this.roomManager || !this.roomManager.isHost()) return;
-    // 简单循环分配：选择下一个未分配/猎人的玩家设为鬼
-    const players = this.roomManager.getPlayers();
-    const candidates = Object.values(players).filter(p => p.online && !p.spectator && !p.isNpc);
-    if (candidates.length < 2) { Toast.show(' 至少需要 2 名玩家'); return; }
-    const ghost = candidates.find(p => p.role === 'ghost');
-    if (ghost) {
-      // 已有鬼 → 将鬼转为人，将下一个未分配/人转为鬼
-      this.roomManager.assignRole(ghost.id, 'hunter');
-      const nextIdx = (candidates.indexOf(ghost) + 1) % candidates.length;
-      this.roomManager.assignRole(candidates[nextIdx].id, 'ghost');
-      Toast.show(` 鬼已更换为 ${candidates[nextIdx].name}`);
-    } else {
-      // 无鬼 → 第一个人设为鬼
-      this.roomManager.assignRole(candidates[0].id, 'ghost');
-      candidates.slice(1).forEach(p => this.roomManager.assignRole(p.id, 'hunter'));
-      Toast.show(` ${candidates[0].name} 是鬼！其他人快跑！`);
-    }
-  }
-
-  _roomRandomAssign() {
-    if (!this.roomManager || !this.roomManager.isHost()) return;
-    this.roomManager.randomAssignRoles(1);
-    const players = this.roomManager.getPlayers();
-    const ghost = Object.values(players).find(p => p.role === 'ghost' && !p.isNpc);
-    Toast.show(` 随机分配完成！${ghost ? ' 鬼是 ' + ghost.name : ''}`);
-  }
-
-  /** 更新游戏控制 UI */
-  _updateGameUI() {
-    if (!this.roomManager || !this._roomGameSection) return;
-    const state = this.roomManager.getGameState();
-    const isHost = this.roomManager.isHost();
-    const myRole = this.roomManager.getPlayerRole(this.roomManager.getMyInfo().id);
-
-    this._roomGameSection.classList.add('visible');
-
-    // 房主徽章
-    if (this._roomGameHostBadge) {
-      this._roomGameHostBadge.classList.toggle('hidden', !isHost);
-    }
-
-    // 状态文字
-    const stateMap = { idle: ' 等待开始', playing: ' 游戏中', finished: ' 已结束' };
-    if (this._roomGameStatus) this._roomGameStatus.textContent = stateMap[state] || ' 等待开始';
-
-    // 角色显示
-    if (this._roomGameRoleDisplay) {
-      const roleMap = { ghost: ' 鬼', hunter: ' 人' };
-      this._roomGameRoleDisplay.textContent = myRole ? roleMap[myRole] || '' : '';
-    }
-
-    // 按钮可见性
-    const inGame = state === 'playing';
-    // 房主在 idle / finished 均可开新局（finished 时按钮显示为「再来一局」）
-    this._roomGameStartBtn.classList.toggle('hidden', !isHost || inGame);
-    this._roomGameStartBtn.textContent = state === 'finished' ? ' 再来一局' : ' 开始游戏';
-    this._roomGameEndBtn.classList.toggle('hidden', !isHost || !inGame);
-    this._roomGameAssignBtn.classList.toggle('hidden', !isHost);
-    this._roomGameRandomBtn.classList.toggle('hidden', !isHost);
-  }
-
-  /** 显示赛后统计面板 */
-  _roomShowGameStats(stats) {
-    if (!this._roomStatsModal || !this._roomStatsContent) return;
-    if (!stats) return;
-
-    // 胜负判定
-    const winnerHtml = stats.winner === 'ghost'
-      ? '<div class="stats-winner stats-winner-ghost"> 鬼方获胜！</div>'
-      : stats.winner === 'hunter'
-        ? '<div class="stats-winner stats-winner-hunter"> 人方获胜！</div>'
-        : '';
-
-    // 鬼列表
-    const ghostList = (stats.roles.ghost || []).map(g =>
-      `<span class="stats-role-tag tag-ghost"> ${this._escapeHtml(g.name)}</span>`
-    ).join(' ');
-
-    // 猎人列表
-    const hunterList = (stats.roles.hunter || []).map(h => {
-      const caughtBadge = h.caught ? ' <span class="stats-caught-badge"> 被抓</span>' : ' <span class="stats-survive-badge"> 存活</span>';
-      return `<div class="stats-hunter-row">
-        <span class="stats-role-tag tag-hunter"> ${this._escapeHtml(h.name)}</span>${caughtBadge}
-      </div>`;
-    }).join('');
-
-    // 时间线
-    let timelineHtml = '';
-    if (stats.timeline && stats.timeline.length > 0) {
-      timelineHtml = '<div class="stats-timeline"><div class="stats-section-title"> 事件时间线</div>';
-      stats.timeline.forEach(e => {
-        timelineHtml += `<div class="stats-timeline-item">
-          <span class="stats-time">+${e.offset}s</span>
-          <span class="stats-event"> ${this._escapeHtml(e.playerName)} 被 ${this._escapeHtml(e.ghostName)} 抓住</span>
-        </div>`;
-      });
-      timelineHtml += '</div>';
-    }
-
-    this._roomStatsContent.innerHTML = `
-      ${winnerHtml}
-      <div class="stats-grid">
-        <div class="stats-item">
-          <div class="stats-label"> 游戏时长</div>
-          <div class="stats-value">${stats.durationStr}</div>
-        </div>
-        <div class="stats-item">
-          <div class="stats-label"> 玩家数</div>
-          <div class="stats-value">${stats.playerCount}</div>
-        </div>
-        <div class="stats-item">
-          <div class="stats-label"> 被抓</div>
-          <div class="stats-value">${stats.totalCaught}/${stats.playerCount}</div>
-        </div>
-        <div class="stats-item">
-          <div class="stats-label"> 幸存</div>
-          <div class="stats-value">${stats.survivors}</div>
-        </div>
-      </div>
-      <div class="stats-section">
-        <div class="stats-section-title"> 鬼</div>
-        <div class="stats-role-list">${ghostList}</div>
-      </div>
-      <div class="stats-section">
-        <div class="stats-section-title"> 人（猎人）</div>
-        <div class="stats-role-list">${hunterList}</div>
-      </div>
-      ${timelineHtml}
-    `;
-    this._roomStatsModal.classList.add('visible');
   }
 
   /**

@@ -87,24 +87,13 @@ class MapManager {
     });
 
     // #DEBUG: 输出运行环境关键参数，辅助诊断手机端瓦片差异
-    {
-      const _ua = navigator.userAgent;
-      const _dpr = window.devicePixelRatio || 1;
-      const _ww = window.innerWidth;
-      const _wh = window.innerHeight;
-      const _cap = typeof Capacitor !== 'undefined';
-      const _gnss = typeof GnssData !== 'undefined';
+    if (CONFIG.DEBUG) {
       console.info('[MapManager] init env:', JSON.stringify({
-        ua: _ua.substring(0, 120),
-        dpr: _dpr,
-        viewport: _ww + 'x' + _wh,
+        ua: (navigator.userAgent || '').substring(0, 80),
+        dpr: window.devicePixelRatio || 1,
+        viewport: window.innerWidth + 'x' + window.innerHeight,
         platform: navigator.platform || 'unknown',
-        capacitor: _cap,
-        gnssPlugin: _gnss,
-        zoom: this.map.getZoom(),
-        center: center,
-        isWebView: /wv|WebView|Android.*Chrome\/[.\d]+ Mobile/.test(_ua)
-      }, null, 2));
+      }));
     }
 
     // 追踪地图实际显示中心（绕过 getCenter 异步问题）
@@ -660,19 +649,33 @@ class MapManager {
    * @param {number} [interval] 间距（默认 CONFIG.CONCENTRIC_INTERVAL）
    * @returns {number} 新圆的 id
    */
-  addCircle(center, maxRadius, interval) {
+  addCircle(center, maxRadius, interval, name, color) {
     const id = this._idCounter++;
     this.circles.push({
       id,
       center: { lat: center.lat, lng: center.lng },
       maxRadius,
       interval: interval || CONFIG.CONCENTRIC_INTERVAL,
+      name: name || '',
+      color: color || '',
       createdAt: Date.now()
     });
     this._invalidateCoordCache();
     this._scheduleRedraw();
     this._zoomToRadius(maxRadius);
     return id;
+  }
+
+  updateCircle(id, fields) {
+    const c = this.circles.find(x => x.id === id);
+    if (!c) return;
+    if (fields.maxRadius != null) c.maxRadius = fields.maxRadius;
+    if (fields.interval != null) c.interval = fields.interval;
+    if (fields.name !== undefined) c.name = fields.name;
+    if (fields.color !== undefined) c.color = fields.color;
+    if (fields.center != null) c.center = { lat: fields.center.lat, lng: fields.center.lng };
+    this._invalidateCoordCache();
+    this._scheduleRedraw();
   }
 
   /**
@@ -852,10 +855,10 @@ class MapManager {
     if (typeof qq !== 'undefined' && qq.maps && qq.maps.convertor) {
       try {
         const result = await new Promise((resolve, reject) => {
-          // 5秒超时兜底——防止 API 不回调导致 Promise 挂起阻塞串行队列
+          // 2秒超时兜底——防止 API 不回调导致 Promise 挂起阻塞串行队列
           const timer = setTimeout(() => {
             reject(new Error('convertor API timeout'));
-          }, 5000);
+          }, 2000);
           const latLng = new qq.maps.LatLng(point.lat, point.lng);
           qq.maps.convertor.translate([latLng], 1, (res) => {
             clearTimeout(timer);
@@ -1553,7 +1556,6 @@ class MapManager {
     this._myPos = null;
     this._targetPos = null;
     this._offCanvas = null;
-    this._offCtx = null;       // 释放离屏 context 引用
     this.canvas = null;
     this.ctx = null;
     this._syncCenter = null;

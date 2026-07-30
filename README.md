@@ -179,7 +179,10 @@ CI 会自动构建并发布到 GitHub Release。
 │   ├── gps.js              # GPSManager（Geolocation API + 卡尔曼滤波 + GNSS 桥接）
 │   ├── mqtt.js             # mqtt.js CDN（MQTT 5.0 客户端，外部库）
 │   ├── room.js             # RoomManager（MQTT 通信 + 队伍/NPC/游戏控制）
-│   └── app.js              # App 主控制器（UI 绑定 + 逻辑编排 + 启动入口）
+│   ├── app-core.js          # App 类定义 + 核心逻辑
+│   ├── app-gps-ui.js        # GPS UI（状态条/速度曲线/定位列表/跟随）
+│   ├── app-circle-ui.js     # 圆 UI（列表/info/编辑/撤销）
+│   └── app-room-ui.js       # 房间 UI（分享/健康/队伍/游戏/计时）
 ├── native/
 │   ├── capacitor.config.json
 │   ├── gnss-plugin/        # 自定义 Capacitor GNSS 插件（TypeScript）
@@ -203,7 +206,7 @@ CI 会自动构建并发布到 GitHub Release。
 - **后台保活**：锁屏后 MQTT 心跳自动降频（60s），keepalive 5 分钟，原生定位回调驱动发布；10 小时可玩
 - **最大房间人数**：8 人（受 EMQX 公共 Broker 连接速率限制）
 - **缓存版本戳**：所有 CSS/JS 引用使用 `?t=YYYYMMDDvN` 格式手动管理版本，修改文件后必须同步更新
-- **脚本加载顺序**：`config.js -> toast.js -> storage.js -> trail.js -> map.js -> gps.js -> [mqtt.js CDN] -> room.js -> app.js`，不可调换
+- **脚本加载顺序**：`config.js -> toast.js -> storage.js -> trail.js -> map.js -> gps.js -> [mqtt.js CDN] -> room.js -> app-core.js -> app-gps-ui.js -> app-circle-ui.js -> app-room-ui.js`，不可调换
 - **MQTT Broker**：`test.mosquitto.org` 的 wss(8081) 已被官方禁用，仅 ws 明文可用；浏览器混合内容策略会拦截 ws://，故仅 file:// 或 http:// 页面下可达
 
 ---

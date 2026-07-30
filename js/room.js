@@ -131,6 +131,11 @@ class RoomManager {
     this._gameStartAt = 0;           // 游戏开始时间戳，0=未设置
     this._gameTimerAborted = false;
 
+    // 游戏时长限制
+    this._gameDurationMs = 0;        // 0 = 无限制
+    this._gameEndAt = 0;             // 游戏结束时间戳
+    this._gameOverTimer = null;      // 自动结束定时器
+
     // 游戏角色 — 鬼抓人
     this._gameState = 'idle';        // idle | playing | finished
     this._isHost = false;            // 创建房间的玩家为房主
@@ -159,6 +164,7 @@ class RoomManager {
     this.onCircleSync = null;       // (circles[]) → void，其他玩家的圆变更
     this.onPlayerCaught = null;     // (targetId, ghostId) → void
     this.onGameStatsReady = null;   // (stats) → void
+    this.onRequestCircles = null;   // () → void，新玩家请求同步圆
   }
 
   // ════════════════════════════════════════════════════════════
@@ -175,7 +181,7 @@ class RoomManager {
     const p = {
       id, name: '未知', color: '#888', online: true, sharing: true,
       teamId: null, teamBroadcaster: false, teamSeparation: false,
-      spectator: false, isNpc: false, role: null, caught: false, caughtBy: null,
+      spectator: false, isNpc: false, role: null, caught: false, caughtBy: null, _lastSeen: 0,
     };
     this._players[id] = p;
     return p;
@@ -313,6 +319,14 @@ class RoomManager {
 
         discarded.current = true;
         this._connected = true;
+
+        // 重连场景：恢复订阅 + 重新宣告在线 + 请求全量同步
+        if (this._roomCode) {
+          this._subscribeRoom(this._roomCode);
+          this._publishPresence();
+          this._publish({ join: 1 });
+          this._publish({ type: 'request_state' });
+        }
 
         // 提取 topicAliasMaximum（MQTT 5.0 CONNACK 属性）
         if (isMqtt5 && connack && connack.properties) {
@@ -553,6 +567,9 @@ class RoomManager {
         if (data.burstEnabled != null) this._burstEnabled = data.burstEnabled;
         if (data.burstPhase) this._burstPhase = data.burstPhase;
         if (data.burstPhaseEnd) this._burstPhaseEnd = data.burstPhaseEnd;
+        // 同步游戏结束时间
+        if (data.endAt) this._gameEndAt = data.endAt;
+        if (data.endAt) this._gameDurationMs = Math.max(0, data.endAt - Date.now());
         if (this.onGameStateChange) this.onGameStateChange('playing');
         return;
       }
@@ -599,6 +616,7 @@ class RoomManager {
       // 房间状态请求：新玩家加入时请求同步完整状态
       if (data.type === 'request_state') {
         this._broadcastFullState();
+        if (this.onRequestCircles) this.onRequestCircles();
         return;
       }
 
@@ -639,6 +657,8 @@ class RoomManager {
           this._gameState = data.gameState;
           if (data.gameStartTs) this._gameStartTs = data.gameStartTs;
           if (data.gameEndTs) this._gameEndTs = data.gameEndTs;
+          if (data.gameDurationMs) this._gameDurationMs = data.gameDurationMs;
+          if (data.gameEndAt) this._gameEndAt = data.gameEndAt;
           if (this.onGameStateChange) this.onGameStateChange(data.gameState);
         }
         // 重建游戏倒计时（仅在 idle 状态下，说明倒计时已设但未开始）
@@ -736,6 +756,7 @@ class RoomManager {
     this._isSpectator = false;
     this._gameStartAt = 0;
     this._gameTimerAborted = false;
+    if (this._gameOverTimer) { clearTimeout(this._gameOverTimer); this._gameOverTimer = null; }
     this._isHost = false;
     this._gameState = 'idle';
     this._playerRoles = {};
@@ -743,6 +764,8 @@ class RoomManager {
     this._gameEvents = [];
     this._gameStartTs = 0;
     this._gameEndTs = 0;
+    this._gameDurationMs = 0;
+    this._gameEndAt = 0;
   }
 
   /**
@@ -811,6 +834,7 @@ class RoomManager {
     player.role = this._playerRoles[senderId] || player.role || null;
     player.caught = (this._caughtPlayers[senderId] != null) || player.caught || false;
     player.caughtBy = this._caughtPlayers[senderId] ? this._caughtPlayers[senderId].caughtBy : (player.caughtBy || null);
+    player._lastSeen = Date.now();
     if (isNew && this.onPlayerJoin) this.onPlayerJoin(senderId, player.name);
     this._schedulePositionUpdate(senderId);
   }
@@ -834,6 +858,7 @@ class RoomManager {
       this._myAmBroadcaster = false;
       this._lastBroadcastTs = Date.now();
     }
+    player._lastSeen = Date.now();
     if (isNew && this.onPlayerJoin) this.onPlayerJoin(senderId, player.name);
     this._schedulePositionUpdate(senderId);
   }
@@ -856,6 +881,7 @@ class RoomManager {
     player.role = p.role || this._playerRoles[senderId] || player.role || null;
     player.caught = p.caught === true || (this._caughtPlayers[senderId] != null) || player.caught || false;
     player.caughtBy = this._caughtPlayers[senderId] ? this._caughtPlayers[senderId].caughtBy : (player.caughtBy || null);
+    player._lastSeen = Date.now();
     this._schedulePositionUpdate(senderId);
   }
 
@@ -1148,6 +1174,8 @@ class RoomManager {
       playerRoles: { ...this._playerRoles },
       caughtPlayers: {},
       gameEndTs: this._gameEndTs || 0,
+      gameDurationMs: this._gameDurationMs || 0,
+      gameEndAt: this._gameEndAt || 0,
     };
     for (const [id, info] of Object.entries(this._caughtPlayers)) {
       msg.caughtPlayers[id] = { caughtBy: info.caughtBy, ts: info.ts };
@@ -1278,8 +1306,8 @@ class RoomManager {
       c.lng = circle.center.lng;
       c.r = circle.maxRadius;
       c.interval = circle.interval || CONFIG.CONCENTRIC_INTERVAL;
-      c.name = this._nickname || '';
-      c.color = color;
+      c.name = circle.name || this._nickname || '';
+      c.color = circle.color || color;
     }
     this._publishWithAlias(
       `${ROOM_CONFIG.TOPIC_PREFIX}/${this._roomCode}/${this._deviceId}/circle`,
@@ -1398,6 +1426,15 @@ class RoomManager {
     p.online = false;
     if (this.onPlayerLeave) this.onPlayerLeave(id, p.name);
     delete this._players[id];
+
+    // 清理该玩家创建的空队伍
+    Object.keys(this._teams).forEach((teamId) => {
+      if (this._teams[teamId].creatorId === id && this.getTeamMembers(teamId).length === 0) {
+        delete this._teams[teamId];
+      }
+    });
+    if (this.onTeamUpdate) this.onTeamUpdate({ ...this._teams }, this._myTeamId);
+
     this._schedulePositionUpdate();
   }
 
@@ -1469,8 +1506,11 @@ class RoomManager {
    * 后台模式下单次触发 MQTT 发布（由原生后台定位回调调用）
    * 仅发布 ping + position，不触发完整 _preparePublish
    */
-  publishFromBackground() {
+  publishFromBackground(lat, lng, acc, speed, bearing) {
     if (!this._connected || !this._client) return;
+    if (lat != null) {
+      this._lastPosition = { lat, lng, acc: acc || 0, speed: speed || 0, bearing: bearing || 0 };
+    }
     this._publishPing();
     if (this._lastPosition) {
       this._publishPosition();
@@ -1649,6 +1689,8 @@ class RoomManager {
 
   getGameStartAt() { return this._gameStartAt; }
   isGameTimerAborted() { return this._gameTimerAborted; }
+  getGameEndAt() { return this._gameEndAt; }
+  getGameDurationMs() { return this._gameDurationMs; }
 
   // ============================================================
   //  游戏角色 — 鬼抓人
@@ -1686,8 +1728,9 @@ class RoomManager {
    * 广播 game_start → 所有人进入 playing 状态
    * @param {number} [burstSilent] 静默时长（分钟），随 game_start 同步给所有人
    * @param {number} [burstShare] 共享时长（分钟），随 game_start 同步给所有人
+   * @param {number} [endAt] 游戏结束时间戳（毫秒），0=无限制
    */
-  startGame(burstSilent, burstShare) {
+  startGame(burstSilent, burstShare, endAt) {
     if (!this._isHost) return;
     if (this._gameState === 'playing') return; // 进行中不允许重复开始；idle / finished 均可开新局
     this._resetGameState();
@@ -1702,7 +1745,13 @@ class RoomManager {
     this._burstEnabled = true;
     this._burstPhase = 'silent';
     this._burstPhaseEnd = Date.now() + this._burstSilentMin * 60 * 1000;
-    this._publish({
+    // 游戏结束时间
+    if (endAt) {
+      this._gameEndAt = endAt;
+      this._gameDurationMs = Math.max(0, endAt - Date.now());
+      this._gameOverTimer = setTimeout(() => this.endGame(), this._gameDurationMs);
+    }
+    const msg = {
       type: 'game_start',
       burstSilent: this._burstSilentMin,
       burstShare: this._burstShareMin,
@@ -1710,7 +1759,9 @@ class RoomManager {
       burstEnabled: true,
       burstPhase: 'silent',
       burstPhaseEnd: this._burstPhaseEnd,
-    });
+    };
+    if (this._gameEndAt) msg.endAt = this._gameEndAt;
+    this._publish(msg);
     // 自动按队伍分配角色：随机选一个非 NPC 队为鬼队，其余为人队
     this._autoAssignTeamRoles();
     if (this.onGameStateChange) this.onGameStateChange('playing');
@@ -1720,11 +1771,13 @@ class RoomManager {
    * 重置单局状态（结束后再开新局用）：清掉被抓 / 角色 / 事件，玩家标记回归初始
    */
   _resetGameState() {
+    if (this._gameOverTimer) { clearTimeout(this._gameOverTimer); this._gameOverTimer = null; }
     this._caughtPlayers = {};
     this._playerRoles = {};
     this._gameEvents = [];
     this._gameStartTs = 0;
     this._gameEndTs = 0;
+    this._gameEndAt = 0;
     Object.values(this._players).forEach((p) => {
       p.caught = false;
       p.caughtBy = null;
@@ -1761,6 +1814,7 @@ class RoomManager {
   endGame() {
     if (!this._isHost) return;
     if (this._gameState !== 'playing') return;
+    if (this._gameOverTimer) { clearTimeout(this._gameOverTimer); this._gameOverTimer = null; }
     this._gameState = 'finished';
     this._gameEndTs = Date.now();
     this._gameEvents.push({ type: 'game_end', ts: this._gameEndTs });
@@ -2049,6 +2103,17 @@ class RoomManager {
    * 每次心跳前的发报准备：检查超时 → 选举 → 分离检测
    */
   _preparePublish() {
+    // 静默掉线检测（不依赖队伍状态）：三路皆无消息超过宽限期 → 触发离线
+    const now = Date.now();
+    Object.keys(this._players).forEach((id) => {
+      if (id === this._deviceId) return;
+      const p = this._players[id];
+      if (!p.online || !p._lastSeen) return;
+      if (now - p._lastSeen > ROOM_CONFIG.OFFLINE_GRACE_MS && !this._offlineTimers[id]) {
+        this._schedulePendingOffline(id);
+      }
+    });
+
     if (!this._myTeamId) return;
 
     // 1. 发报员超时检测（连续 3 个心跳周期无广播 → 重选）

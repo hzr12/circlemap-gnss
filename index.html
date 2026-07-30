@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="css/base.css?t=20260710v1">
   <link rel="stylesheet" href="css/map.css?t=20260710v2">
   <link rel="stylesheet" href="css/panel.css?t=20260710v1">
-  <link rel="stylesheet" href="css/gps.css?t=20260710v1">
+  <link rel="stylesheet" href="css/gps.css?t=20260710v2">
   <link rel="stylesheet" href="css/circles.css?t=20260710v1">
   <link rel="stylesheet" href="css/trail.css?t=20260710v1">
   <link rel="stylesheet" href="css/toast-modal.css?t=20260710v1">
@@ -246,6 +246,14 @@
               <button class="room-btn mini" id="room-game-assign-btn"> 换鬼</button>
               <button class="room-btn mini" id="room-game-random-btn"> 随机分配</button>
             </div>
+            <div class="room-form-row hidden" id="room-end-time-select">
+              <span class="field-label"> 结束</span>
+              <input type="time" id="room-game-end-input" class="room-input" title="留空=无限制，到点时自动结束">
+            </div>
+            <div class="room-game-timer-row hidden" id="room-game-timer-row">
+              <span id="room-game-time-remaining">--:--</span>
+              <button class="room-btn danger mini hidden" id="room-game-end-short-btn"> 结束</button>
+            </div>
           </div>
         </div>
 
@@ -347,6 +355,31 @@
           <button class="preset-btn" data-radius="5000">5km</button>
           <button class="preset-btn" data-radius="10000">10km</button>
         </div>
+        <!-- 圆圈自定义 -->
+        <div class="circle-custom-section" id="circle-custom-section">
+          <div class="circle-custom-row">
+            <span class="field-label">圈距</span>
+            <input type="number" id="circle-interval-input" class="circle-interval-input" value="2500" min="10" max="50000" inputmode="numeric">
+            <span class="radius-unit">米</span>
+          </div>
+          <div class="circle-custom-row">
+            <span class="field-label">名称</span>
+            <input type="text" id="circle-name-input" class="circle-name-input" placeholder="可选" maxlength="20">
+          </div>
+          <div class="circle-custom-row">
+            <span class="field-label">颜色</span>
+            <div class="circle-color-presets" id="circle-color-presets">
+              <button type="button" class="circle-color-preset active" style="--c:#FF6B6B" data-color="#FF6B6B" title="红"></button>
+              <button type="button" class="circle-color-preset" style="--c:#FFD93D" data-color="#FFD93D" title="黄"></button>
+              <button type="button" class="circle-color-preset" style="--c:#6BCB77" data-color="#6BCB77" title="绿"></button>
+              <button type="button" class="circle-color-preset" style="--c:#4ECDC4" data-color="#4ECDC4" title="青"></button>
+              <button type="button" class="circle-color-preset" style="--c:#45B7D1" data-color="#45B7D1" title="蓝"></button>
+              <button type="button" class="circle-color-preset" style="--c:#C084FC" data-color="#C084FC" title="紫"></button>
+              <button type="button" class="circle-color-preset" style="--c:#FF8C00" data-color="#FF8C00" title="橙"></button>
+              <button type="button" class="circle-color-preset" style="--c:#FFFFFF" data-color="#FFFFFF" title="白"></button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- 操作按钮 -->
@@ -420,15 +453,19 @@
       <!-- 信息展示区 -->
       <div class="info-area hidden" id="infoArea">
         <div class="info-divider"></div>
-        <div class="info-grid">
-          <div class="info-item">
-            <span class="info-label">圆心坐标</span>
-            <span class="info-value" id="info-center" style="cursor:pointer" title="点击复制坐标">--</span>
-          </div>
-          <div class="info-item">
-            <span class="info-label">度分秒</span>
-            <span class="info-value" id="info-center-dms" style="font-size:11px;opacity:0.75">--</span>
-          </div>
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="info-label">名称</span>
+              <span class="info-value" id="info-name">--</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">圆心坐标</span>
+              <span class="info-value" id="info-center" style="cursor:pointer" title="点击复制坐标">--</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">度分秒</span>
+              <span class="info-value" id="info-center-dms" style="font-size:11px;opacity:0.75">--</span>
+            </div>
           <div class="info-item">
             <span class="info-label">半径</span>
             <span class="info-value" id="info-radius">--</span>
@@ -490,14 +527,17 @@
   <script src="js/toast.js?t=20260710v1"></script>
   <script src="js/storage.js?t=20260710v1"></script>
   <script src="js/trail.js?t=20260710v1"></script>
-  <script src="js/map.js?t=20260710v2"></script>
-  <script src="js/gps.js?t=20260710v1"></script>
+  <script src="js/map.js?t=20260710v3"></script>
+  <script src="js/gps.js?t=20260710v2"></script>
 
   <!-- MQTT（多人位置共享） -->
   <script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
-  <script src="js/room.js?t=20260710v3"></script>
+  <script src="js/room.js?t=20260710v4"></script>
 
-  <script src="js/app.js?t=20260710v4"></script>
+  <script src="js/app-core.js?t=20260730v4"></script>
+  <script src="js/app-gps-ui.js?t=20260730v3"></script>
+  <script src="js/app-circle-ui.js?t=20260730v1"></script>
+  <script src="js/app-room-ui.js?t=20260730v1"></script>
 
 <!-- 功能提示浮层（逐个显示在对应功能旁） -->
 <div id="hint-tooltip" class="hint-tooltip" style="display:none">

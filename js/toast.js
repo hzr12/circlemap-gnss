@@ -1,7 +1,7 @@
 /**
- * Toast 提示 — 从 app.js 拆出的独立模块 (#18)
+ * Toast 提示
  * =============================================
- * 短暂的顶部居中消息提示
+ * 消息提示 + 可撤销操作提示
  */
 
 class Toast {
@@ -28,6 +28,40 @@ class Toast {
 
     const ms = duration || CONFIG.DEFAULT_TOAST_DURATION;
     toast._removalTimer = setTimeout(() => {
+      toast.classList.remove('show');
+      setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
+    }, ms);
+  }
+
+  /**
+   * 显示可撤销操作的 toast
+   * @param {string} message 操作提示
+   * @param {Function} onUndo 撤销回调
+   * @param {number} [duration=5000] 超时自动关闭（毫秒）
+   */
+  static showUndo(message, onUndo, duration) {
+    const existing = document.querySelector('.toast-msg');
+    if (existing) existing.remove();
+
+    const toast = document.createElement('div');
+    toast.className = 'toast-msg toast-action';
+    toast.innerHTML = `<span>${message}</span><button class="toast-undo-btn">撤销</button>`;
+    document.body.appendChild(toast);
+
+    requestAnimationFrame(() => toast.classList.add('show'));
+
+    const undoBtn = toast.querySelector('.toast-undo-btn');
+    undoBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      undoBtn.disabled = true;
+      onUndo();
+      Toast.show(' 已撤销');
+      toast.classList.remove('show');
+      setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
+    });
+
+    const ms = duration || 5000;
+    setTimeout(() => {
       toast.classList.remove('show');
       setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
     }, ms);

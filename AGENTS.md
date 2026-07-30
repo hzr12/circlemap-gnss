@@ -1,130 +1,118 @@
-# Circlemap — 同心圆雷达地图
+# Circlemap — AI 辅助开发指南
 
-纯前端 SPA，基于腾讯地图 JavaScript API v2 + Canvas 叠加层。零构建、无框架。
+## 项目本质
 
-## 启动
+纯前端同心圆雷达地图工具（鬼抓人），**零构建**，浏览器直接打开 `index.html` 即可。Android 原生壳使用 Capacitor v8。
+
+## 关键命令
 
 ```bash
-# 直接双击 index.html，或用 HTTP 服务器托管
+# Web 端 — 无需构建，直接双击或：
 python -m http.server 8080
-# 或
-npx serve
-```
 
----
-
-## 文件清单
-
-**入口：** `index.html` — 加载全部 CSS/JS + 腾讯地图 API + Chart.js + MQTT.js（CDN）
-
-**CSS（12 个文件）：**
-`fonts.css` `theme.css` `base.css` `map.css` `panel.css` `gps.css` `circles.css` `trail.css` `toast-modal.css` `onboarding.css` `responsive.css` `room.css`
-
-**JS（9 个文件，加载顺序有依赖）：**
-
-```
-config.js → toast.js → storage.js → trail.js → map.js → gps.js → [mqtt.js CDN] → room.js → app.js
-```
-
-- `config.js` — 全局 `CONFIG` + 工具函数（calcDistance、formatDistance、copyText 等）
-- `toast.js` — Toast 消息提示（独立模块）
-- `storage.js` — localStorage 读写（`circlemap_data` + `circlemap_trail` 键）
-- `trail.js` — Trail 类（轨迹点存储、自适应采样、距离计算）
-- `map.js` — MapManager（腾讯地图 + Canvas 同心圆离屏渲染）
-- `gps.js` — GPSManager（浏览器 Geolocation API + 卡尔曼滤波 + GNSS 插件桥接）
-- `room.js` — RoomManager（MQTT 5.0 多人房间/队伍/NPC/游戏控制，约 2100 行最大模块）
-- `app.js` — App 主控制器（UI 绑定 + 逻辑编排 + 启动入口）
-
-**Android 原生：** `native/` — Capacitor v8 + 自定义 GNSS 插件 + `@capgo/background-geolocation`
-
----
-
-## 关键架构事实
-
-### 调试
-- `window.app` / `window._app` 暴露 App 实例，控制台可直接操作
-- 所有配置在 `CONFIG` 全局对象（`js/config.js`）
-
-### 腾讯地图 API
-- `qq.maps.*` v2 命名空间，API key 是 DEMO 公共 key（位于 `config.js` + `index.html` 两处）
-- 额外加载 `libraries=geometry,convertor`（球面计算 + 坐标转换）
-- 坐标纠偏：WGS84（浏览器）→ GCJ-02（腾讯），优先官方 convertor API，5 秒超时降级到手写算法
-
-### Canvas 同心圆
-- `#circle-canvas`，CSS `pointer-events: none`，非腾讯原生 Overlay
-- 离屏双 Pass：Pass 1 画填充（重叠自然加深），Pass 2 画描边+标注
-- 30fps 限频（`requestAnimationFrame` + `_scheduleRedraw`）
-- 事件追踪 `_syncCenter`（不依赖 `map.getCenter()`，因其异步）
-- 自带 `roundRect` polyfill 兼容 iOS <15.4、Firefox <112
-
-### GPS 定位
-- 纯浏览器 Geolocation API，无第三方 SDK
-- 单次定位（短按 GPS 按钮）vs 持续追踪 `watchPosition`（长按切换）
-- 节流：`_gpsMinInterval = 5000`，高频位置至少间隔 5 秒
-- 超时降级：连续 5 次超时 → 自动切 `enableHighAccuracy: false`，每 2 分钟尝试恢复
-- 省电：<20% 锁定省电，<10% 自动停止追踪
-- **卡尔曼滤波**：`gps.js` 内置一维卡尔曼（位置+速度），Q/R 自适应 accuracy 抑制漂移
-
-### 轨迹
-- 自适应采样：最小 10m 间隔 + 精度联动抖动过滤（`TRAIL_JITTER_FACTOR = 1.5`）
-- 滑动窗口平滑（窗口 5），上限 500 点（`TRAIL_MAX_POINTS`）
-
-### 持久化
-- `localStorage` 脏标记模式（`_dirty` / `_trailDirty`），60 秒定时 + 操作时写入
-- 圆数据 `circlemap_data`，轨迹 `circlemap_trail`，分开存储
-
-### 删除撤销
-- 清除全部 / 删除单个圆 / 清除轨迹均支持 5 秒内撤销
-- 通用方法 `_showUndoToast(message, onUndo)`
-
-### 多人房间（MQTT 5.0）
-- 公共 Broker（EMQX 上海主用 `wss://broker-cn.emqx.io:8084/mqtt`，HiveMQ / Mosquitto 备用）
-- 注意：`test.mosquitto.org` 的 wss(8081) 已被官方注释禁用，仅 ws 明文可连，浏览器混合内容会拦截
-- 加载顺序：`mqtt.js` CDN **必须在 `room.js` 之前**（在 index.html 中位于 gps.js 之后、room.js 之前）
-- `@capgo/background-geolocation` 插件用于 Android 原生后台定位（独立于 WebView 存活）
-
-### Android 原生（Capacitor v8）
-- `capacitor.config.json` 注册了 `GnssData`、`BackgroundGeolocation`、`Filesystem`、`Share` 插件
-- GNSS 插件：仅原生端可用，Web 端自动 `display: none`
-- GNSS 注册顺序：先 `addListener` 后 `startGnssListening()`（防竞态）
-- 权限：需 `ACCESS_FINE_LOCATION` + `ACCESS_BACKGROUND_LOCATION`
-- CI 覆盖 UA：通过自定义 `MainActivity.java` 将 WebView UA 改为桌面版，影响地图瓦片
-
----
-
-## 版本与发布
-
-- 版本号体现在 `index.html` 中 `<script>` / `<link>` 的 `?t=YYYYMMDDvN` 参数（**手动递增**）
-- GitHub Release：`v*` tag 触发正式版，main push 触发 dev-build 预发布
-- APK 签名：keystore `native/circlemap.keystore`，口令 `circlemap123`，alias `circlemap`
-- **Commit 描述必须使用中文**：允许英文前缀（`feat:`、`fix:`、`refactor:` 等），详细描述必须中文
-
----
-
-## APK 构建
-
-```bash
-cd native && npm install
+# Android APK 构建（完整流程）
+cd native
+npm install
 cd gnss-plugin && npx tsc && cd ..
-npx cap add android            # 首次
+npx cap add android           # 仅首次
 cp -R ../index.html ../js ../css web/
 npx cap sync android
 cd android && ./gradlew assembleDebug
 ```
 
-CI（`.github/workflows/android-build.yml`）自动完成 Web 资源复制 → cap sync → 插件集成 → 签名 → Release。
+## 架构规则
 
----
+### 脚本加载顺序（不可调换）
+```
+config.js → toast.js → storage.js → trail.js → map.js → gps.js → [mqtt.js CDN] → room.js → app-core.js → app-gps-ui.js → app-circle-ui.js → app-room-ui.js
+```
+新增 JS 文件必须插入正确位置。
 
-## 常见陷阱
+> **注意**：`app.js` 已拆分为 4 个文件，使用 `App.prototype` 方法追加模式。
+> `app-core.js` 定义 `class App`；`app-*-ui.js` 在其 prototype 上追加 UI 方法。
+> `_escapeHtml()` 定义在 `app-core.js` 中，供 `app-circle-ui.js` 和 `app-room-ui.js` 共享。
+> `Toast.showUndo()` 定义在 `toast.js` 中（撤销 Toast），供 `app-core.js` 和 `app-circle-ui.js` 调用。
 
-1. **`?t=` 缓存版本戳** — 修改 `js/*.js` 或 `css/*.css` 后必须更新 `index.html` 中对应 `<script>` / `<link>` 的版本戳，否则浏览器使用旧代码
-2. **脚本加载顺序** — `room.js` 位于 gps.js 之后、app.js 之前，且依赖 `mqtt.js` CDN 先加载
-3. **腾讯地图 API 需联网** — 内网/断网不可用
-4. **坐标转换 5 秒超时** — 弱网降级到手写算法
-5. **GPS 节流 5 秒** — 连续定位间隔最少 5 秒
-6. **iOS 后台 GPS** — 使用 `pagehide` / `pageshow`（`visibilitychange` 在 iOS 不可靠）
-7. **GNSS 仅 Android 原生端** — Web 端自动隐藏；先 addListener 后 startGnssListening
-8. **Chart.js 泄漏** — `App.destroy()` 中必须显式 `destroy()`，否则 canvas 引用泄漏
-9. **MQTT 公共 Broker** — 消息不可加密，无 SLA；mosquitto 的 wss 已禁用，仅 ws 明文
-10. **离线瓦片缓存已移除** — 之前 `js/tile-cache.js` + `js/sw.js` 有 SW scope + opaque response 双重问题，无法工作。如需重新实现须同时修复
+### 缓存版本戳
+所有 CSS/JS 引用使用 `?t=YYYYMMDDvN` 格式，**手动管理**。修改文件后必须递增版本号（v1→v2→...）。
+
+### CSS 拆分
+12 个按功能拆分（`theme.css / map.css / gps.css / circles.css / trail.css / room.css` 等）。新增样式应放入对应文件或新建文件。
+
+### CDN 外部库
+- `map.qq.com/api/js?v=2.exp`（腾讯地图）
+- `chart.js@4`（速度曲线）
+- `mqtt@5`（多人通信）
+
+## 核心架构
+
+| 模块 | 类/文件 | 职责 |
+|------|---------|------|
+| 入口 | `index.html` | 加载全部资源 |
+| 配置 | `js/config.js` | `CONFIG` 全局常量 + 工具函数 |
+| 地图 | `js/map.js` | `MapManager`（腾讯地图 + Canvas 同心圆） |
+| 定位 | `js/gps.js` | `GPSManager` + `KalmanFilter` |
+| 多人 | `js/room.js` | `RoomManager`（MQTT 5.0） |
+| 轨迹 | `js/trail.js` | 采样/平滑/GPX 导出 |
+| 主控核心 | `js/app-core.js` | `App` 类定义 + 核心逻辑 |
+| GPS UI | `js/app-gps-ui.js` | 状态条/速度曲线/定位列表/跟随 |
+| 圆 UI | `js/app-circle-ui.js` | 圆列表/info 面板/删除撤销/编辑半径 |
+| 房间 UI | `js/app-room-ui.js` | 分享/健康/队伍/玩家列表/游戏控制/计时/爆发/统计 |
+
+## 重要约定
+
+- **坐标纠偏**：浏览器返回 WGS84，腾讯地图用 GCJ-02，纠偏 5s 超时降级到手写 Haversine
+- **GPS 节流**：连续定位最短 5s 间隔
+- **位置过期**：10 分钟无更新自动提示重定位
+- **轨迹上限**：`TRAIL_MAX_POINTS = 500`
+- **MQTT Broker 注意**：`test.mosquitto.org` 的 wss(8081) 已被禁用，仅明文 ws 可用；https 页面下 ws 被混合内容策略拦截，仅 file:// / http:// 可用
+- **Android GNSS 插件**：注册顺序必须先 `addListener` 后 `startGnssListening`
+- **多人房间上限**：8 人（受公共 Broker 限制）
+
+## CI/CD
+
+GitHub Actions（`.github/workflows/android-build.yml`）：main 分支推送 + tag 推送自动构建签名 APK，发布到 GitHub Release。需配置 Java 21 + Node 22。
+
+## 编码规则
+
+### 热路径方法必须缓存 DOM 引用
+```js
+// 正确：懒缓存
+const el = this._fooEl || (this._fooEl = document.getElementById('foo'));
+// 错误：每次调用都查询
+const el = document.getElementById('foo');
+```
+所有可能在一次用户交互或一次位置更新中反复调用的方法（`_update*`、`_show*` 等），其 `getElementById` 调用必须使用 `this._xxxEl || (this._xxxEl = ...)` 模式一次性缓存。例外：仅在 `init()` / `_setupUI()` 中执行一次的初始化代码可以不缓存。
+
+### 隐私日志必须用 CONFIG.DEBUG 守卫
+```js
+// 正确
+if (CONFIG.DEBUG) console.log(...);
+// 禁止：不经守卫输出用户坐标、NMEA 语句、地图中心、userAgent 等隐私数据
+```
+`console.log` / `console.info` 中若涉及用户位置、设备信息、NMEA 报文等，必须加 `if (CONFIG.DEBUG)` 条件，默认不输出。
+
+### 定时器必须成对管理（set → clear）
+- `setInterval` / `setTimeout` 必须有对应的 `clearInterval` / `clearTimeout` 在销毁/离开时执行
+- 同一类的定时器（如 burst 阶段、timer 倒计时）应在方法本地先 `clear` 后 `set`，避免重复设置
+- RoomManager 中的定时器由其自身的 `leaveRoom()` / `destroy()` 清理；App 层的 UI 定时器由 `_roomCleanup()` 或 `destroy()` 清理
+
+### 死代码必须删除（不注释掉）
+- 定义后没有被调用的方法、无引用的属性赋值，必须删除而非注释
+- 检查：grep 方法名/属性名确认除定义外无其他引用
+
+### 全量渲染必须评估成本
+- 列表类方法（`_updateRoomPlayerList`、`_updateCircleList`）每次 `innerHTML = html` 全量重建在 8 人/50 圆以内可接受
+- 超过此规模或每帧调用的场景，应改用 `createDocumentFragment` / `insertAdjacentHTML` 增量更新
+- 新加的列表渲染方法默认用增量模式
+
+### 版本戳管理
+所有 CSS/JS 引用使用 `?t=YYYYMMDDvN` 格式，**手动管理**。修改文件后必须递增版本号（v1→v2→...）。
+每次修改文件时要同时更新对应的版本戳。未改的文件不要动。
+
+## 代码风格
+
+- 纯 ES6 Class，零框架
+- 中文注释 + 中文 UI
+- `localStorage` 持久化键名 `circlemap_data`
+- 版本戳仅当修改对应文件时递增，不全局统一
