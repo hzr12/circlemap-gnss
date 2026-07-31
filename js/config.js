@@ -19,7 +19,7 @@ const CONFIG = {
 
   // 半径范围（米）
   MIN_RADIUS: 1,
-  MAX_RADIUS: 50000,
+  MAX_RADIUS: 25000,
   DEFAULT_RADIUS: 5000,
 
   // 同心圆间隔（米）— 每 2.5 公里一圈
