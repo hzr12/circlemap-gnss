@@ -12,8 +12,8 @@
   <link rel="stylesheet" href="css/map.css?t=20260710v2">
   <link rel="stylesheet" href="css/panel.css?t=20260710v1">
   <link rel="stylesheet" href="css/gps.css?t=20260710v2">
-  <link rel="stylesheet" href="css/circles.css?t=20260710v1">
-  <link rel="stylesheet" href="css/trail.css?t=20260710v1">
+  <link rel="stylesheet" href="css/circles.css?t=20260710v3">
+  <link rel="stylesheet" href="css/trail.css?t=20260710v3">
   <link rel="stylesheet" href="css/toast-modal.css?t=20260710v1">
   <link rel="stylesheet" href="css/onboarding.css?t=20260710v1">
   <link rel="stylesheet" href="css/responsive.css?t=20260710v1">
@@ -358,15 +358,6 @@
         <!-- 圆圈自定义 -->
         <div class="circle-custom-section" id="circle-custom-section">
           <div class="circle-custom-row">
-            <span class="field-label">圈距</span>
-            <input type="number" id="circle-interval-input" class="circle-interval-input" value="2500" min="10" max="50000" inputmode="numeric">
-            <span class="radius-unit">米</span>
-          </div>
-          <div class="circle-custom-row">
-            <span class="field-label">名称</span>
-            <input type="text" id="circle-name-input" class="circle-name-input" placeholder="可选" maxlength="20">
-          </div>
-          <div class="circle-custom-row">
             <span class="field-label">颜色</span>
             <div class="circle-color-presets" id="circle-color-presets">
               <button type="button" class="circle-color-preset active" style="--c:#FF6B6B" data-color="#FF6B6B" title="红"></button>
@@ -418,7 +409,11 @@
           <button id="trail-stats-btn" class="btn-sm" disabled> 统计</button>
           <button id="trail-smooth-btn" class="btn-sm active"> 平滑</button>
           <button id="export-report-btn" class="btn-sm" title="导出活动报告图片（含轨迹、速度曲线、统计）"> 报告</button>
-          <button id="power-saving-btn" class="btn-sm" title="省电模式：降低 GPS 精度以节省电量">省电</button>
+        </div>
+        <!-- 后台+省电模块 -->
+        <div class="power-section" id="power-section">
+          <span class="power-status" id="power-status">定位间隔: 2s</span>
+          <button id="power-saving-btn" class="btn-sm" title="省电模式">省电</button>
         </div>
         <!-- 速度色阶图例 -->
         <div class="speed-legend">
@@ -455,16 +450,8 @@
         <div class="info-divider"></div>
           <div class="info-grid">
             <div class="info-item">
-              <span class="info-label">名称</span>
-              <span class="info-value" id="info-name">--</span>
-            </div>
-            <div class="info-item">
               <span class="info-label">圆心坐标</span>
               <span class="info-value" id="info-center" style="cursor:pointer" title="点击复制坐标">--</span>
-            </div>
-            <div class="info-item">
-              <span class="info-label">度分秒</span>
-              <span class="info-value" id="info-center-dms" style="font-size:11px;opacity:0.75">--</span>
             </div>
           <div class="info-item">
             <span class="info-label">半径</span>
@@ -525,18 +512,18 @@
   <!-- 应用脚本 -->
   <script src="js/config.js?t=20260710v1"></script>
   <script src="js/toast.js?t=20260710v1"></script>
-  <script src="js/storage.js?t=20260710v1"></script>
+  <script src="js/storage.js?t=20260710v2"></script>
   <script src="js/trail.js?t=20260710v1"></script>
-  <script src="js/map.js?t=20260710v3"></script>
-  <script src="js/gps.js?t=20260710v3"></script>
+  <script src="js/map.js?t=20260710v5"></script>
+  <script src="js/gps.js?t=20260710v4"></script>
 
   <!-- MQTT（多人位置共享） -->
   <script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
-  <script src="js/room.js?t=20260710v5"></script>
+  <script src="js/room.js?t=20260710v7"></script>
 
-  <script src="js/app-core.js?t=20260730v5"></script>
+  <script src="js/app-core.js?t=20260730v8"></script>
   <script src="js/app-gps-ui.js?t=20260730v3"></script>
-  <script src="js/app-circle-ui.js?t=20260730v2"></script>
+  <script src="js/app-circle-ui.js?t=20260730v4"></script>
   <script src="js/app-room-ui.js?t=20260730v1"></script>
 
 <!-- 功能提示浮层（逐个显示在对应功能旁） -->

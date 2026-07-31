@@ -340,6 +340,49 @@ class MapManager {
         this._drawRemoteCircle(ctx, c);
       }
     }
+
+    // ── 比例尺 ──
+    this._drawScaleBar(ctx, w, h);
+  }
+
+  _drawScaleBar(ctx, w, h) {
+    const zoom = this.map.getZoom();
+    if (zoom < 3) return;
+    const lat = this._syncCenter ? this._syncCenter.getLat() : 39.9;
+    const mpp = 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
+    const targetPx = Math.min(120, w * 0.3);
+    let barMeters = Math.round(targetPx * mpp);
+    const mag = Math.pow(10, Math.floor(Math.log10(barMeters)));
+    const norm = barMeters / mag;
+    let nice;
+    if (norm < 1.5) nice = 1 * mag;
+    else if (norm < 3.5) nice = 2 * mag;
+    else if (norm < 7.5) nice = 5 * mag;
+    else nice = 10 * mag;
+    const barPx = nice / mpp;
+    const label = nice >= 1000 ? (nice / 1000).toFixed(1) + ' km' : nice + ' m';
+
+    const x = 12;
+    const y = h - 16;
+    const clr = this._theme === 'light' ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.65)';
+    ctx.strokeStyle = clr;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + barPx, y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x, y - 4);
+    ctx.lineTo(x, y + 4);
+    ctx.moveTo(x + barPx, y - 4);
+    ctx.lineTo(x + barPx, y + 4);
+    ctx.stroke();
+    ctx.fillStyle = clr;
+    ctx.font = '10px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(label, x + barPx / 2, y - 4);
+    ctx.textAlign = 'left';
   }
 
   /** 仅重绘叠加层（预测椭圆、距离标注，位置更新时触发） */
@@ -646,17 +689,16 @@ class MapManager {
    * 添加一个同心圆到列表
    * @param {{lat:number,lng:number}} center 中心坐标
    * @param {number} maxRadius 最大半径（米）
-   * @param {number} [interval] 间距（默认 CONFIG.CONCENTRIC_INTERVAL）
    * @returns {number} 新圆的 id
    */
-  addCircle(center, maxRadius, interval, name, color) {
+  addCircle(center, maxRadius, color) {
     const id = this._idCounter++;
     this.circles.push({
       id,
       center: { lat: center.lat, lng: center.lng },
       maxRadius,
-      interval: interval || CONFIG.CONCENTRIC_INTERVAL,
-      name: name || '',
+      interval: CONFIG.CONCENTRIC_INTERVAL,
+      name: '',
       color: color || '',
       createdAt: Date.now()
     });
@@ -670,7 +712,6 @@ class MapManager {
     const c = this.circles.find(x => x.id === id);
     if (!c) return;
     if (fields.maxRadius != null) c.maxRadius = fields.maxRadius;
-    if (fields.interval != null) c.interval = fields.interval;
     if (fields.name !== undefined) c.name = fields.name;
     if (fields.color !== undefined) c.color = fields.color;
     if (fields.center != null) c.center = { lat: fields.center.lat, lng: fields.center.lng };
@@ -738,10 +779,10 @@ class MapManager {
     const drawInner = ip >= 2;
     const ringCount = drawInner ? Math.max(1, Math.floor(mp / ip)) : 0;
     ctx.save();
-    // 轻量填充
+    // 轻量填充（使用队伍颜色）
     ctx.beginPath();
     ctx.arc(cx, cy, Math.max(1, mp), 0, Math.PI * 2);
-    ctx.fillStyle = this._hexToRgba(color, 0.06);
+    ctx.fillStyle = this._hexToRgba(color, 0.08);
     ctx.fill();
     // 同心内圈（虚线）
     if (drawInner) {
@@ -776,12 +817,12 @@ class MapManager {
     ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.fill();
-    // 昵称标注（圆心上方）
-    if (circle.name) {
+    // 作者昵称标注（圆心上方）
+    const label = circle.authorName || circle.name || '';
+    if (label) {
       ctx.font = '600 11px -apple-system, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
-      const label = circle.name;
       const lw = ctx.measureText(label).width;
       const ly = cy - mp - 4;
       ctx.fillStyle = this._hexToRgba(color, 0.85);

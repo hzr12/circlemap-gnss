@@ -23,15 +23,6 @@ App.prototype._updateInfo = function () {
   const centerEl = this._infoCenterEl || (this._infoCenterEl = document.getElementById('info-center'));
   centerEl.textContent = `${sel.center.lat.toFixed(6)}, ${sel.center.lng.toFixed(6)}`;
 
-  const dmsEl = this._infoDmsEl || (this._infoDmsEl = document.getElementById('info-center-dms'));
-  if (dmsEl) {
-    dmsEl.textContent = `${ddToDms(sel.center.lat, 'lat')}  ${ddToDms(sel.center.lng, 'lng')}`;
-  }
-
-  // 名称
-  const infoNameEl = this._infoNameEl || (this._infoNameEl = document.getElementById('info-name'));
-  if (infoNameEl) infoNameEl.textContent = sel.name || '--';
-
   const radiusEl = this._infoRadiusEl || (this._infoRadiusEl = document.getElementById('info-radius'));
   radiusEl.textContent =
     sel.maxRadius >= 1000
@@ -48,7 +39,7 @@ App.prototype._updateInfo = function () {
   const interval = sel.interval || CONFIG.CONCENTRIC_INTERVAL;
   const ringCount = Math.ceil(sel.maxRadius / interval);
   const ringsEl = this._infoRingsEl || (this._infoRingsEl = document.getElementById('info-rings'));
-  ringsEl.textContent = `${ringCount} 圈（圈距 ${interval}m）`;
+  ringsEl.textContent = `${ringCount} 圈`;
 
   const distEl = this._infoDistEl || (this._infoDistEl = document.getElementById('info-distance'));
   if (this.myPosition && distEl) {
@@ -114,8 +105,6 @@ App.prototype._editCircle = function (id) {
   this._selectCircle(id);
   const c = this.mapManager.getCircles().find(x => x.id === id);
   if (c) {
-    if (this._circleIntervalInput) this._circleIntervalInput.value = c.interval || CONFIG.CONCENTRIC_INTERVAL;
-    if (this._circleNameInput) this._circleNameInput.value = c.name || '';
     if (c.color && this._circleColorPresets) {
       const target = this._circleColorPresets.querySelector(`[data-color="${c.color}"]`);
       if (target) {
@@ -152,8 +141,6 @@ App.prototype._updateCircleList = function (force) {
     for (let i = 0; i < circles.length; i++) {
       const c = circles[i];
       const isSel = c.id === selId;
-      const ringCount = Math.max(1, Math.floor(c.maxRadius / c.interval));
-      const displayName = c.name || `#${i + 1}`;
     const radiusStr = c.maxRadius >= 1000
       ? (c.maxRadius / 1000).toFixed(1) + ' km'
       : c.maxRadius + ' m';
@@ -177,8 +164,7 @@ App.prototype._updateCircleList = function (force) {
     html += `<div class="circle-item${isSel ? ' active' : ''}" data-id="${c.id}"${c.color ? ` style="border-left-color:${c.color}"` : ''}>
       <span class="circle-idx"${c.color ? ` style="background:${c.color};border-color:${c.color}"` : ''}>#${i + 1}</span>
       <div class="circle-summary">
-        <div class="circle-name">${this._escapeHtml(displayName)} <span class="circle-created">${dateStr}</span></div>
-        <div class="circle-meta">${radiusStr} · ${ringCount}圈 · 圈距${c.interval || CONFIG.CONCENTRIC_INTERVAL}m</div>
+        <div class="circle-meta">${radiusStr} <span class="circle-created">${dateStr}</span></div>
       </div>
       <span class="circle-dist ${distClass}">${distStr}</span>
       <button class="circle-edit" aria-label="编辑半径">
@@ -201,42 +187,91 @@ App.prototype._updateCircleList = function (force) {
     const players = this.roomManager.getPlayers();
     const teams = this.roomManager.getTeams();
     const myInfo = this.roomManager.getMyInfo();
+    const now = Date.now();
+    const follower = this._followedPlayerId;
+
     if (remoteCircles.length) {
-      html += `<div class="circle-section-divider">其他队伍的圆</div>`;
-      remoteCircles.forEach((rc, idx) => {
-        const radiusStr = rc.maxRadius >= 1000
-          ? (rc.maxRadius / 1000).toFixed(1) + ' km'
-          : rc.maxRadius + ' m';
-        const authorName = rc.name || '玩家';
-        const teamColor = rc.color || '#888';
-        const distLines = [];
-        Object.values(players).forEach((p) => {
-          if (p.id === myInfo.id || !p.online || p.spectator || p.isNpc) return;
-          if (p.lat == null || p.lng == null) return;
-          const dist = calcDistance({ lat: p.lat, lng: p.lng }, rc.center);
-          const pName = p.name || '未知';
-          const tag = p.role === 'ghost' ? '鬼' : p.role === 'hunter' ? '人' : '';
-          let rangeTag = '';
-          if (dist <= rc.maxRadius) {
-            rangeTag = ' <span class="tag-inrange">范围内</span>';
-          } else {
-            const fallbackAcc = Math.max(this._lastAccuracy || 0, 15);
-            if ((dist - fallbackAcc) <= rc.maxRadius) {
-              rangeTag = ' <span class="tag-maybe">可能范围内</span>';
-            } else {
-              rangeTag = ' <span class="tag-outside">范围外</span>';
-            }
-          }
-          distLines.push(`<span class="npc-dist-line"><span class="npc-dist-player" style="color:${p.color || '#ccc'}">${this._escapeHtml(pName)}</span>${tag ? `<span class="player-tag tag-${p.role}">${tag}</span>` : ''} ${formatDistance(dist)}${rangeTag}</span>`);
-        });
-        html += `<div class="circle-item remote" data-remote-idx="${idx}">
-          <span class="circle-idx" style="border-color:${teamColor}">R${idx + 1}</span>
-          <div class="circle-summary">
-            <div class="circle-name">${radiusStr} <span class="circle-created" style="color:${teamColor}">${this._escapeHtml(authorName)}</span></div>
-            ${distLines.length ? `<div class="circle-meta npc-dist-list">${distLines.join('')}</div>` : '<div class="circle-meta">暂无位置数据</div>'}
-          </div>
+      // 按作者分组
+      const groups = {};
+      for (const rc of remoteCircles) {
+        const key = rc.author || 'unknown';
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(rc);
+      }
+
+      // 展开状态
+      const collapsedKey = 'circlemap_remote_collapsed';
+      const collapsedAuthors = (() => { try { return JSON.parse(localStorage.getItem(collapsedKey)) || {}; } catch (e) { return {}; } })();
+
+      for (const [author, circles] of Object.entries(groups)) {
+        const authorName = circles[0].authorName || '玩家';
+        const authorColor = circles[0].color || '#888';
+        const isCollapsed = collapsedAuthors[author];
+        const circleCount = circles.length;
+
+        html += `<div class="circle-section-divider remote-group-header" data-author="${this._escapeHtml(author)}">
+          <span class="remote-group-toggle">${isCollapsed ? '▶' : '▼'}</span>
+          <span class="remote-group-name" style="color:${authorColor}">${this._escapeHtml(authorName)}</span>
+          <span class="remote-group-count">${circleCount} 圆</span>
         </div>`;
-      });
+
+        if (!isCollapsed) {
+          circles.forEach((rc, idx) => {
+            const age = now - rc.receivedAt;
+            let freshnessClass = 'freshness-ok';
+            if (age < 30000) freshnessClass = 'freshness-recent';
+            else if (age < 120000) freshnessClass = 'freshness-stale';
+            else freshnessClass = 'freshness-old';
+
+            const radiusStr = rc.maxRadius >= 1000
+              ? (rc.maxRadius / 1000).toFixed(1) + ' km'
+              : rc.maxRadius + ' m';
+            const teamColor = rc.color || '#888';
+            const distLines = [];
+
+            // 关注的玩家置顶
+            if (follower && players[follower] && players[follower].lat != null && players[follower].lng != null) {
+              const p = players[follower];
+              const dist = calcDistance({ lat: p.lat, lng: p.lng }, rc.center);
+              const pName = p.name || '未知';
+              const tag = p.role === 'ghost' ? '鬼' : p.role === 'hunter' ? '人' : '';
+              let rangeTag = '';
+              if (dist <= rc.maxRadius) rangeTag = ' <span class="tag-inrange">范围内</span>';
+              else {
+                const fb = Math.max(this._lastAccuracy || 0, 15);
+                rangeTag = (dist - fb) <= rc.maxRadius ? ' <span class="tag-maybe">可能范围内</span>' : ' <span class="tag-outside">范围外</span>';
+              }
+              distLines.push(`<span class="npc-dist-line followed-line"><span class="npc-follow-star" data-player="${this._escapeHtml(follower)}">★</span><span class="npc-dist-player" style="color:${p.color || '#ccc'}">${this._escapeHtml(pName)}</span>${tag ? `<span class="player-tag tag-${p.role}">${tag}</span>` : ''} ${formatDistance(dist)}${rangeTag}</span>`);
+            }
+
+            Object.values(players).forEach((p) => {
+              if (p.id === myInfo.id || !p.online || p.spectator || p.isNpc) return;
+              if (p.id === follower) return;
+              if (p.lat == null || p.lng == null) return;
+              const dist = calcDistance({ lat: p.lat, lng: p.lng }, rc.center);
+              const pName = p.name || '未知';
+              const tag = p.role === 'ghost' ? '鬼' : p.role === 'hunter' ? '人' : '';
+              let rangeTag = '';
+              if (dist <= rc.maxRadius) rangeTag = ' <span class="tag-inrange">范围内</span>';
+              else {
+                const fb = Math.max(this._lastAccuracy || 0, 15);
+                rangeTag = (dist - fb) <= rc.maxRadius ? ' <span class="tag-maybe">可能范围内</span>' : ' <span class="tag-outside">范围外</span>';
+              }
+              const isFollowed = p.id === follower;
+              distLines.push(`<span class="npc-dist-line${isFollowed ? ' followed-line' : ''}"><span class="npc-follow-btn${isFollowed ? ' followed' : ''}" data-player="${this._escapeHtml(p.id)}">${isFollowed ? '★' : '☆'}</span><span class="npc-dist-player" style="color:${p.color || '#ccc'}">${this._escapeHtml(pName)}</span>${tag ? `<span class="player-tag tag-${p.role}">${tag}</span>` : ''} ${formatDistance(dist)}${rangeTag}</span>`);
+            });
+
+            html += `<div class="circle-item remote ${freshnessClass}" data-remote-idx="${idx}">
+              <span class="circle-idx" style="border-color:${teamColor}">R${idx + 1}</span>
+              <div class="circle-summary">
+                <div class="circle-name">${radiusStr} <span class="circle-created" style="color:${teamColor}">${this._escapeHtml(authorName)}</span></div>
+                <div class="circle-meta freshness-indicator ${freshnessClass}">${age < 30000 ? '刚刚' : age < 120000 ? Math.round(age/1000) + '秒前' : Math.round(age/60000) + '分钟前'}</div>
+                ${distLines.length ? `<div class="circle-meta npc-dist-list">${distLines.join('')}</div>` : '<div class="circle-meta">暂无位置数据</div>'}
+              </div>
+            </div>`;
+          });
+        }
+      }
     }
   }
 

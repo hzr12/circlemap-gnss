@@ -144,11 +144,11 @@ class GPSManager {
     this._initBatteryMonitor();
     this._tryInitGnssPlugin();
 
-    // GPS 节流：动态间隔（正常 2s，省电模式 30s，后台 60s）
+    // GPS 节流：动态间隔（正常 2s，省电模式 60s，后台 15s）
     this._lastProcessedTime = 0;
     this._gpsMinInterval = 2000;
     this._gpsPowerSavingInterval = 30000;   // 省电模式间隔
-    this._gpsBackgroundInterval = 60000;    // 后台定位间隔
+    this._gpsBackgroundInterval = 15000;    // 后台定位间隔
     this._bestPendingPosition = null;       // 节流窗口内精度最优的位置缓存
   }
 

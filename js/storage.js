@@ -18,8 +18,6 @@ class Storage {
           id: c.id,
           center: c.center,
           maxRadius: c.maxRadius,
-          interval: c.interval,
-          name: c.name || '',
           color: c.color || '',
           createdAt: c.createdAt
         })),

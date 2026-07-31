@@ -400,6 +400,66 @@
   font-size: 9px;
   padding: 0 3px;
 }
+.remote-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 4px 0;
+  user-select: none;
+}
+.remote-group-header:hover {
+  opacity: 0.8;
+}
+.remote-group-toggle {
+  font-size: 9px;
+  color: var(--text-tertiary);
+  width: 12px;
+  text-align: center;
+}
+.remote-group-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+.remote-group-count {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-left: auto;
+}
+.npc-follow-btn, .npc-follow-star {
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  user-select: none;
+  color: var(--text-tertiary);
+}
+.npc-follow-btn:hover, .npc-follow-star:hover {
+  color: var(--accent-1);
+}
+.npc-follow-btn.followed, .npc-follow-star {
+  color: #ffd93d;
+}
+.followed-line {
+  background: rgba(255, 217, 61, 0.08);
+  border-radius: 3px;
+  padding: 1px 3px;
+  margin: 0 -3px;
+}
+.freshness-indicator {
+  font-size: 10px;
+}
+.freshness-indicator.freshness-recent {
+  color: #6bcb77;
+}
+.freshness-indicator.freshness-stale {
+  color: #ffd93d;
+}
+.freshness-indicator.freshness-old {
+  color: var(--text-tertiary);
+}
+.circle-item.remote.freshness-old {
+  opacity: 0.5;
+}
 
 /* ── 圆圈自定义（圈距/名称/颜色） ─────────────── */
 .circle-custom-section {
@@ -416,32 +476,6 @@
 .circle-custom-row .field-label {
   min-width: 32px;
   font-size: 12px;
-}
-.circle-interval-input {
-  width: 80px;
-  background: var(--bg-input);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-size: 13px;
-  padding: 4px 8px;
-  outline: none;
-}
-.circle-interval-input:focus {
-  border-color: var(--accent);
-}
-.circle-name-input {
-  flex: 1;
-  background: var(--bg-input);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-size: 13px;
-  padding: 4px 8px;
-  outline: none;
-}
-.circle-name-input:focus {
-  border-color: var(--accent);
 }
 .circle-color-presets {
   display: flex;

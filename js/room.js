@@ -970,13 +970,12 @@ class RoomManager {
   // 圆同步包（二进制，像 pos/ping/presence）：
   //   op Uint8（0 add / 1 update / 2 remove / 3 clear）
   //   cid Float64（圆 id，可能超过 Uint32，用 Float64 保精度）
-  //   以下仅 add/update 携带：lat Int32(×1e6) / lng Int32(×1e6) / r Uint32(米) / interval Uint16(ms) / nameLen Uint8 + name(UTF-8) / colorLen Uint8 + color(UTF-8)
+  //   以下仅 add/update 携带：lat Int32(×1e6) / lng Int32(×1e6) / r Uint32(米) / colorLen Uint8 + color(UTF-8)
   _encodeCircle(opCode, c) {
     const isAddOrUpdate = (opCode === 0 || opCode === 1);
-    const nameU = new TextEncoder().encode(isAddOrUpdate ? (c.name || '') : '');
     const colorU = new TextEncoder().encode(isAddOrUpdate ? (c.color || '#888') : '');
-    const headerLen = 1 + 8 + (isAddOrUpdate ? 14 : 0); // 4+4+4+2 = 14
-    const buf = new ArrayBuffer(headerLen + 1 + nameU.length + 1 + colorU.length);
+    const headerLen = 1 + 8 + (isAddOrUpdate ? 12 : 0);
+    const buf = new ArrayBuffer(headerLen + 1 + colorU.length);
     const dv = new DataView(buf);
     const u8 = new Uint8Array(buf);
     let o = 0;
@@ -986,8 +985,6 @@ class RoomManager {
       dv.setInt32(o, Math.round(c.lat * 1e6), true); o += 4;
       dv.setInt32(o, Math.round(c.lng * 1e6), true); o += 4;
       dv.setUint32(o, Math.min(0xFFFFFFFF, Math.max(0, Math.round(c.r || 0))), true); o += 4;
-      dv.setUint16(o, Math.min(65535, Math.max(0, Math.round(c.interval || 2500))), true); o += 2;
-      u8[o] = nameU.length; o += 1; u8.set(nameU, o); o += nameU.length;
       u8[o] = colorU.length; o += 1; u8.set(colorU, o); o += colorU.length;
     }
     return u8;
@@ -1004,15 +1001,9 @@ class RoomManager {
       out.lat = dv.getInt32(o, true) / 1e6; o += 4;
       out.lng = dv.getInt32(o, true) / 1e6; o += 4;
       out.r = dv.getUint32(o, true); o += 4;
-      out.interval = dv.getUint16(o, true); o += 2;
-      const readStr = () => {
-        const len = u8[o]; o += 1;
-        const s = new TextDecoder().decode(u8.subarray(o, o + len));
-        o += len;
-        return s;
-      };
-      out.name = readStr();
-      out.color = readStr();
+      const colorLen = u8[o]; o += 1;
+      out.color = new TextDecoder().decode(u8.subarray(o, o + colorLen));
+      o += colorLen;
     }
     out.op = (['add', 'update', 'remove', 'clear'])[opCode] || 'clear';
     return out;
@@ -1308,8 +1299,6 @@ class RoomManager {
       c.lat = circle.center.lat;
       c.lng = circle.center.lng;
       c.r = circle.maxRadius;
-      c.interval = circle.interval || CONFIG.CONCENTRIC_INTERVAL;
-      c.name = circle.name || this._nickname || '';
       c.color = circle.color || color;
     }
     this._publishWithAlias(
@@ -1322,6 +1311,11 @@ class RoomManager {
   /**
    * 处理收到的圆同步消息
    */
+  getPlayerName(id) {
+    const p = this._players[id];
+    return p ? (p.name || this._nickname || '玩家') : (id === this._deviceId ? this._nickname : '玩家');
+  }
+
   _onCircleMsg(senderId, data) {
     if (!data || senderId === this._deviceId) return;
     const key = `${senderId}:${data.cid}`;
@@ -1329,9 +1323,10 @@ class RoomManager {
       this._remoteCircles[key] = {
         author: senderId, cid: data.cid,
         center: { lat: data.lat, lng: data.lng },
-        maxRadius: data.r, interval: data.interval || CONFIG.CONCENTRIC_INTERVAL,
-        color: data.color || '#888', name: data.name || '玩家',
+        maxRadius: data.r, interval: CONFIG.CONCENTRIC_INTERVAL,
+        color: data.color || '#888',
         receivedAt: Date.now(),
+        authorName: this.getPlayerName(senderId),
       };
       // 10 分钟后自动删除
       this._scheduleRemoteCircleExpiry(key);

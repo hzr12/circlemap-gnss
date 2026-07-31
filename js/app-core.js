@@ -99,6 +99,7 @@ class App {
     this.roomManager = null;
     this._roomJoined = false;
     this._gameDurationInterval = null; // 游戏倒计时定时器
+    this._followedPlayerId = null; // 远程圆关注的玩家 ID
   }
 
   /**
@@ -176,6 +177,7 @@ class App {
         this._stopWatching();
         this._enterBackgroundMode();
       }
+      this._updatePowerStatus();
       // 轨迹保存
       if (this.trail.positions.length > 0) {
         Storage.saveTrail(this.trail);
@@ -190,6 +192,7 @@ class App {
         this._restoringView = true;
         this._startWatching();
       }
+      this._updatePowerStatus();
     };
     this._visibilityHandler = () => {
       if (document.hidden) {
@@ -220,6 +223,8 @@ class App {
 
     // 自动重连上次的房间（异步，不阻塞）
     this._autoRejoinRoom();
+
+    this._updatePowerStatus();
   }
 
   /* ============= UI 事件绑定 ============= */
@@ -356,9 +361,7 @@ class App {
       }
     });
 
-    // —— 圆圈自定义：圈距 / 名称 / 颜色 ——
-    this._circleIntervalInput = document.getElementById('circle-interval-input');
-    this._circleNameInput = document.getElementById('circle-name-input');
+    // —— 圆圈自定义：颜色 ——
     this._circleSelectedColor = '#FF6B6B';
     this._circleColorPresets = document.getElementById('circle-color-presets');
     if (this._circleColorPresets) {
@@ -379,33 +382,6 @@ class App {
         });
       });
     }
-    // 圈距输入 → 实时更新
-    if (this._circleIntervalInput) {
-      this._circleIntervalInput.addEventListener('change', () => {
-        const sel = this.mapManager.getSelectedCircle();
-        if (!sel) return;
-        const v = parseInt(this._circleIntervalInput.value, 10);
-        if (isNaN(v) || v < 10) return;
-        this.mapManager.updateCircle(sel.id, { interval: v });
-        this._dirty = true;
-        this._updateCircleList(true);
-        this._updateInfo();
-        if (this.roomManager && this._roomJoined) this.roomManager.publishCircle('update', sel);
-      });
-    }
-    // 名称输入 → 实时更新
-    if (this._circleNameInput) {
-      this._circleNameInput.addEventListener('change', () => {
-        const sel = this.mapManager.getSelectedCircle();
-        if (!sel) return;
-        this.mapManager.updateCircle(sel.id, { name: this._circleNameInput.value.trim() || '' });
-        this._dirty = true;
-        this._updateCircleList(true);
-        this._updateInfo();
-        if (this.roomManager && this._roomJoined) this.roomManager.publishCircle('update', sel);
-      });
-    }
-
     // —— 选点至我的位置按钮 ——
     document.getElementById('center-to-me-btn').addEventListener('click', () => {
       if (!this.myPosition) {
@@ -522,9 +498,33 @@ class App {
     document.getElementById('hint-skip').addEventListener('click', () => this._dismissHints());
     document.getElementById('hint-close').addEventListener('click', () => this._dismissHints());
 
-    // —— 圆列表事件委托（选中/编辑/删除） ——
+    // —— 圆列表事件委托（选中/编辑/删除/远程组折叠/关注） ——
     this._circleListEl = document.getElementById('circle-list');
     this._circleListEl.addEventListener('click', (e) => {
+      const groupHeader = e.target.closest('.remote-group-header');
+      if (groupHeader) {
+        const author = groupHeader.dataset.author;
+        if (!author) return;
+        const key = 'circlemap_remote_collapsed';
+        let state = {};
+        try { state = JSON.parse(localStorage.getItem(key)) || {}; } catch (ex) {}
+        state[author] = !state[author];
+        localStorage.setItem(key, JSON.stringify(state));
+        this._updateCircleList(true);
+        return;
+      }
+      const followBtn = e.target.closest('.npc-follow-btn, .npc-follow-star');
+      if (followBtn) {
+        const pid = followBtn.dataset.player;
+        if (!pid) return;
+        if (this._followedPlayerId === pid) {
+          this._followedPlayerId = null;
+        } else {
+          this._followedPlayerId = pid;
+        }
+        this._updateCircleList(true);
+        return;
+      }
       const item = e.target.closest('.circle-item');
       const editBtn = e.target.closest('.circle-edit');
       const delBtn = e.target.closest('.circle-del');
@@ -973,10 +973,8 @@ class App {
       return;
     }
 
-    const interval = parseInt(this._circleIntervalInput?.value, 10) || CONFIG.CONCENTRIC_INTERVAL;
-    const name = this._circleNameInput?.value?.trim() || '';
     const color = this._circleSelectedColor || '';
-    const newCircleId = this.mapManager.addCircle(this.center, this.circleRadius, interval, name, color);
+    const newCircleId = this.mapManager.addCircle(this.center, this.circleRadius, color);
     this._updateInfo();
     this._updateCircleList(true);
     this._updateStatusBar(true);
@@ -1231,7 +1229,7 @@ class App {
    * 进入后台定位模式
    *
    * 优先使用原生后台定位插件（Android），
-   * 降级到 WebView 60s JS 轮询（Web 端 / 插件不可用）
+   * 降级到 JS 轮询（后台 15s，后台+省电 60s）
    */
   _enterBackgroundMode() {
     if (this._isBackground) return;
@@ -1252,19 +1250,19 @@ class App {
     if (this._hasNativeBgPlugin()) {
       this._startNativeBackgroundTracking();
     } else {
-      // Web 端 / 插件不可用 → 降级到 JS 60s 轮询
       this._fallbackBackgroundLocate();
     }
   }
 
   /**
-   * 降级方案：JS 60s 轮询（Web 端或原生插件不可用时）
+   * 降级方案：JS 轮询（后台 15s，后台+省电 60s）
    */
   _fallbackBackgroundLocate() {
+    const interval = this.gpsManager.isPowerSaving ? 60000 : 15000;
     this._backgroundLocate();
     this._bgLocateInterval = setInterval(() => {
       this._backgroundLocate();
-    }, 60000);
+    }, interval);
   }
 
   /**
@@ -1501,7 +1499,22 @@ class App {
     if (btn) {
       btn.classList.toggle('active', next);
     }
-    Toast.show(next ? '省电模式已开启（GPS 精度降低）' : '省电模式已关闭（GPS 恢复高精度）');
+    this._updatePowerStatus();
+    Toast.show(next ? '省电模式已开启' : '省电模式已关闭');
+  }
+
+  _updatePowerStatus() {
+    const el = document.getElementById('power-status');
+    if (!el) return;
+    let interval;
+    if (this._isBackground) {
+      interval = this.gpsManager.isPowerSaving ? 60 : 15;
+    } else if (this.gpsManager.isPowerSaving) {
+      interval = 30;
+    } else {
+      interval = 2;
+    }
+    el.textContent = `定位间隔: ${interval}s`;
   }
 
   /**
@@ -1565,10 +1578,25 @@ class App {
       return `${s}秒`;
     };
 
+    // 速度分布直方图数据
+    const bins = [0, 1, 2, 3, 5, 8, Infinity];
+    const labels = ['0-1', '1-2', '2-3', '3-5', '5-8', '>8'];
+    const counts = new Array(bins.length - 1).fill(0);
+    let hasSpeedData = false;
+    for (const p of pos) {
+      if (p.speed == null) continue;
+      hasSpeedData = true;
+      for (let i = 0; i < bins.length - 1; i++) {
+        if (p.speed >= bins[i] && p.speed < bins[i + 1]) {
+          counts[i]++;
+          break;
+        }
+      }
+    }
+
     // 填充或创建 modal
     const overlay = document.getElementById('stats-modal');
     if (overlay) {
-      // 填充数据
       document.getElementById('stat-distance').textContent = formatDistance(totalDist);
       document.getElementById('stat-duration').textContent = fmtDuration(durationMs);
       document.getElementById('stat-avg-speed').textContent = avgSpeed > 0
@@ -1580,6 +1608,7 @@ class App {
       document.getElementById('stat-points').textContent = pos.length;
       document.getElementById('stat-start-time').textContent = fmtDate(firstTime);
       document.getElementById('stat-end-time').textContent = fmtDate(lastTime);
+      this._updateHistogram(counts, labels, hasSpeedData);
       overlay.classList.add('show');
       return;
     }
@@ -1600,6 +1629,10 @@ class App {
           <div class="stat-card"><span class="stat-label">开始时间</span><span class="stat-value" id="stat-start-time">${fmtDate(firstTime)}</span></div>
           <div class="stat-card full"><span class="stat-label">结束时间</span><span class="stat-value" id="stat-end-time">${fmtDate(lastTime)}</span></div>
         </div>
+        ${hasSpeedData ? `<div class="histogram-section">
+          <div class="histogram-header"><span class="histogram-title">速度分布</span></div>
+          <div class="histogram-body"><canvas id="histogram-canvas" height="160"></canvas></div>
+        </div>` : ''}
       </div>
     </div>`;
     document.body.insertAdjacentHTML('beforeend', html);
@@ -1607,16 +1640,67 @@ class App {
     // 点击 overlay 外部区域关闭
     const mo = document.getElementById('stats-modal');
     const box = mo.querySelector('.modal-box');
+    const closeModal = () => {
+      mo.classList.remove('show');
+      this._destroyHistogram();
+      setTimeout(() => mo.remove(), 300);
+    };
     mo.addEventListener('click', (e) => {
-      if (!box.contains(e.target)) {
-        mo.classList.remove('show');
-        setTimeout(() => mo.remove(), 300);
+      if (!box.contains(e.target)) closeModal();
+    });
+    document.getElementById('stats-close-btn').addEventListener('click', closeModal);
+
+    if (hasSpeedData) this._updateHistogram(counts, labels);
+  }
+
+  _updateHistogram(counts, labels) {
+    if (this._histogramChart) this._histogramChart.destroy();
+    const canvas = document.getElementById('histogram-canvas');
+    if (!canvas) return;
+    const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+    this._histogramChart = new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          data: counts,
+          backgroundColor: isDark
+            ? ['rgba(79,195,247,0.5)', 'rgba(79,195,247,0.45)', 'rgba(79,195,247,0.4)', 'rgba(255,183,77,0.5)', 'rgba(255,138,101,0.5)', 'rgba(239,83,80,0.5)']
+            : ['rgba(33,150,243,0.5)', 'rgba(33,150,243,0.45)', 'rgba(33,150,243,0.4)', 'rgba(255,152,0,0.5)', 'rgba(244,81,30,0.5)', 'rgba(211,47,47,0.5)'],
+          borderColor: isDark
+            ? ['#4fc3f7', '#4fc3f7', '#4fc3f7', '#ffb74d', '#ff8a65', '#ef5350']
+            : ['#2196f3', '#2196f3', '#2196f3', '#ff9800', '#f4511e', '#d32f2f'],
+          borderWidth: 1,
+          borderRadius: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        scales: {
+          x: {
+            title: { display: true, text: '速度 (m/s)', color: isDark ? '#aaa' : '#666', font: { size: 10 } },
+            ticks: { color: isDark ? '#888' : '#999', font: { size: 9 } },
+            grid: { display: false }
+          },
+          y: {
+            beginAtZero: true,
+            title: { display: true, text: '点数', color: isDark ? '#aaa' : '#666', font: { size: 10 } },
+            ticks: { color: isDark ? '#888' : '#999', font: { size: 9 }, precision: 0 },
+            grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)' }
+          }
+        }
       }
     });
-    document.getElementById('stats-close-btn').addEventListener('click', () => {
-      mo.classList.remove('show');
-      setTimeout(() => mo.remove(), 300);
-    });
+  }
+
+  _destroyHistogram() {
+    if (this._histogramChart) {
+      this._histogramChart.destroy();
+      this._histogramChart = null;
+    }
   }
 
   /**
@@ -1897,7 +1981,7 @@ class App {
         for (let i = 0; i < maxShow; i++) {
           const c = circles[i];
           const radiusStr = c.maxRadius >= 1000 ? `${(c.maxRadius/1000).toFixed(1)}km` : `${c.maxRadius}m`;
-          ctx.fillText(`#${i+1}  ${c.center.lat.toFixed(4)}, ${c.center.lng.toFixed(4)} · ${radiusStr} · ${Math.ceil(c.maxRadius / c.interval)}圈`,
+          ctx.fillText(`#${i+1}  ${c.center.lat.toFixed(4)}, ${c.center.lng.toFixed(4)} · ${radiusStr}`,
             mapX + 16 * S, bottomY + 48 * S + i * 22 * S);
         }
         if (circles.length > 4) {
@@ -2726,8 +2810,7 @@ class App {
             id: c.id,
             center: c.center,
             maxRadius: c.maxRadius,
-            interval: c.interval || CONFIG.CONCENTRIC_INTERVAL,
-            name: c.name || '',
+            interval: CONFIG.CONCENTRIC_INTERVAL,
             color: c.color || '',
             createdAt: c.createdAt || Date.now()
           });
