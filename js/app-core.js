@@ -1894,14 +1894,39 @@ class App {
       let chartY = mapY + mapH + 16 * S;
       if (this._speedChart && this._speedChart.canvas) {
         const chartCanvas = this._speedChart.canvas;
+        // 导出前峰值降采样：点数过多时分段取最大值（保峰谷），避免曲线糊成带
+        const ds = this._speedChart.data.datasets[0];
+        const originalData = ds.data;
+        const MAX_EXPORT_POINTS = 600;
+        let compressedData = originalData;
+        if (originalData.length > MAX_EXPORT_POINTS) {
+          const bin = originalData.length / MAX_EXPORT_POINTS;
+          compressedData = [];
+          for (let i = 0; i < MAX_EXPORT_POINTS; i++) {
+            const start = Math.floor(i * bin);
+            const end = Math.max(start + 1, Math.floor((i + 1) * bin));
+            let peak = null;
+            for (let j = start; j < end; j++) {
+              if (!peak || originalData[j].y > peak.y) peak = originalData[j];
+            }
+            compressedData.push(peak);
+          }
+          ds.data = compressedData;
+          this._speedChart.update('none');
+        }
         const chartW = mapW;
-        const chartH = 180 * S;
+        // 按 canvas 真实宽高比绘制，避免拉伸变形
+        const chartH = chartW / (chartCanvas.width / chartCanvas.height);
         try {
           ctx.drawImage(chartCanvas, mapX, chartY, chartW, chartH);
           chartY += chartH + 16 * S;
         } catch (e) {
           // 跨域等导致无法绘制
           chartY += 16 * S;
+        }
+        if (compressedData !== originalData) {
+          ds.data = originalData;
+          this._speedChart.update('none');
         }
       }
 
