@@ -255,8 +255,7 @@ class GPSManager {
 
     // GPS 漂移滤波器
     this._useFilter = true;           // 是否启用滤波
-    this._latFilter = new KalmanFilter();
-    this._lngFilter = new KalmanFilter();
+    this._filter = new KalmanFilter();
     this._rawPosition = null;         // 滤波前的原始位置（保留供 trail 等使用）
 
     // 电量监控
@@ -269,10 +268,10 @@ class GPSManager {
     this._initBatteryMonitor();
     this._tryInitGnssPlugin();
 
-    // GPS 节流：动态间隔（正常 2s，省电模式 60s，后台 15s）
+    // GPS 节流：动态间隔（正常 1s，省电模式 20s，后台 15s）
     this._lastProcessedTime = 0;
-    this._gpsMinInterval = 2000;
-    this._gpsPowerSavingInterval = 30000;   // 省电模式间隔
+    this._gpsMinInterval = 1000;
+    this._gpsPowerSavingInterval = 20000;   // 省电模式间隔
     this._gpsBackgroundInterval = 15000;    // 后台定位间隔
     this._bestPendingPosition = null;       // 节流窗口内精度最优的位置缓存
   }
@@ -366,7 +365,7 @@ class GPSManager {
     console.log(`[GPS] 省电模式: ${next ? '开启' : '关闭'}`);
 
     // 调整处理间隔
-    this._gpsMinInterval = next ? this._gpsPowerSavingInterval : 2000;
+    this._gpsMinInterval = next ? this._gpsPowerSavingInterval : 1000;
 
     // 省电模式下关闭 GNSS 卫星监听（节省 CPU + 电池）
     if (next && this._gnssListeningStarted) {
@@ -862,16 +861,16 @@ class GPSManager {
         // 保存原始位置（滤波前）
         this._rawPosition = { lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, speed: pos.speed, heading: pos.heading, timestamp: pos.timestamp };
 
-        // ── 卡尔曼滤波实时平滑 ──
+        // ── 2D 卡尔曼滤波实时平滑 ──
         if (this._useFilter && pos.accuracy > 0 && pos.accuracy < 200) {
           const ts = pos.timestamp || now;
           const acc = pos.accuracy || 10;
-          pos.lat = this._latFilter.update(pos.lat, acc, ts, pos.speed);
-          pos.lng = this._lngFilter.update(pos.lng, acc, ts, pos.speed);
+          const filtered = this._filter.update(pos.lat, pos.lng, acc, ts, pos.speed);
+          pos.lat = filtered.lat;
+          pos.lng = filtered.lng;
         } else {
           // 精度太差或滤波关闭 → 重置滤波器
-          this._latFilter.reset();
-          this._lngFilter.reset();
+          this._filter.reset();
         }
 
         this.currentPosition = pos;
@@ -950,8 +949,7 @@ class GPSManager {
     if (next === this._useFilter) return this._useFilter;
     this._useFilter = next;
     if (!next) {
-      this._latFilter.reset();
-      this._lngFilter.reset();
+      this._filter.reset();
     }
     console.log(`[GPS] 漂移滤波: ${next ? '开启' : '关闭'}`);
     return this._useFilter;
