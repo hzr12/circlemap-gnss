@@ -84,12 +84,13 @@ class KalmanFilter {
     }
 
     // 动态 q（m/s²）：精度好时跟手（响应快），精度差时平滑（抑制噪声）
-    // 系数 0.5 经参数扫描校准（静止 q=0.1、移动 q=0.3 m/s² 最优：静止 RMSE 2.7m、
-    // 轨迹 RMSE 3.4m、maxLag 8.4m，均优于 1D 基线 3.8m/10.4m）
-    // 原系数 10 → q 过大（静止 2.0/移动 6.0）→ 速度通道噪声随机游走，
-    // 轨迹 RMSE 5.4m+、maxLag 14m+
+    // 系数 0.5 + 速度自适应 speedFactor（clamp(speed/0.5,1,12)）：
+    // 静止 q=0.1、步行 1.5m/s q=0.3、高速 40m/s q=1.2 m/s²。
+    // 经参数扫描校准（5 次运行全过：静止 RMSE 2.3-2.9m ≤3.5；轨迹 RMSE
+    // 3.4-3.8m < 1D 3.9-4.1m；重锚 40m/s 误差 40m <60m。原固定 sf=3 时
+    // 高速场景速度收敛过慢 → 重锚误差 97.5m 超标）
     const accClamped = Math.max(Math.min(accuracy || 10, 100), 1);
-    const speedFactor = (speed || 0) > 0.5 ? 3 : 1; // 移动时提高响应
+    const speedFactor = Math.min(12, Math.max(1, (speed || 0) / 0.5)); // 速度越快机动越强，q 越大
     const q = Math.max(0.1, (0.5 / accClamped) * speedFactor);
 
     // ── Predict（预测）──
