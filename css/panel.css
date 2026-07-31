@@ -449,17 +449,22 @@
 }
 
 .slider-labels {
-  display: flex;
-  justify-content: space-between;
+  position: relative;
+  height: 14px;
   margin-top: 6px;
-  padding: 0 2px;
 }
 
 .slider-labels span {
+  position: absolute;
+  transform: translateX(-50%);
   font-size: 10px;
   color: var(--text-tertiary);
   font-weight: 500;
+  white-space: nowrap;
 }
+
+.slider-labels span:first-child { transform: none; }
+.slider-labels span:last-child { transform: translateX(-100%); }
 /* ---------- 半径预设快捷按钮 ---------- */
 .radius-presets {
   display: flex;
