@@ -86,7 +86,7 @@ class KalmanFilter {
     // 动态 q（m/s²）：精度好时跟手（响应快），精度差时平滑（抑制噪声）
     const accClamped = Math.max(Math.min(accuracy || 10, 100), 1);
     const speedFactor = (speed || 0) > 0.5 ? 3 : 1; // 移动时提高响应
-    const q = Math.max(0.1, (10 / accClamped) * speedFactor);
+    const q = Math.max(0.1, (5 / accClamped) * speedFactor);
 
     // ── Predict（预测）──
     this._x += this._vx * dt;
