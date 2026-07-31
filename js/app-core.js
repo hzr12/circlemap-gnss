@@ -302,7 +302,8 @@ class App {
 
     // —— 半径滑块 & 数字输入双向绑定（#11 对数映射） ——
     const sliderToVal = (sliderPos) => {
-      const v = sliderToRadius(sliderPos / (this._radiusSlider.max - this._radiusSlider.min));
+      const sMin = parseInt(this._radiusSlider.min, 10);
+      const v = sliderToRadius((sliderPos - sMin) / (this._radiusSlider.max - this._radiusSlider.min));
       this._radiusInput.value = v;
       this.circleRadius = v;
       return v;
