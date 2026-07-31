@@ -62,9 +62,9 @@ config.js → toast.js → storage.js → trail.js → map.js → gps.js → [mq
 ## 重要约定
 
 - **坐标纠偏**：浏览器返回 WGS84，腾讯地图用 GCJ-02，纠偏 5s 超时降级到手写 Haversine
-- **GPS 节流**：连续定位最短 1s 间隔（省电模式 20s，后台 15s）
+- **GPS 节流**：百度式速度自适应，间隔 = `GPS_ADAPTIVE_K / 速度`（clamp 1s~60s），移动快→密、静止→60s 心跳；省电模式按 20s 下限（`_updateAdaptiveInterval()`，gps.js）
 - **位置过期**：10 分钟无更新自动提示重定位
-- **轨迹上限**：`TRAIL_MAX_POINTS = 500`
+- **轨迹上限**：`TRAIL_MAX_POINTS = 50000`（>10m 距离采样，≈ 500km 移动量）
 - **MQTT Broker 注意**：`test.mosquitto.org` 的 wss(8081) 已被禁用，仅明文 ws 可用；https 页面下 ws 被混合内容策略拦截，仅 file:// / http:// 可用
 - **Android GNSS 插件**：注册顺序必须先 `addListener` 后 `startGnssListening`
 - **多人房间上限**：8 人（受公共 Broker 限制）

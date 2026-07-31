@@ -268,12 +268,30 @@ class GPSManager {
     this._initBatteryMonitor();
     this._tryInitGnssPlugin();
 
-    // GPS 节流：动态间隔（正常 1s，省电模式 20s，后台 15s）
+    // GPS 节流：速度自适应动态间隔（移动快→密，静止 60s 心跳省电）
     this._lastProcessedTime = 0;
     this._gpsMinInterval = 1000;
     this._gpsPowerSavingInterval = 20000;   // 省电模式间隔
     this._gpsBackgroundInterval = 15000;    // 后台定位间隔
     this._bestPendingPosition = null;       // 节流窗口内精度最优的位置缓存
+  }
+
+  /**
+   * 百度式速度自适应节流：间隔 = K / 速度（clamp 1s~60s）
+   * 移动越快定位越密，静止 60s 心跳（长时间记录省电核心）
+   * 速度未知（无速度源）时按步行假设 ~5s 保守节流
+   * 省电模式按 20s 下限取 max
+   * @param {number} [speed] 上次定位速度（m/s）
+   */
+  _updateAdaptiveInterval(speed) {
+    const s = typeof speed === 'number' && isFinite(speed) ? speed : null;
+    let base;
+    if (s === null) base = CONFIG.GPS_ADAPTIVE_K / 1.6; // 无速度源 → 按步行 ~5s
+    else if (s <= 0) base = CONFIG.GPS_MAX_INTERVAL;    // 静止 → 60s 心跳
+    else base = CONFIG.GPS_ADAPTIVE_K / s;              // 移动 → K/速度
+    let interval = Math.min(Math.max(base, CONFIG.GPS_MIN_INTERVAL), CONFIG.GPS_MAX_INTERVAL);
+    if (this._powerSaving) interval = Math.max(interval, this._gpsPowerSavingInterval);
+    this._gpsMinInterval = Math.round(interval);
   }
 
   /**
@@ -364,8 +382,8 @@ class GPSManager {
     this._powerSaving = next;
     console.log(`[GPS] 省电模式: ${next ? '开启' : '关闭'}`);
 
-    // 调整处理间隔
-    this._gpsMinInterval = next ? this._gpsPowerSavingInterval : 1000;
+    // 调整处理间隔（速度自适应，省电模式按 20s 下限）
+    this._updateAdaptiveInterval(this.currentPosition ? this.currentPosition.speed : 0);
 
     // 省电模式下关闭 GNSS 卫星监听（节省 CPU + 电池）
     if (next && this._gnssListeningStarted) {
@@ -875,6 +893,7 @@ class GPSManager {
 
         this.currentPosition = pos;
         this._resetTimeouts(); // 收到位置 → 重置超时计数
+        this._updateAdaptiveInterval(pos.speed); // 按本次速度调下次节流间隔
         if (this.onPositionChange) this.onPositionChange(pos);
       },
       (error) => {

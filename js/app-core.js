@@ -1059,7 +1059,7 @@ class App {
       if (this._isWatching && pos.speed != null) {
         const elapsed = (Date.now() - this._speedTrackingStart) / 1000;
         this._speedHistory.push({ x: Math.round(elapsed * 10) / 10, y: pos.speed });
-        if (this._speedHistory.length > 500) this._speedHistory.shift();
+        if (this._speedHistory.length > 2500) this._speedHistory.shift();
         this._updateSpeedChart();
       }
       if (!this._queuePending) this._queuePending = 0;

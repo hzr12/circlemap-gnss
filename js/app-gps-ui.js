@@ -77,7 +77,7 @@ App.prototype._updateSpeedChart = function () {
   if (this._lastChartUpdate && (this._speedHistory.length % 5 !== 0) && now - this._lastChartUpdate < 30000) return;
   this._lastChartUpdate = now;
   const data = this._speedChart.data.datasets[0].data;
-  const win = this._speedHistory.slice(-120);
+  const win = this._speedHistory.slice(-2500);
   data.length = 0;
   for (const p of win) data.push(p);
   this._speedChart.update('none');
