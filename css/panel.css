@@ -414,8 +414,9 @@
 .radius-slider {
   -webkit-appearance: none;
   appearance: none;
-  width: 100%;
+  width: calc(100% - 20px);
   height: 4px;
+  margin: 0 10px;
   border-radius: 2px;
   background: var(--bg-input);
   outline: none;
@@ -451,7 +452,7 @@
 .slider-labels {
   position: relative;
   height: 14px;
-  margin-top: 6px;
+  margin: 6px 20px 0;
 }
 
 .slider-labels span {
