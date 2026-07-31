@@ -150,27 +150,27 @@ function bearingToDir(deg) {
 }
 
 /**
- * 对数半径映射 — 滑块值 → 实际半径（#11）
- * 让常用小半径区间占据更多滑块行程
+ * 真对数半径映射 — 滑块值 → 实际半径（#11）
+ * 每个数量级均分滑块行程：滑块 50% = √(min·max)，小半径区间可精细调节
  * @param {number} sliderVal 0-1 归一化滑块位置
  * @returns {number} 半径（米）
  */
 function sliderToRadius(sliderVal) {
   const minR = CONFIG.MIN_RADIUS;
   const maxR = CONFIG.MAX_RADIUS;
-  return Math.round(minR + (maxR - minR) * Math.log(1 + 9 * sliderVal) / Math.log(10));
+  return Math.round(minR * Math.pow(maxR / minR, sliderVal));
 }
 
 /**
- * 对数半径映射 — 实际半径 → 滑块归一化值（#11）
+ * 真对数半径映射 — 实际半径 → 滑块归一化值（#11）
  * @param {number} radius 半径（米）
  * @returns {number} 0-1 归一化值
  */
 function radiusToSlider(radius) {
   const minR = CONFIG.MIN_RADIUS;
   const maxR = CONFIG.MAX_RADIUS;
-  const t = (Math.max(radius, minR) - minR) / (maxR - minR);
-  return Math.min(1, Math.max(0, (Math.exp(t * Math.log(10)) - 1) / 9));
+  const r = Math.min(Math.max(radius, minR), maxR);
+  return Math.log(r / minR) / Math.log(maxR / minR);
 }
 
 /**
