@@ -103,17 +103,6 @@ App.prototype._deleteCircle = function (id) {
 
 App.prototype._editCircle = function (id) {
   this._selectCircle(id);
-  const c = this.mapManager.getCircles().find(x => x.id === id);
-  if (c) {
-    if (c.color && this._circleColorPresets) {
-      const target = this._circleColorPresets.querySelector(`[data-color="${c.color}"]`);
-      if (target) {
-        this._circleColorPresets.querySelectorAll('.circle-color-preset').forEach(b => b.classList.remove('active'));
-        target.classList.add('active');
-        this._circleSelectedColor = c.color;
-      }
-    }
-  }
   const radiusSection = document.querySelector('.radius-section');
   if (radiusSection && this._bottomPanel) {
     this._bottomPanel.scrollTo({

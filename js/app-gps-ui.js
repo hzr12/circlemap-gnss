@@ -101,27 +101,24 @@ App.prototype._updateRecentFixes = function () {
     if (countEl) countEl.textContent = '0';
     return;
   }
-  if (countEl) countEl.textContent = this._recentFixes.length;
-  let html = '';
-  for (let i = this._recentFixes.length - 1; i >= 0; i--) {
-    const f = this._recentFixes[i];
-    const d = new Date(f.time);
-    const pad = (n) => String(n).padStart(2, '0');
-    const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-    const accStr = f.accuracy ? `±${f.accuracy.toFixed(0)}m` : '--';
-    let accClass = 'acc-poor';
-    if (f.accuracy < 15) accClass = 'acc-good';
-    else if (f.accuracy < 50) accClass = 'acc-ok';
-    const manualTag = f.isManual ? ' <span class="fix-manual"> 手动</span>' : '';
-    const bgTag = f.isBackground ? ' <span class="fix-bg">后台</span>' : '';
-    const coordStr = `${f.lat.toFixed(4)}, ${f.lng.toFixed(4)}`;
-    html += `<div class="fix-item">
-      <span class="fix-time">${timeStr}</span>
-      <span class="fix-accuracy ${accClass}">${accStr}</span>
-      <span class="fix-coord">${coordStr}${manualTag}${bgTag}</span>
-    </div>`;
-  }
-  listEl.innerHTML = html;
+  // 列表只展示最新 1 条（内部仍保留 MAX_RECENT_FIXES 条记录）
+  if (countEl) countEl.textContent = '1';
+  const f = this._recentFixes[this._recentFixes.length - 1];
+  const d = new Date(f.time);
+  const pad = (n) => String(n).padStart(2, '0');
+  const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const accStr = f.accuracy ? `±${f.accuracy.toFixed(0)}m` : '--';
+  let accClass = 'acc-poor';
+  if (f.accuracy < 15) accClass = 'acc-good';
+  else if (f.accuracy < 50) accClass = 'acc-ok';
+  const manualTag = f.isManual ? ' <span class="fix-manual"> 手动</span>' : '';
+  const bgTag = f.isBackground ? ' <span class="fix-bg">后台</span>' : '';
+  const coordStr = `${f.lat.toFixed(4)}, ${f.lng.toFixed(4)}`;
+  listEl.innerHTML = `<div class="fix-item">
+    <span class="fix-time">${timeStr}</span>
+    <span class="fix-accuracy ${accClass}">${accStr}</span>
+    <span class="fix-coord">${coordStr}${manualTag}${bgTag}</span>
+  </div>`;
 };
 
 /* ── GPS 状态条 ────────────────────────────────────── */

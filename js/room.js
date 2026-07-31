@@ -29,6 +29,7 @@ const ROOM_CONFIG = {
   PRESENCE_INTERVAL: 30000,       // 在场广播间隔（ms），低频回填静态身份
   OFFLINE_GRACE_MS: 60000,        // 离线宽限（ms）：收到 offline 后不立即删除，宽限期内收到任意消息视为「没真走」
   NPC_POSITION_INTERVAL: 60000,  // NPC 队坐标发布间隔（ms），持续共享（1 分钟/次）
+  HOST_CLAIM_TIMEOUT: 5000,     // 加入房间后多久未同步到房主 → 自动接管成为新房主（ms）
   CONNECT_TIMEOUT: 20000,        // MQTT connectTimeout（ms），等 CONNACK
   MAX_RETRY: 5,                  // 连续失败几次后切备用 Broker
   PLAYER_COLORS: [
@@ -139,6 +140,8 @@ class RoomManager {
     // 游戏角色 — 鬼抓人
     this._gameState = 'idle';        // idle | playing | finished
     this._isHost = false;            // 创建房间的玩家为房主
+    this._hostId = null;             // 当前房主 deviceId（房主离线后自动迁移）
+    this._hostClaimTimer = null;     // 加入后无房主自荐定时器
     this._playerRoles = {};          // { playerId: 'ghost' | 'hunter' }
     this._caughtPlayers = {};        // { playerId: { caughtBy, ts } }
 
@@ -164,6 +167,7 @@ class RoomManager {
     this.onCircleSync = null;       // (circles[]) → void，其他玩家的圆变更
     this.onPlayerCaught = null;     // (targetId, ghostId) → void
     this.onGameStatsReady = null;   // (stats) → void
+    this.onHostChange = null;       // (hostId) → void，房主变更（含接管）
     this.onRequestCircles = null;   // () → void，新玩家请求同步圆
   }
 
@@ -551,6 +555,54 @@ class RoomManager {
         return;
       }
 
+      // === 房主接管仲裁 ===
+      // 房主离线/加入无主房间时的迁移：deviceId 小者胜，并发宣布时收敛到唯一房主
+      if (data.type === 'host_elect') {
+        if (data.id === this._deviceId) return;   // 自己回声
+        const hid = data.hostId;
+        if (!hid) return;
+        if (this._isHost) {
+          // 双方都是房主（并发宣布）→ 小者胜
+          if (hid < this._deviceId) {
+            this._isHost = false;
+            this._hostId = hid;
+            if (this.onHostChange) this.onHostChange(hid);
+          }
+          return;
+        }
+        if (this._hostId !== hid) {
+          this._hostId = hid;
+          if (this.onHostChange) this.onHostChange(hid);
+        }
+        return;
+      }
+
+      // === 位置共享周期阶段同步 ===
+      // 各设备本地 setTimeout 推进阶段会产生相位漂移 → 单向可见；
+      // 收到广播后重同步：只接受更新的 phaseEnd（防漂移收敛），忽略已过期阶段
+      if (data.type === 'burst_phase') {
+        if (data.id === this._deviceId) return;
+        if (data.burstEnabled === false) {
+          if (this._burstEnabled) this.stopBurstCycle();
+          return;
+        }
+        if (!data.burstPhase || !data.burstPhaseEnd) return;
+        if (data.burstPhaseEnd <= this._burstPhaseEnd) return;   // 自己已更新
+        if (data.burstPhaseEnd <= Date.now()) return;            // 阶段已过期
+        this._burstEnabled = true;
+        this._burstPhase = data.burstPhase;
+        this._burstPhaseEnd = data.burstPhaseEnd;
+        if (this._burstTimer) clearTimeout(this._burstTimer);
+        this._burstTimer = setTimeout(() => {
+          const next = this._burstPhase === 'silent' ? 'sharing' : 'silent';
+          this._enterBurstPhase(next);
+        }, data.burstPhaseEnd - Date.now());
+        if (this.onBurstPhaseChange) this.onBurstPhaseChange(this._burstPhase, this._burstPhaseEnd);
+        // 同步到共享阶段立即补发一次，让他人尽快看到自己
+        if (this._burstPhase === 'sharing' && this._shouldSendPosition()) this._publishPosition();
+        return;
+      }
+
       // === 游戏状态消息 ===
       if (data.type === 'game_start') {
         // 房主已在 startGame() 本地处理，跳过自身回声避免重复初始化事件
@@ -653,6 +705,8 @@ class RoomManager {
         if (data.burstEnabled != null) this._burstEnabled = data.burstEnabled;
         if (data.burstPhase) this._burstPhase = data.burstPhase;
         if (data.burstPhaseEnd) this._burstPhaseEnd = data.burstPhaseEnd;
+        // 同步房主身份（新加入者据此得知房主，超时自荐不触发）
+        if (data.hostId) this._hostId = data.hostId;
         // 重建游戏状态
         if (data.gameState && data.gameState !== 'idle') {
           this._gameState = data.gameState;
@@ -738,6 +792,10 @@ class RoomManager {
 
     this._stopPublishing();
     this.stopBurstCycle();
+    if (this._hostClaimTimer) {
+      clearTimeout(this._hostClaimTimer);
+      this._hostClaimTimer = null;
+    }
     this._roomCode = null;
     this._players = {};
     this._lastPosition = null;
@@ -761,6 +819,7 @@ class RoomManager {
     this._gameTimerAborted = false;
     if (this._gameOverTimer) { clearTimeout(this._gameOverTimer); this._gameOverTimer = null; }
     this._isHost = false;
+    this._hostId = null;
     this._gameState = 'idle';
     this._playerRoles = {};
     this._caughtPlayers = {};
@@ -855,6 +914,14 @@ class RoomManager {
     player.teamSeparation = flags.teamSeparation;
     if (flags.batteryLevel != null) player.batteryLevel = flags.batteryLevel;
     if (flags.charging != null) player.charging = flags.charging;
+    // 房主身份同步：对方是房主 → 记录；若我已是房主则让位（防重连后双房主并存）
+    if (flags.host) {
+      this._hostId = senderId;
+      if (this._isHost) {
+        this._isHost = false;
+        if (this.onHostChange) this.onHostChange(senderId);
+      }
+    }
     // 队伍发报员选举（原 pos 分支逻辑迁移）
     if (player.teamId === this._myTeamId && flags.teamBroadcaster) {
       this._teamBroadcasterId = senderId;
@@ -929,7 +996,7 @@ class RoomManager {
     };
   }
 
-  // 心跳包 4 字节：bit0-3 flags (sharing/broadcaster/separation/spectator), bit4=charging, 保留 bit5-7
+  // 心跳包 4 字节：bit0-3 flags (sharing/broadcaster/separation/spectator), bit4=charging, bit5=host, 保留 bit6-7
   //   字节 1-2 预留给信号强度/延迟（未用）
   //   字节 3 电量 0-100
   _encodePing(flags) {
@@ -941,6 +1008,7 @@ class RoomManager {
     if (flags.teamSeparation) b |= 4;
     if (flags.spectator) b |= 8;
     if (flags.charging) b |= 16;
+    if (flags.host) b |= 32;
     dv.setUint8(0, b);
     dv.setUint8(1, 0); // 保留
     dv.setUint8(2, 0); // 保留
@@ -958,6 +1026,7 @@ class RoomManager {
       teamSeparation: !!(b & 4),
       spectator: !!(b & 8),
       charging: !!(b & 16),
+      host: !!(b & 32),
       batteryLevel: null,
     };
     // 兼容旧版 1 字节 ping
@@ -1116,6 +1185,7 @@ class RoomManager {
       teamBroadcaster: this._myAmBroadcaster,
       teamSeparation: this._teamSeparation,
       spectator: this._isSpectator,
+      host: this._isHost,
       batteryLevel: this._batteryLevel,
       charging: this._batteryCharging,
     });
@@ -1154,6 +1224,7 @@ class RoomManager {
     }
     const msg = {
       type: 'room_state',
+      hostId: this._hostId || (this._isHost ? this._deviceId : null),
       teams: { ...this._teams },
       playerTeams,
       gameState: this._gameState,
@@ -1425,6 +1496,24 @@ class RoomManager {
     if (this.onPlayerLeave) this.onPlayerLeave(id, p.name);
     delete this._players[id];
 
+    // 房主离线 → 自动迁移：在线非观战者（含自己）中 deviceId 最小者接管
+    // 全员对离线判定一致（同一宽限），选举结果收敛；全为观战者则暂无人接管
+    if (this._hostId === id) {
+      this._hostId = null;
+      const candidates = Object.values(this._players).filter(x => x.online && !x.spectator);
+      if (!this._isSpectator) candidates.push({ id: this._deviceId });
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => (a.id < b.id ? -1 : 1));
+        const next = candidates[0].id;
+        this._hostId = next;
+        if (next === this._deviceId) {
+          this._becomeHost();
+        } else if (this.onHostChange) {
+          this.onHostChange(next);
+        }
+      }
+    }
+
     // 清理该玩家创建的空队伍
     Object.keys(this._teams).forEach((teamId) => {
       if (this._teams[teamId].creatorId === id && this.getTeamMembers(teamId).length === 0) {
@@ -1505,6 +1594,8 @@ class RoomManager {
   /**
    * 后台模式下单次触发 MQTT 发布（由原生后台定位回调调用）
    * 仅发布 ping + position，不触发完整 _preparePublish
+   * 与前台一致受共享开关 / 静默期 / 发报员模式门控（NPC 队持续共享除外），
+   * 避免后台回调绕过门控造成单向可见
    */
   publishFromBackground(lat, lng, acc, speed, bearing) {
     if (!this._connected || !this._client) return;
@@ -1512,7 +1603,7 @@ class RoomManager {
       this._lastPosition = { lat, lng, acc: acc || 0, speed: speed || 0, bearing: bearing || 0 };
     }
     this._publishPing();
-    if (this._lastPosition) {
+    if (this._lastPosition && (this._isNpcTeam() || this._shouldSendPosition())) {
       this._publishPosition();
     }
   }
@@ -1581,6 +1672,8 @@ class RoomManager {
       this._burstTimer = null;
     }
     if (this.onBurstPhaseChange) this.onBurstPhaseChange(null, 0);
+    // 广播关闭，让房间内其他设备同步停用静默共享
+    this._publish({ type: 'burst_phase', burstEnabled: false });
   }
 
   /** 进入位置共享下一阶段 */
@@ -1590,6 +1683,14 @@ class RoomManager {
     this._burstPhaseEnd = Date.now() + duration * 60 * 1000;
 
     if (this.onBurstPhaseChange) this.onBurstPhaseChange(phase, this._burstPhaseEnd);
+
+    // 阶段变更广播给全房间，避免各设备本地 setTimeout 漂移导致「单向可见」
+    this._publish({
+      type: 'burst_phase',
+      burstEnabled: true,
+      burstPhase: this._burstPhase,
+      burstPhaseEnd: this._burstPhaseEnd,
+    });
 
     // 进入共享阶段立即发 1 次（到点不延迟）
     if (phase === 'sharing' && this._shouldSendPosition()) this._publishPosition();
@@ -1635,6 +1736,7 @@ class RoomManager {
     this._color = _pickColor(this._deviceId);
     this._roomCode = _generateRoomCode();
     this._isHost = true;  // 创建者自动成为房主
+    this._hostId = this._deviceId;
 
     await this._connect();
     this._subscribeRoom(this._roomCode);
@@ -1660,6 +1762,25 @@ class RoomManager {
     this._publishPresence(); // 立即回填静态身份，避免他人等 ≤30s 才拿到
     // 请求房间状态同步（队伍、游戏状态、角色等），让已有玩家广播完整状态
     this._publish({ type: 'request_state' });
+    // 无主房间接管：一段时间内未同步到任何房主 → 自动成为新房主
+    this._scheduleHostClaim();
+  }
+
+  /**
+   * 安排「无主房间自荐」定时器：加入后 HOST_CLAIM_TIMEOUT 内
+   * 未同步到房主 → 自动接管；或当前房主是观战者而我非观战 → 优先接管
+   */
+  _scheduleHostClaim() {
+    if (this._hostClaimTimer) clearTimeout(this._hostClaimTimer);
+    this._hostClaimTimer = setTimeout(() => {
+      this._hostClaimTimer = null;
+      if (!this._roomCode || this._isHost) return;
+      const curHost = this._hostId ? this._players[this._hostId] : null;
+      const hostIsSpectator = !!(curHost && curHost.spectator);
+      if (!this._hostId || (hostIsSpectator && !this._isSpectator)) {
+        this._becomeHost();
+      }
+    }, ROOM_CONFIG.HOST_CLAIM_TIMEOUT);
   }
 
   // ============================================================
@@ -1706,6 +1827,23 @@ class RoomManager {
    * 我是否是房主
    */
   isHost() { return this._isHost; }
+
+  /**
+   * 当前房主 deviceId（null=暂无房主）
+   */
+  getHostId() { return this._hostId; }
+
+  /**
+   * 接管成为新房主：本地确认 + 广播 host_elect + 立即发心跳让全员同步
+   */
+  _becomeHost() {
+    if (this._isHost) return;
+    this._isHost = true;
+    this._hostId = this._deviceId;
+    this._publish({ type: 'host_elect', hostId: this._deviceId });
+    this._publishPing();
+    if (this.onHostChange) this.onHostChange(this._hostId);
+  }
 
   /**
    * 获取玩家角色

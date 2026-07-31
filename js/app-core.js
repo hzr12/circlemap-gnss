@@ -362,27 +362,6 @@ class App {
       }
     });
 
-    // —— 圆圈自定义：颜色 ——
-    this._circleSelectedColor = '#FF6B6B';
-    this._circleColorPresets = document.getElementById('circle-color-presets');
-    if (this._circleColorPresets) {
-      this._circleColorPresets.querySelectorAll('.circle-color-preset').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          this._circleColorPresets.querySelectorAll('.circle-color-preset').forEach(b => b.classList.remove('active'));
-          btn.classList.add('active');
-          this._circleSelectedColor = btn.dataset.color;
-          // 若有选中的圆，实时更新颜色
-          const sel = this.mapManager.getSelectedCircle();
-          if (sel && btn.dataset.color) {
-            this.mapManager.updateCircle(sel.id, { color: btn.dataset.color });
-            this._dirty = true;
-            this._updateCircleList(true);
-            this._updateInfo();
-            if (this.roomManager && this._roomJoined) this.roomManager.publishCircle('update', sel);
-          }
-        });
-      });
-    }
     // —— 选点至我的位置按钮 ——
     document.getElementById('center-to-me-btn').addEventListener('click', () => {
       if (!this.myPosition) {
@@ -631,10 +610,6 @@ class App {
     // —— 路径预测 ——
     this._roomPredictionSection = document.getElementById('room-prediction-section');
     this._roomPredictionEnable = document.getElementById('room-prediction-enable');
-
-    // —— 团队健康度 ——
-    this._roomHealthSection = document.getElementById('room-health-section');
-    this._roomHealthContent = document.getElementById('room-health-content');
 
     // 倒计时按钮
     this._roomTimerSetBtn.addEventListener('click', () => this._roomSetTimer());
@@ -974,7 +949,7 @@ class App {
       return;
     }
 
-    const color = this._circleSelectedColor || '';
+    const color = '#FF6B6B';
     const newCircleId = this.mapManager.addCircle(this.center, this.circleRadius, color);
     this._updateInfo();
     this._updateCircleList(true);

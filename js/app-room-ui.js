@@ -22,55 +22,6 @@ App.prototype._updateSharingBtn = function () {
   this._roomSharingBtn.classList.toggle('sharing-off', !sharing);
 };
 
-/* ── 团队健康度 ─────────────────────────────────────── */
-
-App.prototype._updateRoomHealthPanel = function () {
-  if (!this._roomHealthContent || !this.roomManager) return;
-  const players = this.roomManager.getPlayers();
-  const myInfo = this.roomManager.getMyInfo();
-  const now = Date.now();
-  const teams = this.roomManager.getTeams();
-  let html = '';
-  if (myInfo) {
-    html += this._buildHealthRow(myInfo.name, myInfo.color, true, this._batteryLevel, this._lastAccuracy, now, this.myPositionTime || now, '');
-  }
-  Object.values(players).forEach((p) => {
-    if (p.id === (myInfo && myInfo.id)) return;
-    if (!p.online) return;
-    const teamName = (p.teamId && teams[p.teamId]) ? teams[p.teamId].name : '';
-    html += this._buildHealthRow(p.name, p.color, p.online, p.batteryLevel, p.acc, now, p.ts, teamName);
-  });
-  this._roomHealthContent.innerHTML = html || '<div class="room-empty">暂无在线玩家</div>';
-};
-
-App.prototype._buildHealthRow = function (name, color, online, batteryLvl, acc, now, ts, teamName) {
-  const isOffline = !online;
-  let battHtml = '<span class="health-na">—</span>';
-  if (batteryLvl != null && !isOffline) {
-    const pct = Math.round(batteryLvl * 100);
-    const cls = pct > 50 ? 'health-batt-good' : (pct > 20 ? 'health-batt-warn' : 'health-batt-low');
-    battHtml = `<span class="${cls}">${pct}%</span>`;
-  }
-  let accHtml = '<span class="health-na">—</span>';
-  if (acc != null && acc > 0 && !isOffline) {
-    const cls = acc <= 15 ? 'health-acc-good' : (acc <= 50 ? 'health-acc-ok' : 'health-acc-poor');
-    accHtml = `<span class="${cls}">${acc < 1 ? '<1' : Math.round(acc)}m</span>`;
-  }
-  let timeHtml = '<span class="health-na">—</span>';
-  if (ts && !isOffline) {
-    const ago = Math.round((now - ts) / 1000);
-    const cls = ago <= 10 ? 'health-time-fresh' : (ago <= 60 ? 'health-time-ok' : 'health-time-stale');
-    timeHtml = `<span class="${cls}">${ago <= 1 ? '刚刚' : ago + 's前'}</span>`;
-  }
-  const teamHtml = teamName ? `<span class="health-team-tag">${teamName}</span>` : '';
-  const dot = isOffline ? 'offline' : 'online';
-  return `<div class="health-row">
-    <span class="health-dot health-dot-${dot}" style="${isOffline ? '' : 'background:' + color}"></span>
-    <span class="health-name">${this._escapeHtml(name)}${teamHtml}</span>
-    <span class="health-metrics">${battHtml} ${accHtml} ${timeHtml}</span>
-  </div>`;
-};
-
 /* ── 队伍管理 UI ────────────────────────────────────── */
 
 App.prototype._updateTeamPresetActive = function (color) {
@@ -192,7 +143,6 @@ App.prototype._bindRoomEvents = function () {
 
   this.roomManager.onPositionUpdate = (players, changedIds) => {
     this._updateRoomPlayerList();
-    this._updateRoomHealthPanel();
     const myInfo = this.roomManager.getMyInfo();
     const now = Date.now();
     const POSITION_STALE_MS = 30000;
@@ -389,6 +339,10 @@ App.prototype._bindRoomEvents = function () {
   };
   this.roomManager.onRequestCircles = () => {
     this.mapManager.getCircles().forEach((c) => this.roomManager.publishCircle('add', c));
+  };
+  // 房主变更（离线迁移/无主接管）：静默刷新游戏控制按钮与房主徽章
+  this.roomManager.onHostChange = (hostId) => {
+    this._updateGameUI();
   };
 };
 
@@ -627,7 +581,6 @@ App.prototype._roomCleanup = function () {
   if (this._roomTimerSection) this._roomTimerSection.classList.remove('visible');
   if (this._roomBurstSection) this._roomBurstSection.classList.remove('visible');
   if (this._roomPredictionSection) this._roomPredictionSection.classList.remove('visible');
-  if (this._roomHealthSection) this._roomHealthSection.classList.remove('visible');
   if (this._roomGameSection) this._roomGameSection.classList.remove('visible');
   if (this._roomStatsModal) this._roomStatsModal.classList.remove('visible');
   if (this._roomTimerCountdown) this._roomTimerCountdown.classList.add('hidden');
@@ -658,9 +611,7 @@ App.prototype._showRoomExtras = function () {
   if (this._roomTimerSection) this._roomTimerSection.classList.add('visible');
   if (this._roomBurstSection) this._roomBurstSection.classList.add('visible');
   if (this._roomPredictionSection) this._roomPredictionSection.classList.add('visible');
-  if (this._roomHealthSection) this._roomHealthSection.classList.add('visible');
   this._updateGameUI();
-  this._updateRoomHealthPanel();
 };
 
 /* ── 游戏倒计时 ─────────────────────────────────────── */
@@ -946,11 +897,11 @@ App.prototype._roomShowGameStats = function (stats) {
       </div>
     </div>
     <div class="stats-section">
-      <div class="stats-section-title"> 鬼</div>
+      <div class="stats-section-title"> 鬼 </div>
       <div class="stats-role-list">${ghostList}</div>
     </div>
     <div class="stats-section">
-      <div class="stats-section-title"> 人（猎人）</div>
+      <div class="stats-section-title"> 人 </div>
       <div class="stats-role-list">${hunterList}</div>
     </div>
     ${timelineHtml}

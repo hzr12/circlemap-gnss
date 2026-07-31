@@ -20,3 +20,5 @@ __pycache__/
 
 # 本地字体源仅保留 css/fonts/*，原始资源目录不上传
 HarmonyOS Sans/
+
+docs/*
