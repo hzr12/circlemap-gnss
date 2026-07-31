@@ -36,11 +36,6 @@ App.prototype._updateInfo = function () {
       ? `${(areaValue / 1e6).toFixed(2)} km²`
       : `${areaValue.toFixed(0)} m²`;
 
-  const interval = sel.interval || CONFIG.CONCENTRIC_INTERVAL;
-  const ringCount = Math.ceil(sel.maxRadius / interval);
-  const ringsEl = this._infoRingsEl || (this._infoRingsEl = document.getElementById('info-rings'));
-  ringsEl.textContent = `${ringCount} 圈`;
-
   const distEl = this._infoDistEl || (this._infoDistEl = document.getElementById('info-distance'));
   if (this.myPosition && distEl) {
     const { dist, bearingStr, within, stale, trendHtml } = this._calcCircleTrend(sel);

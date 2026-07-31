@@ -1922,7 +1922,6 @@ class App {
         { label: '平均速度', value: avgSpeed > 0 ? (avgSpeed * 3.6).toFixed(1) + ' km/h' : '--' },
         { label: '最高速度', value: hasSpeed ? (maxSpeed * 3.6).toFixed(1) + ' km/h' : '--' },
         { label: '轨迹点数', value: String(pos.length) },
-        { label: '同心圆数', value: String(this.mapManager.getCircles().length) },
       ];
 
       ctx.fillStyle = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)';
