@@ -6,44 +6,61 @@
  */
 
 /**
- * 一维卡尔曼滤波器 — 实时平滑 GPS 位置，抑制漂移
- * 使用恒速模型（位置+速度），Q/R 自适应 accuracy
+ * 二维卡尔曼滤波器 — 2D 恒速模型（位置+速度矢量），局部 ENU 米坐标
+ * 以首次定位为参考点，lat/lng → 米滤波 → 逆变换输出
+ * Q/R 自适应 accuracy，速度更新带阻尼 + 模量限幅
  */
 class KalmanFilter {
   constructor() {
-    this._x = 0;        // 位置估计
-    this._v = 0;        // 速度估计 (单位/秒)
-    this._P = Math.pow(50 / 111111, 2); // ~2e-7 deg²（50m 初始不确定度）
-    this._Q = 0;                        // update() 中动态设
-    this._R = 0;                        // update() 中动态设
+    this._x = 0;          // 位置估计 x（米，相对参考点）
+    this._y = 0;          // 位置估计 y（米，相对参考点）
+    this._vx = 0;         // 速度估计 vx（米/秒）
+    this._vy = 0;         // 速度估计 vy（米/秒）
+    // 协方差 P（4×4 行主序 [x, y, vx, vy]），初始位置不确定度 50m
+    this._P = [2500, 0, 0, 0,
+               0, 2500, 0, 0,
+               0, 0, 0, 0,
+               0, 0, 0, 0];
+    this._refLat = 0;     // 参考点纬度（度）
+    this._refLng = 0;     // 参考点经度（度）
+    this._cosLat = 1;     // cos(refLat)，经度→米换算系数
     this._lastTime = 0;
     this._initialized = false;
   }
 
   /**
-   * 重置滤波器（设置初始值）
+   * 重置滤波器并设置初始值（当前点即参考点）
    */
-  init(x, time) {
-    this._x = x;
-    this._v = 0;
-    this._P = Math.pow(50 / 111111, 2);
+  init(lat, lng, time) {
+    this._refLat = lat;
+    this._refLng = lng;
+    this._cosLat = Math.cos(lat * Math.PI / 180);
+    this._x = 0;
+    this._y = 0;
+    this._vx = 0;
+    this._vy = 0;
+    this._P = [2500, 0, 0, 0,
+               0, 2500, 0, 0,
+               0, 0, 0, 0,
+               0, 0, 0, 0];
     this._lastTime = time;
     this._initialized = true;
   }
 
   /**
    * 更新测量值 → 返回滤波后结果
-   * @param {number} z 测量值
+   * @param {number} zLat 测量纬度
+   * @param {number} zLng 测量经度
    * @param {number} accuracy GPS 精度（米）
    * @param {number} time 时间戳（毫秒）
    * @param {number} [speed] 速度（m/s），用于动态调整响应
-   * @returns {number} 滤波后值
+   * @returns {{lat: number, lng: number}} 滤波后坐标
    */
-  update(z, accuracy, time, speed) {
+  update(zLat, zLng, accuracy, time, speed) {
     if (!this._initialized || accuracy > 200) {
       // 精度太差或未初始化 → 直接接受测量值
-      this.init(z, time);
-      return z;
+      this.init(zLat, zLng, time);
+      return { lat: zLat, lng: zLng };
     }
 
     const dt = (time - this._lastTime) / 1000; // 秒
@@ -51,46 +68,149 @@ class KalmanFilter {
 
     if (dt <= 0 || dt > 60) {
       // 时间异常或间隙过大 → 重置
-      this.init(z, time);
-      return z;
+      this.init(zLat, zLng, time);
+      return { lat: zLat, lng: zLng };
     }
 
-    // 动态 Q：精度好时跟手（响应快），精度差时平滑（抑制噪声）
+    // 坐标正变换：lat/lng → 局部米
+    let mx = (zLng - this._refLng) * 111111 * this._cosLat;
+    let my = (zLat - this._refLat) * 111111;
+
+    // 距参考点超 3km → 重新锚定（x/y 平移，速度不变）
+    if (Math.hypot(mx, my) > 3000) {
+      this._reanchor();
+      mx = (zLng - this._refLng) * 111111 * this._cosLat;
+      my = (zLat - this._refLat) * 111111;
+    }
+
+    // 动态 q（m/s²）：精度好时跟手（响应快），精度差时平滑（抑制噪声）
     const accClamped = Math.max(Math.min(accuracy || 10, 100), 1);
-    const Q_BASE = Math.pow(1 / 111111, 2);  // ~8.1e-11 deg²/s，对应 1m/s²
     const speedFactor = (speed || 0) > 0.5 ? 3 : 1; // 移动时提高响应
-    this._Q = Math.max(Q_BASE / 10, Q_BASE * (10 / accClamped) * speedFactor);
+    const q = Math.max(0.1, (10 / accClamped) * speedFactor);
 
-    // ── Predict（预测） ──
-    this._x = this._x + this._v * dt;
-    this._P = this._P + this._Q * dt;
+    // ── Predict（预测）──
+    this._x += this._vx * dt;
+    this._y += this._vy * dt;
+    const dt2 = dt * dt;
+    // P⁻ = F·P·Fᵀ + Q（Q: DWNA 块对角，q²·[¼dt⁴, ½dt³; ½dt³, dt²]）
+    const q2 = q * q;
+    const q00 = 0.25 * q2 * dt2 * dt2;
+    const q02 = 0.5 * q2 * dt2 * dt;
+    const q22 = q2 * dt2;
+    // F·P（F: [1,0,dt,0; 0,1,0,dt; 0,0,1,0; 0,0,0,1]）
+    // 正确展开：A[i][j] = P[i][j] + dt·P[(i+2)][j]（i<2 时，列方向 j 遍历）；i≥2 时 A[i][j] = P[i][j]
+    const fp = new Array(16).fill(0);
+    for (let i = 0; i < 4; i++) {
+      const dRow = i < 2 ? dt : 0;
+      const pr = i * 4;
+      // i≥2 时 dRow=0，不读取越界行（i+2 行超出 4×4 范围，避免 0×undefined=NaN）
+      const pr2 = i < 2 ? (i + 2) * 4 : pr;
+      fp[pr + 0] = this._P[pr + 0] + dRow * this._P[pr2 + 0];
+      fp[pr + 1] = this._P[pr + 1] + dRow * this._P[pr2 + 1];
+      fp[pr + 2] = this._P[pr + 2] + dRow * this._P[pr2 + 2];
+      fp[pr + 3] = this._P[pr + 3] + dRow * this._P[pr2 + 3];
+    }
+    // (F·P)·Fᵀ：B[i][0]=A[i][0]+dt·A[i][2], B[i][1]=A[i][1]+dt·A[i][3], B[i][2]=A[i][2], B[i][3]=A[i][3]
+    const P = new Array(16).fill(0);
+    for (let i = 0; i < 4; i++) {
+      P[i * 4 + 0] = fp[i * 4 + 0] + dt * fp[i * 4 + 2];
+      P[i * 4 + 1] = fp[i * 4 + 1] + dt * fp[i * 4 + 3];
+      P[i * 4 + 2] = fp[i * 4 + 2];
+      P[i * 4 + 3] = fp[i * 4 + 3];
+    }
+    // + Q（DWNA 块对角，对称叠加：行主序 P00/P11/P22/P33 对角，P02=P20、P13=P31 交叉对）
+    P[0] += q00;  P[5] += q00;   // 位置对角 (x,x),(y,y)
+    P[2] += q02;  P[8] += q02;   // x/vx 交叉（对称对）
+    P[7] += q02;  P[13] += q02;  // y/vy 交叉（对称对）
+    P[10] += q22; P[15] += q22;  // 速度对角 (vx,vx),(vy,vy)
 
-    // 根据 accuracy 动态调整测量噪声（米转度²）
-    this._R = Math.pow(Math.max(3, Math.min(accClamped, 100)) / 111111, 2);
+    // ── Update（更新）──
+    const sigma = Math.max(3, Math.min(accClamped, 100)); // 米
+    const r = sigma * sigma;
+    // S = H·P⁻·Hᵀ + R（2×2：P 的位置块 + diag(r, r)）
+    const s00 = P[0] + r, s01 = P[1], s10 = P[4], s11 = P[5] + r;
+    const det = s00 * s11 - s01 * s10;
+    const si00 = s11 / det, si01 = -s01 / det, si10 = -s10 / det, si11 = s00 / det;
+    // K = P⁻·Hᵀ·S⁻¹（4×2，取 P 前两列 × S⁻¹）
+    const k00 = (P[0] * si00 + P[1] * si10);
+    const k01 = (P[0] * si01 + P[1] * si11);
+    const k10 = (P[4] * si00 + P[5] * si10);
+    const k11 = (P[4] * si01 + P[5] * si11);
+    const k20 = (P[8] * si00 + P[9] * si10);
+    const k21 = (P[8] * si01 + P[9] * si11);
+    const k30 = (P[12] * si00 + P[13] * si10);
+    const k31 = (P[12] * si01 + P[13] * si11);
 
-    // ── Update（更新） ──
-    const K = this._P / (this._P + this._R); // 卡尔曼增益
-    const innovation = z - this._x;
-    this._x = this._x + K * innovation;
+    const e0 = mx - this._x;
+    const e1 = my - this._y;
+    this._x += k00 * e0 + k01 * e1;
+    this._y += k10 * e0 + k11 * e1;
 
     // 带阻尼的速度更新（防止噪声放大）
-    this._v = this._v + (K * innovation / Math.max(dt, 0.1)) * 0.25;
+    const dtSafe = Math.max(dt, 0.1);
+    this._vx += 0.3 * (k20 * e0 + k21 * e1) / dtSafe;
+    this._vy += 0.3 * (k30 * e0 + k31 * e1) / dtSafe;
 
-    // 限制最大速度（100m/s ≈ 360km/h，防止突发漂移）
-    this._v = Math.max(-100, Math.min(100, this._v));
+    // 速度模量限幅（120m/s ≈ 432km/h，防止突发漂移）
+    const spd = Math.hypot(this._vx, this._vy);
+    if (spd > 120) {
+      const k = 120 / spd;
+      this._vx *= k;
+      this._vy *= k;
+    }
 
-    // 更新协方差
-    this._P = (1 - K) * this._P;
+    // P = (I − K·H)·P⁻，随后对称化
+    const IKH = [1 - k00, -k01, 0, 0,
+                 -k10, 1 - k11, 0, 0,
+                 -k20, -k21, 1, 0,
+                 -k30, -k31, 0, 1];
+    const Pn = new Array(16).fill(0);
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 4; j++) {
+        let sum = 0;
+        for (let k = 0; k < 4; k++) sum += IKH[i * 4 + k] * P[k * 4 + j];
+        Pn[i * 4 + j] = sum;
+      }
+    }
+    // 对称化 (P + Pᵀ) / 2
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 4; j++) {
+        const v = (Pn[i * 4 + j] + Pn[j * 4 + i]) / 2;
+        this._P[i * 4 + j] = v;
+      }
+    }
 
-    return this._x;
+    // 逆变换：米 → lat/lng
+    return {
+      lat: this._refLat + this._y / 111111,
+      lng: this._refLng + this._x / (111111 * this._cosLat)
+    };
+  }
+
+  /**
+   * 重新锚定参考点到当前状态位置（x/y 平移，速度不变）
+   */
+  _reanchor() {
+    const curLat = this._refLat + this._y / 111111;
+    const curLng = this._refLng + this._x / (111111 * this._cosLat);
+    this._refLat = curLat;
+    this._refLng = curLng;
+    this._cosLat = Math.cos(curLat * Math.PI / 180);
+    this._x = 0;
+    this._y = 0;
   }
 
   /** 重置滤波器 */
   reset() {
     this._initialized = false;
     this._x = 0;
-    this._v = 0;
-    this._P = 1;
+    this._y = 0;
+    this._vx = 0;
+    this._vy = 0;
+    this._P = [2500, 0, 0, 0,
+               0, 2500, 0, 0,
+               0, 0, 0, 0,
+               0, 0, 0, 0];
   }
 }
 
