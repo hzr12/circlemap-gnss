@@ -305,9 +305,7 @@ class RoomManager {
           discarded.current = true;
           this._client.end(true);
           setTimeout(() => {
-            if (!discarded.current) {
-              this._tryConnect(brokerUrl, fallbacks, clientId, resolve, reject);
-            }
+            this._tryConnect(brokerUrl, fallbacks, clientId, resolve, reject);
           }, 100);
           return;
         }
@@ -362,9 +360,7 @@ class RoomManager {
           discarded.current = true;
           this._disconnect();
           setTimeout(() => {
-            if (!discarded.current) {
-              this._tryConnect(brokerUrl, fallbacks, clientId, resolve, reject);
-            }
+            this._tryConnect(brokerUrl, fallbacks, clientId, resolve, reject);
           }, 100);
           return;
         }
@@ -1533,6 +1529,10 @@ class RoomManager {
       clearInterval(this._npcTimer);
       this._npcTimer = null;
     }
+    if (this._burstPublishTimer) {
+      clearInterval(this._burstPublishTimer);
+      this._burstPublishTimer = null;
+    }
   }
 
   // ============================================================
@@ -1577,6 +1577,10 @@ class RoomManager {
     if (this._burstTimer) {
       clearTimeout(this._burstTimer);
       this._burstTimer = null;
+    }
+    if (this._burstPublishTimer) {
+      clearInterval(this._burstPublishTimer);
+      this._burstPublishTimer = null;
     }
     this._burstEnabled = false;
     this._burstPhase = 'silent';

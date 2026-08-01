@@ -736,8 +736,9 @@ class App {
     const sec = nums.length >= 3 ? parseFloat(nums[2]) : 0;
 
     if (isNaN(deg)) return null;
-    const sign = deg < 0 ? -1 : 1;
-    return sign * dir * (Math.abs(deg) + (min || 0) / 60 + (sec || 0) / 3600);
+    // 方向字母（S/W）优先于数字符号，避免 "-23° S" 双重取反
+    const sign = dir < 0 ? dir : (deg < 0 ? -1 : 1);
+    return sign * (Math.abs(deg) + (min || 0) / 60 + (sec || 0) / 3600);
   }
 
   /**
@@ -1042,10 +1043,10 @@ class App {
       this._queuePending++;
       this._processQueue = this._processQueue
         .then(() => {
-          this._queuePending--;
+          if (this._queuePending > 0) this._queuePending--;
           return this._processPosition(pos);
         })
-        .catch(() => { this._queuePending--; });
+        .catch(() => { if (this._queuePending > 0) this._queuePending--; });
     };
     this.gpsManager.onError = (err) => {
       console.warn('[GPS] 追踪出错:', err.message);

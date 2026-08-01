@@ -182,7 +182,7 @@ class MapManager {
     const key = `${latLng.getLat().toFixed(6)},${latLng.getLng().toFixed(6)}`;
     const cached = this._coordCache.get(key);
     const now = performance.now();
-    if (cached && now - cached.ts < 100) return cached;
+    if (cached && now - cached.ts < 100) return { x: cached.x, y: cached.y };
 
     const proj = this.map.getProjection();
     if (!proj || !this._syncCenter) return null;
