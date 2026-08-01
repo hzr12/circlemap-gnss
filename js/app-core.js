@@ -2046,6 +2046,10 @@ class App {
           const gridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
           const axisColor = isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.25)';
 
+          // 平移到卡片坐标系：后续所有绘制以卡片左上角为原点
+          ctx.save();
+          ctx.translate(mapX, chartY);
+
           // Y 轴网格 + 刻度
           const yTicks = 5;
           ctx.textAlign = 'right';
@@ -2116,19 +2120,20 @@ class App {
           ctx.fillStyle = 'rgba(79,195,247,0.15)';
           ctx.fill();
 
-          ctx.restore();
+          ctx.restore(); // clip
 
           // 轴标签
           ctx.fillStyle = textColor;
           ctx.font = `${10 * S}px "HarmonyOS Sans", sans-serif`;
           ctx.textAlign = 'center';
-          ctx.fillText('时间(秒)', padL + innerW / 2, chartY + chartH - 6 * S);
+          ctx.fillText('时间(秒)', padL + innerW / 2, chartH - 6 * S);
           ctx.save();
-          ctx.translate(mapX + 12 * S, padT + innerH / 2);
+          ctx.translate(12 * S, padT + innerH / 2);
           ctx.rotate(-Math.PI / 2);
           ctx.fillText('速度(m/s)', 0, 0);
           ctx.restore();
 
+          ctx.restore(); // translate(mapX, chartY)
           chartY += chartH + 16 * S;
         }
       }
