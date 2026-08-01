@@ -1767,7 +1767,7 @@ class App {
         if (p.lng < minLng) minLng = p.lng;
         if (p.lng > maxLng) maxLng = p.lng;
       }
-      const padR = 0.0005;
+      const padR = 0.001;               // bbox 外扩 ~100m，确保边缘瓦片完整覆盖
       minLat -= padR; maxLat += padR;
       minLng -= padR; maxLng += padR;
       const lngSpan = maxLng - minLng || 0.001;
@@ -1810,7 +1810,7 @@ class App {
         const y0 = Math.floor(mercY(maxLat) * (1 << z));
         const y1 = Math.floor(mercY(minLat) * (1 << z));
         tileRange = { x0, x1, y0, y1, count: (x1 - x0 + 1) * (y1 - y0 + 1) };
-        if (tileRange.count <= 24) break;
+        if (tileRange.count <= 36) break;
       }
       // 异步加载全部瓦片：任一张失败 → 降级纯色底图（不阻塞导出）
       let tileImages = [];
@@ -1980,14 +1980,26 @@ class App {
           this._speedChart.update('none');
         }
         const chartW = mapW;
-        // 按 canvas 真实宽高比绘制，避免拉伸变形
-        const chartH = chartW / (chartCanvas.width / chartCanvas.height);
+        const chartH = 150 * S;   // 固定高度（与导出区域匹配）
+        // 临时固定 canvas 尺寸（消除 CSS width/height:100% 对 responsive 的干扰），1:1 像素抓取
+        const origCW = chartCanvas.width;
+        const origCH = chartCanvas.height;
         try {
+          chartCanvas.width = Math.round(chartW);
+          chartCanvas.height = Math.round(chartH);
+          this._speedChart.resize();
+          this._speedChart.update('none');
           ctx.drawImage(chartCanvas, mapX, chartY, chartW, chartH);
           chartY += chartH + 16 * S;
         } catch (e) {
           // 跨域等导致无法绘制
           chartY += 16 * S;
+        } finally {
+          // 恢复 canvas 原始尺寸
+          chartCanvas.width = origCW;
+          chartCanvas.height = origCH;
+          this._speedChart.resize();
+          this._speedChart.update('none');
         }
         if (compressedData !== originalData) {
           ds.data = originalData;
