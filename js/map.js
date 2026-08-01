@@ -32,6 +32,7 @@ class MapManager {
   constructor() {
     this.map = null;
     this.marker = null;
+    this._locAnim = null;        // 定位 marker 插值动画状态（rAF 平滑移动）
     this.canvas = null;
     this.ctx = null;
     this.overlayCanvas = null;
@@ -1039,19 +1040,33 @@ class MapManager {
 
   /**
    * 在地图上显示我的位置标记
+   * 位置更新走 rAF 插值动画（500ms ease-out 平滑滑动），消除定位跳变
+   * 位移 >200m（重定位恢复）或首次创建时直接跳
    * @param {{lat:number, lng:number}} center
    * @param {number} [accuracy] 定位精度（米），传入则同时绘制精度环 (#17)
    * @param {number} [heading] 朝向角度（正北顺时针），传入则更新方向箭头
    */
   setLocation(center, accuracy, heading) {
-    const latLng = new qq.maps.LatLng(center.lat, center.lng);
+    const target = { lat: center.lat, lng: center.lng };
+    const latLng = new qq.maps.LatLng(target.lat, target.lng);
 
     if (this.locationMarker) {
-      this.locationMarker.setPosition(latLng);
       if (heading != null && !isNaN(heading)) {
         this.locationMarker.setIcon(this._createLocationIcon(heading));
       } else {
         this.locationMarker.setIcon(this._createLocationIcon());
+      }
+      // 平滑移动：位移过大（重定位恢复）直接跳，否则 rAF 插值
+      const cur = this.locationMarker.getPosition();
+      const jumpDist = calcDistance(
+        { lat: cur.lat, lng: cur.lng },
+        target
+      );
+      if (jumpDist > 200) {
+        this._stopLocationAnim();
+        this.locationMarker.setPosition(latLng);
+      } else {
+        this._animateLocationTo(target);
       }
     } else {
       this.locationMarker = new qq.maps.Marker({
@@ -1062,8 +1077,49 @@ class MapManager {
       });
     }
 
-    // #17 更新精度环
+    // #17 更新精度环（跟随动画终点）
     this._updateAccuracyCircle(latLng, accuracy);
+  }
+
+  /**
+   * rAF 插值动画：500ms 内从 marker 当前位置平滑滑动到目标位置（60fps）
+   * 只插值不跳变，视觉连续移动（丝滑化核心）
+   * @param {{lat:number, lng:number}} target 目标经纬度
+   */
+  _animateLocationTo(target) {
+    const cur = this.locationMarker.getPosition();
+    const anim = {
+      from: { lat: cur.lat, lng: cur.lng },
+      to: target,
+      start: performance.now(),
+      rafId: 0
+    };
+    this._locAnim = anim;
+    const step = (now) => {
+      if (this._locAnim !== anim) return; // 已被新动画替换或停止
+      const t = Math.min(1, (now - anim.start) / 500);
+      const e = 1 - Math.pow(1 - t, 3); // ease-out 缓动
+      const lat = anim.from.lat + (anim.to.lat - anim.from.lat) * e;
+      const lng = anim.from.lng + (anim.to.lng - anim.from.lng) * e;
+      this.locationMarker.setPosition(new qq.maps.LatLng(lat, lng));
+      if (t >= 1) {
+        this._stopLocationAnim();
+      } else {
+        anim.rafId = requestAnimationFrame(step);
+      }
+    };
+    anim.rafId = requestAnimationFrame(step);
+  }
+
+  /**
+   * 停止定位 marker 插值动画（清除 rAF 循环）
+   */
+  _stopLocationAnim() {
+    const anim = this._locAnim;
+    if (anim) {
+      if (anim.rafId) cancelAnimationFrame(anim.rafId);
+      this._locAnim = null;
+    }
   }
 
   /**
@@ -1581,6 +1637,7 @@ class MapManager {
       this.marker = null;
     }
     if (this.locationMarker) {
+      this._stopLocationAnim(); // 先停插值动画，避免 rAF 悬空
       this.locationMarker.setMap(null);
       this.locationMarker = null;
     }
