@@ -1756,7 +1756,11 @@ class App {
       const mapW = W - 48 * S;
       const mapX = 24 * S;
 
-      // 地图背景：纯色底在瓦片加载后统一处理（失败降级用）
+      // 地图背景（圆角矩形）
+      ctx.fillStyle = isDark ? '#0f3460' : '#dce5f0';
+      ctx.beginPath();
+      ctx.roundRect(mapX, mapY, mapW, mapH, 12 * S);
+      ctx.fill();
 
       // 计算 trail 边界
       let minLat = Infinity, maxLat = -Infinity;
@@ -1767,7 +1771,9 @@ class App {
         if (p.lng < minLng) minLng = p.lng;
         if (p.lng > maxLng) maxLng = p.lng;
       }
-      const padR = 0.003;               // bbox 外扩 ~300m，确保瓦片覆盖轨迹+margin 留白
+      const rawLatSpan = maxLat - minLat || 0.001;
+      const rawLngSpan = maxLng - minLng || 0.001;
+      const padR = Math.max(0.0005, Math.max(rawLatSpan, rawLngSpan) * 0.3); // 动态外扩：至少50m，最大30%余量
       minLat -= padR; maxLat += padR;
       minLng -= padR; maxLng += padR;
       const lngSpan = maxLng - minLng || 0.001;
