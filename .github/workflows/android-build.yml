@@ -154,9 +154,12 @@ jobs:
             echo "::notice title=GNSS 验证::APK 不存在，跳过类验证"
             exit 0
           fi
-          if unzip -l "$APK" 2>/dev/null | grep -qi "GnssData"; then
+          if unzip -p "$APK" "*.dex" 2>/dev/null | strings | grep -qi "GnssData"; then
             echo "## GNSS 插件类已验证" >> $GITHUB_STEP_SUMMARY
-            echo "在 APK 中找到 GnssData 类" | tee -a $GITHUB_STEP_SUMMARY
+            echo "在 APK 的 DEX 中找到 GnssData 类" | tee -a $GITHUB_STEP_SUMMARY
+            # 统计匹配行数上报注解器
+            COUNT=$(unzip -p "$APK" "*.dex" 2>/dev/null | strings | grep -c "GnssData")
+            echo "类引用次数: $COUNT" >> $GITHUB_STEP_SUMMARY
           else
             echo "## ⚠️ 未找到 GNSS 插件类" >> $GITHUB_STEP_SUMMARY
             echo "插件可能未被链接到构建中。" >> $GITHUB_STEP_SUMMARY
