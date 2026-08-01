@@ -1767,7 +1767,7 @@ class App {
         if (p.lng < minLng) minLng = p.lng;
         if (p.lng > maxLng) maxLng = p.lng;
       }
-      const padR = 0.001;               // bbox 外扩 ~100m，确保边缘瓦片完整覆盖
+      const padR = 0.001;               // bbox 外扩 ~100m
       minLat -= padR; maxLat += padR;
       minLng -= padR; maxLng += padR;
       const lngSpan = maxLng - minLng || 0.001;
@@ -1798,6 +1798,13 @@ class App {
         return (1 - Math.log(Math.tan(Math.PI / 4 + r / 2)) / Math.PI) / 2;
       };
       const invMercY = (v) => Math.atan(Math.sinh(Math.PI * (1 - 2 * v))) * 180 / Math.PI;
+      // 瓦片网格额外外扩 margin（经纬度度数），确保瓦片覆盖整个地图区（含 margin 留白）
+      const tileExtraLat = margin / scale;
+      const tileExtraLng = margin / (scale * cosLat);
+      const tileMinLat = minLat - tileExtraLat;
+      const tileMaxLat = maxLat + tileExtraLat;
+      const tileMinLng = minLng - tileExtraLng;
+      const tileMaxLng = maxLng + tileExtraLng;
       // 瓦片层级：按目标每像素米数反算（cos 纬度修正），clamp 3~18
       const targetMpp = 111320 / scale;
       let z = Math.round(Math.log2(156543.03392 * Math.cos(midLat * Math.PI / 180) / targetMpp));
@@ -1805,10 +1812,10 @@ class App {
       // 瓦片数量上限 24：超出则降档
       let tileRange = null;
       for (; z >= 3; z--) {
-        const x0 = Math.floor(mercX(minLng) * (1 << z));
-        const x1 = Math.floor(mercX(maxLng) * (1 << z));
-        const y0 = Math.floor(mercY(maxLat) * (1 << z));
-        const y1 = Math.floor(mercY(minLat) * (1 << z));
+        const x0 = Math.floor(mercX(tileMinLng) * (1 << z));
+        const x1 = Math.floor(mercX(tileMaxLng) * (1 << z));
+        const y0 = Math.floor(mercY(tileMaxLat) * (1 << z));
+        const y1 = Math.floor(mercY(tileMinLat) * (1 << z));
         tileRange = { x0, x1, y0, y1, count: (x1 - x0 + 1) * (y1 - y0 + 1) };
         if (tileRange.count <= 36) break;
       }
@@ -1833,10 +1840,6 @@ class App {
         }
       }
       if (tileRange && tileImages.length === tileRange.count) {
-        ctx.save();
-        ctx.beginPath();
-        ctx.roundRect(mapX, mapY, mapW, mapH, 12 * S);
-        ctx.clip();
         const tileWpx = (360 / (1 << z)) * cosLat * scale;
         let i = 0;
         for (let tx = tileRange.x0; tx <= tileRange.x1; tx++) {
@@ -1850,7 +1853,6 @@ class App {
             ctx.drawImage(tileImages[i++], px, py, tileWpx, ph);
           }
         }
-        ctx.restore();
       } else {
         // 降级：纯色底图（主题色跟随）
         ctx.fillStyle = isDark ? '#0f3460' : '#dce5f0';
@@ -1981,12 +1983,14 @@ class App {
         }
         const chartW = mapW;
         const chartH = 150 * S;   // 固定高度（与导出区域匹配）
-        // 临时固定 canvas 尺寸（消除 CSS width/height:100% 对 responsive 的干扰），1:1 像素抓取
+        // 临时固定 canvas 尺寸 + 内联 style 覆盖 CSS !important，1:1 像素抓取
         const origCW = chartCanvas.width;
         const origCH = chartCanvas.height;
+        const origStyle = chartCanvas.style.cssText;
         try {
           chartCanvas.width = Math.round(chartW);
           chartCanvas.height = Math.round(chartH);
+          chartCanvas.style.cssText = `width:${Math.round(chartW)}px!important;height:${Math.round(chartH)}px!important`;
           this._speedChart.resize();
           this._speedChart.update('none');
           ctx.drawImage(chartCanvas, mapX, chartY, chartW, chartH);
@@ -1995,9 +1999,10 @@ class App {
           // 跨域等导致无法绘制
           chartY += 16 * S;
         } finally {
-          // 恢复 canvas 原始尺寸
+          // 恢复 canvas 原始尺寸 + 样式
           chartCanvas.width = origCW;
           chartCanvas.height = origCH;
+          chartCanvas.style.cssText = origStyle;
           this._speedChart.resize();
           this._speedChart.update('none');
         }
