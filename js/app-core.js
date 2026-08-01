@@ -1683,7 +1683,7 @@ class App {
    * 导出活动报告（单张 PNG 图片）
    * 合成：地图画布（轨迹 + 同心圆） + 速度曲线 + 统计数据
    */
-  _exportReport() {
+  async _exportReport() {
     const pos = this.trail.positions;
     if (pos.length < 2) {
       Toast.show(' 轨迹点数不足（至少 2 个点）');
@@ -1756,11 +1756,7 @@ class App {
       const mapW = W - 48 * S;
       const mapX = 24 * S;
 
-      // 地图背景
-      ctx.fillStyle = isDark ? '#0f3460' : '#dce5f0';
-      ctx.beginPath();
-      ctx.roundRect(mapX, mapY, mapW, mapH, 12 * S);
-      ctx.fill();
+      // 地图背景：纯色底在瓦片加载后统一处理（失败降级用）
 
       // 计算 trail 边界
       let minLat = Infinity, maxLat = -Infinity;
@@ -1794,9 +1790,78 @@ class App {
       const toX = (lng) => originX + (lng - minLng) * cosLat * scale;
       const toY = (lat) => originY + (maxLat - lat) * scale; // lat flipped
 
-      // 绘制采样点（同心圆中心）
+      // ── 地图底图：高德瓦片（普通道路图 style=8，GCJ-02 与腾讯同坐标系） ──
+      // Web Mercator 投影（0~1 世界坐标）
+      const mercX = (lng) => (lng + 180) / 360;
+      const mercY = (lat) => {
+        const r = lat * Math.PI / 180;
+        return (1 - Math.log(Math.tan(Math.PI / 4 + r / 2)) / Math.PI) / 2;
+      };
+      const invMercY = (v) => Math.atan(Math.sinh(Math.PI * (1 - 2 * v))) * 180 / Math.PI;
+      // 瓦片层级：按目标每像素米数反算（cos 纬度修正），clamp 3~18
+      const targetMpp = 111320 / scale;
+      let z = Math.round(Math.log2(156543.03392 * Math.cos(midLat * Math.PI / 180) / targetMpp));
+      z = Math.min(18, Math.max(3, z));
+      // 瓦片数量上限 24：超出则降档
+      let tileRange = null;
+      for (; z >= 3; z--) {
+        const x0 = Math.floor(mercX(minLng) * (1 << z));
+        const x1 = Math.floor(mercX(maxLng) * (1 << z));
+        const y0 = Math.floor(mercY(maxLat) * (1 << z));
+        const y1 = Math.floor(mercY(minLat) * (1 << z));
+        tileRange = { x0, x1, y0, y1, count: (x1 - x0 + 1) * (y1 - y0 + 1) };
+        if (tileRange.count <= 24) break;
+      }
+      // 异步加载全部瓦片：任一张失败 → 降级纯色底图（不阻塞导出）
+      let tileImages = [];
+      if (tileRange) {
+        const results = await Promise.allSettled(
+          (() => {
+            const jobs = [];
+            for (let tx = tileRange.x0; tx <= tileRange.x1; tx++) {
+              for (let ty = tileRange.y0; ty <= tileRange.y1; ty++) {
+                jobs.push(this._loadMapTile(z, tx, ty));
+              }
+            }
+            return jobs;
+          })()
+        );
+        if (results.every(r => r.status === 'fulfilled')) {
+          tileImages = results.map(r => r.value);
+        } else if (CONFIG.DEBUG) {
+          console.log('[Report] 瓦片加载失败，降级纯色背景');
+        }
+      }
+      if (tileRange && tileImages.length === tileRange.count) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.roundRect(mapX, mapY, mapW, mapH, 12 * S);
+        ctx.clip();
+        const tileWpx = (360 / (1 << z)) * cosLat * scale;
+        let i = 0;
+        for (let tx = tileRange.x0; tx <= tileRange.x1; tx++) {
+          for (let ty = tileRange.y0; ty <= tileRange.y1; ty++) {
+            const tileLng = tx / (1 << z) * 360 - 180;
+            const latTop = invMercY(ty / (1 << z));
+            const latBot = invMercY((ty + 1) / (1 << z));
+            const px = toX(tileLng);
+            const py = toY(latTop);
+            const ph = toY(latTop) - toY(latBot);
+            ctx.drawImage(tileImages[i++], px, py, tileWpx, ph);
+          }
+        }
+        ctx.restore();
+      } else {
+        // 降级：纯色底图（主题色跟随）
+        ctx.fillStyle = isDark ? '#0f3460' : '#dce5f0';
+        ctx.beginPath();
+        ctx.roundRect(mapX, mapY, mapW, mapH, 12 * S);
+        ctx.fill();
+      }
+
+      // 绘制采样点（同心圆中心）——地图区固定深色系（适配浅色瓦片底图）
       const circles = this.mapManager.getCircles();
-      ctx.strokeStyle = isDark ? 'rgba(0,212,170,0.5)' : 'rgba(14,165,233,0.5)';
+      ctx.strokeStyle = 'rgba(2,132,199,0.7)';
       ctx.lineWidth = 1.5 * S;
       for (const c of circles) {
         const cx = toX(c.center.lng);
@@ -1807,7 +1872,7 @@ class App {
         ctx.arc(cx, cy, rPx, 0, Math.PI * 2);
         ctx.stroke();
         // 圆心点
-        ctx.fillStyle = isDark ? '#00d4aa' : '#0ea5e9';
+        ctx.fillStyle = '#0284c7';
         ctx.beginPath();
         ctx.arc(cx, cy, 3 * S, 0, Math.PI * 2);
         ctx.fill();
@@ -1846,7 +1911,7 @@ class App {
         ctx.beginPath();
         ctx.arc(toX(last.lng), toY(last.lat), 5 * S, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.7)';
+        ctx.fillStyle = 'rgba(0,0,0,0.85)'; // 地图区固定深色文字（浅色瓦片底图）
         ctx.font = `${11 * S}px "HarmonyOS Sans", sans-serif`;
         ctx.fillText('起点', toX(first.lng) + 8 * S, toY(first.lat) + 4 * S);
         ctx.fillText('终点', toX(last.lng) + 8 * S, toY(last.lat) + 4 * S);
@@ -1870,7 +1935,7 @@ class App {
           : niceMeters + 'm';
         const barX = mapX + margin + 8 * S;
         const barY = mapY + mapH - margin - 8 * S;
-        ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.5)';
+        ctx.strokeStyle = 'rgba(0,0,0,0.65)'; // 比例尺固定深色（浅色瓦片底图）
         ctx.lineWidth = 2 * S;
         ctx.beginPath();
         ctx.moveTo(barX, barY);
@@ -1882,7 +1947,7 @@ class App {
         ctx.moveTo(barX + barPx, barY - 4 * S);
         ctx.lineTo(barX + barPx, barY + 4 * S);
         ctx.stroke();
-        ctx.fillStyle = isDark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.5)';
+        ctx.fillStyle = 'rgba(0,0,0,0.65)'; // 比例尺文字固定深色
         ctx.font = `${10 * S}px "HarmonyOS Sans", sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
@@ -2051,6 +2116,34 @@ class App {
       console.error('[Export] 报告导出失败:', e);
       Toast.show(' 导出报告失败');
     }
+  }
+
+  /**
+   * 加载高德地图瓦片（普通道路图 style=8，GCJ-02 与腾讯地图同坐标系）
+   * scale=2（512px retina）失败时回退 scale=1（256px）
+   * fetch + blob 加载避免 canvas 污染（PNG 可正常导出）
+   * @param {number} z 瓦片层级
+   * @param {number} x 瓦片列号
+   * @param {number} y 瓦片行号
+   * @returns {Promise<HTMLImageElement>}
+   */
+  async _loadMapTile(z, x, y) {
+    const base = 'https://webrd01.is.autonavi.com/appmaptile';
+    for (const scale of [2, 1]) {
+      const url = `${base}?lang=zh_cn&size=1&scale=${scale}&style=8&x=${x}&y=${y}&z=${z}`;
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const blob = await res.blob();
+      const image = await new Promise((resolve, reject) => {
+        const img = new Image();
+        const objectUrl = URL.createObjectURL(blob);
+        img.onload = () => { URL.revokeObjectURL(objectUrl); resolve(img); };
+        img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('tile decode failed')); };
+        img.src = objectUrl;
+      });
+      return image;
+    }
+    throw new Error('tile fetch failed');
   }
 
   /**
