@@ -1855,7 +1855,7 @@ class App {
             const latBot = invMercY((ty + 1) / (1 << z));
             const px = toX(tileLng);
             const py = toY(latTop);
-            const ph = toY(latTop) - toY(latBot);
+            const ph = toY(latBot) - toY(latTop);
             ctx.drawImage(tileImages[i++], px, py, tileWpx, ph);
           }
         }
@@ -1964,65 +1964,172 @@ class App {
         ctx.textAlign = 'left';
       }
 
-      // ── 速度曲线图（从 SpeedChart canvas 抓取） ──
+      // ── 速度曲线图（Canvas2D 直接绘制，不依赖 Chart.js） ──
       let chartY = mapY + mapH + 16 * S;
-      if (this._speedChart && this._speedChart.canvas) {
-        // 确保 chart.js data 与 _speedHistory 同步（清轨迹后 chart.js data 被清空）
-        const chartData = this._speedChart.data.datasets[0].data;
-        if (chartData.length === 0 && this._speedHistory.length > 0) {
-          const win = this._speedHistory.slice(-2500);
-          for (const p of win) chartData.push(p);
-          this._speedChart.update('none');
-        }
-        const chartCanvas = this._speedChart.canvas;
-        // 导出前峰值降采样：点数过多时分段取最大值（保峰谷），避免曲线糊成带
-        const ds = this._speedChart.data.datasets[0];
-        const originalData = ds.data;
-        const MAX_EXPORT_POINTS = 600;
-        let compressedData = originalData;
-        if (originalData.length > MAX_EXPORT_POINTS) {
-          const bin = originalData.length / MAX_EXPORT_POINTS;
-          compressedData = [];
-          for (let i = 0; i < MAX_EXPORT_POINTS; i++) {
-            const start = Math.floor(i * bin);
-            const end = Math.max(start + 1, Math.floor((i + 1) * bin));
-            let peak = null;
-            for (let j = start; j < end; j++) {
-              if (!peak || originalData[j].y > peak.y) peak = originalData[j];
+      {
+        const chartH = 150 * S;
+        const padL = 50 * S, padR = 16 * S, padT = 24 * S, padB = 36 * S;
+        const innerW = mapW - padL - padR;
+        const innerH = chartH - padT - padB;
+
+        // 收集速度数据：优先 _speedHistory，否则从 trail positions 计算
+        let speedData = this._speedHistory.length > 0
+          ? this._speedHistory.slice(-2500)
+          : (() => {
+              const arr = [];
+              for (let i = 1; i < pos.length; i++) {
+                const dt = (pos[i].time - pos[i - 1].time) / 1000;
+                if (dt > 0 && dt < 60) {
+                  const dlng = (pos[i].lng - pos[i - 1].lng) * Math.cos((pos[i].lat + pos[i - 1].lat) / 2 * Math.PI / 180) * 111320;
+                  const dlat = (pos[i].lat - pos[i - 1].lat) * 111320;
+                  const sp = Math.sqrt(dlng * dlng + dlat * dlat) / dt;
+                  arr.push({ x: Math.round((pos[i].time - pos[0].time) / 100) / 10, y: Math.min(sp, 30) });
+                }
+              }
+              return arr;
+            })();
+
+        // 峰值降采样到 600 点
+        const MAX_PTS = 600;
+        if (speedData.length > MAX_PTS) {
+          const bin = speedData.length / MAX_PTS;
+          const ds2 = [];
+          for (let i = 0; i < MAX_PTS; i++) {
+            const s = Math.floor(i * bin);
+            const e = Math.max(s + 1, Math.floor((i + 1) * bin));
+            let peak = speedData[s];
+            for (let j = s + 1; j < e; j++) {
+              if (speedData[j].y > peak.y) peak = speedData[j];
             }
-            compressedData.push(peak);
+            ds2.push(peak);
           }
-          ds.data = compressedData;
-          this._speedChart.update('none');
+          speedData = ds2;
         }
-        const chartW = mapW;
-        const chartH = 150 * S;   // 固定高度（与导出区域匹配）
-        // 临时固定 canvas 尺寸 + 内联 style 覆盖 CSS !important，1:1 像素抓取
-        const origCW = chartCanvas.width;
-        const origCH = chartCanvas.height;
-        const origStyle = chartCanvas.style.cssText;
-        try {
-          chartCanvas.width = Math.round(chartW);
-          chartCanvas.height = Math.round(chartH);
-          chartCanvas.style.cssText = `width:${Math.round(chartW)}px!important;height:${Math.round(chartH)}px!important`;
-          this._speedChart.resize();
-          this._speedChart.update('none');
-          ctx.drawImage(chartCanvas, mapX, chartY, chartW, chartH);
+
+        // 背景卡片
+        ctx.fillStyle = isDark ? '#16213e' : '#ffffff';
+        ctx.beginPath();
+        ctx.roundRect(mapX, chartY, mapW, chartH, 12 * S);
+        ctx.fill();
+
+        if (speedData.length < 2) {
+          ctx.fillStyle = isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)';
+          ctx.font = `${13 * S}px "HarmonyOS Sans", sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.fillText('暂无速度数据', mapX + mapW / 2, chartY + chartH / 2);
+          ctx.textAlign = 'left';
           chartY += chartH + 16 * S;
-        } catch (e) {
-          // 跨域等导致无法绘制
-          chartY += 16 * S;
-        } finally {
-          // 恢复 canvas 原始尺寸 + 样式
-          chartCanvas.width = origCW;
-          chartCanvas.height = origCH;
-          chartCanvas.style.cssText = origStyle;
-          this._speedChart.resize();
-          this._speedChart.update('none');
-        }
-        if (compressedData !== originalData) {
-          ds.data = originalData;
-          this._speedChart.update('none');
+        } else {
+          // 计算范围
+          let xMin = Infinity, xMax = -Infinity, yMax = 0;
+          for (const p of speedData) {
+            if (p.x < xMin) xMin = p.x;
+            if (p.x > xMax) xMax = p.x;
+            if (p.y > yMax) yMax = p.y;
+          }
+          if (xMax === xMin) xMax = xMin + 1;
+          yMax = Math.max(yMax * 1.15, 0.5); // 上留 15% 余量，最低 0.5 m/s
+
+          // nice 刻度
+          const niceMax = (v) => {
+            const exp = Math.pow(10, Math.floor(Math.log10(v)));
+            const norm = v / exp;
+            return (norm < 1.5 ? 1 : norm < 3.5 ? 2 : norm < 7.5 ? 5 : 10) * exp;
+          };
+          const yNice = niceMax(yMax);
+          const xRange = xMax - xMin;
+
+          const toChartX = (v) => padL + (v - xMin) / xRange * innerW;
+          const toChartY = (v) => padT + innerH - (v / yNice) * innerH;
+
+          const textColor = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)';
+          const gridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
+          const axisColor = isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.25)';
+
+          // Y 轴网格 + 刻度
+          const yTicks = 5;
+          ctx.textAlign = 'right';
+          ctx.textBaseline = 'middle';
+          ctx.font = `${10 * S}px "HarmonyOS Sans", sans-serif`;
+          for (let i = 0; i <= yTicks; i++) {
+            const v = yNice * i / yTicks;
+            const cy = toChartY(v);
+            if (i > 0) {
+              ctx.strokeStyle = gridColor;
+              ctx.lineWidth = 1;
+              ctx.beginPath();
+              ctx.moveTo(padL, cy);
+              ctx.lineTo(padL + innerW, cy);
+              ctx.stroke();
+            }
+            ctx.fillStyle = textColor;
+            ctx.fillText(v.toFixed(1), padL - 6 * S, cy);
+          }
+
+          // X 轴网格 + 刻度
+          const xTicks = 6;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'top';
+          for (let i = 0; i <= xTicks; i++) {
+            const v = xMin + xRange * i / xTicks;
+            const cx = toChartX(v);
+            if (i > 0) {
+              ctx.strokeStyle = gridColor;
+              ctx.lineWidth = 1;
+              ctx.beginPath();
+              ctx.moveTo(cx, padT);
+              ctx.lineTo(cx, padT + innerH);
+              ctx.stroke();
+            }
+            ctx.fillStyle = textColor;
+            ctx.fillText(Math.round(v) + '', cx, padT + innerH + 6 * S);
+          }
+
+          // 轴线
+          ctx.strokeStyle = axisColor;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(padL, padT);
+          ctx.lineTo(padL, padT + innerH);
+          ctx.lineTo(padL + innerW, padT + innerH);
+          ctx.stroke();
+
+          // 数据线 + fill
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(padL, padT, innerW, innerH);
+          ctx.clip();
+
+          ctx.beginPath();
+          ctx.moveTo(toChartX(speedData[0].x), toChartY(speedData[0].y));
+          for (let i = 1; i < speedData.length; i++) {
+            ctx.lineTo(toChartX(speedData[i].x), toChartY(speedData[i].y));
+          }
+          ctx.strokeStyle = '#4fc3f7';
+          ctx.lineWidth = 1.5 * S;
+          ctx.stroke();
+
+          // fill
+          ctx.lineTo(toChartX(speedData[speedData.length - 1].x), padT + innerH);
+          ctx.lineTo(toChartX(speedData[0].x), padT + innerH);
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(79,195,247,0.15)';
+          ctx.fill();
+
+          ctx.restore();
+
+          // 轴标签
+          ctx.fillStyle = textColor;
+          ctx.font = `${10 * S}px "HarmonyOS Sans", sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.fillText('时间(秒)', padL + innerW / 2, chartY + chartH - 6 * S);
+          ctx.save();
+          ctx.translate(mapX + 12 * S, padT + innerH / 2);
+          ctx.rotate(-Math.PI / 2);
+          ctx.fillText('速度(m/s)', 0, 0);
+          ctx.restore();
+
+          chartY += chartH + 16 * S;
         }
       }
 
