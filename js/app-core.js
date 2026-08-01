@@ -1802,6 +1802,11 @@ class App {
         return (1 - Math.log(Math.tan(Math.PI / 4 + r / 2)) / Math.PI) / 2;
       };
       const invMercY = (v) => Math.atan(Math.sinh(Math.PI * (1 - 2 * v))) * 180 / Math.PI;
+      // 地图区四角经纬度（用于瓦片范围计算，确保瓦片覆盖整个地图区）
+      const mapLeftLng = (mapX - originX) / (cosLat * scale) + minLng;
+      const mapRightLng = (mapX + mapW - originX) / (cosLat * scale) + minLng;
+      const mapTopLat = maxLat - (mapY - originY) / scale;
+      const mapBotLat = maxLat - (mapY + mapH - originY) / scale;
       // 瓦片层级：按目标每像素米数反算（cos 纬度修正），clamp 3~18
       const targetMpp = 111320 / scale;
       let z = Math.round(Math.log2(156543.03392 * Math.cos(midLat * Math.PI / 180) / targetMpp));
@@ -1809,10 +1814,10 @@ class App {
       // 瓦片数量上限 24：超出则降档
       let tileRange = null;
       for (; z >= 3; z--) {
-        const x0 = Math.floor(mercX(minLng) * (1 << z));
-        const x1 = Math.floor(mercX(maxLng) * (1 << z));
-        const y0 = Math.floor(mercY(maxLat) * (1 << z));
-        const y1 = Math.floor(mercY(minLat) * (1 << z));
+        const x0 = Math.floor(mercX(mapLeftLng) * (1 << z));
+        const x1 = Math.floor(mercX(mapRightLng) * (1 << z));
+        const y0 = Math.floor(mercY(mapTopLat) * (1 << z));
+        const y1 = Math.floor(mercY(mapBotLat) * (1 << z));
         tileRange = { x0, x1, y0, y1, count: (x1 - x0 + 1) * (y1 - y0 + 1) };
         if (tileRange.count <= 36) break;
       }
