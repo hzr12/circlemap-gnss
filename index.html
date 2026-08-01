@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>鬼抓人——地图雷达</title>
+  <title>地图雷达</title>
   <link rel="stylesheet" href="css/fonts.css?t=20260710v1">
   <link rel="stylesheet" href="css/theme.css?t=20260710v1">
   <link rel="stylesheet" href="css/base.css?t=20260710v1">
@@ -17,7 +17,7 @@
   <link rel="stylesheet" href="css/toast-modal.css?t=20260710v1">
   <link rel="stylesheet" href="css/onboarding.css?t=20260710v1">
   <link rel="stylesheet" href="css/responsive.css?t=20260710v1">
-  <link rel="stylesheet" href="css/room.css?t=20260710v3">
+  <link rel="stylesheet" href="css/room.css?t=20260710v4">
 </head>
 <body>
   <div id="map">
@@ -49,7 +49,7 @@
     </div>
 
     <div class="panel-header">
-      <h1 class="panel-title">鬼抓人——地图雷达</h1>
+      <h1 class="panel-title">地图雷达</h1>
       <button id="theme-btn" class="theme-toggle" title="切换浅色主题">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="5"/>
@@ -213,34 +213,6 @@
                 <input type="checkbox" id="room-prediction-enable">
                 <span class="toggle-slider"></span>
               </label>
-            </div>
-          </div>
-        </div>
-
-        <!-- 游戏控制 -->
-        <div class="room-section-block hidden" id="room-game-section">
-          <div class="room-form">
-            <div class="room-form-row">
-              <span class="field-label"> 游戏</span>
-              <span class="room-game-host-badge hidden" id="room-game-host-badge"> 房主</span>
-            </div>
-            <div class="room-game-status-row">
-              <span id="room-game-status"> 等待开始</span>
-              <span id="room-game-role-display" class="room-game-role"></span>
-            </div>
-            <div class="room-game-buttons">
-              <button class="room-btn primary mini" id="room-game-start-btn"> 开始游戏</button>
-              <button class="room-btn danger mini hidden" id="room-game-end-btn"> 结束游戏</button>
-              <button class="room-btn mini" id="room-game-assign-btn"> 换鬼</button>
-              <button class="room-btn mini" id="room-game-random-btn"> 随机分配</button>
-            </div>
-            <div class="room-form-row hidden" id="room-end-time-select">
-              <span class="field-label"> 结束</span>
-              <input type="time" id="room-game-end-input" class="room-input" title="留空=无限制，到点时自动结束">
-            </div>
-            <div class="room-game-timer-row hidden" id="room-game-timer-row">
-              <span id="room-game-time-remaining">--:--</span>
-              <button class="room-btn danger mini hidden" id="room-game-end-short-btn"> 结束</button>
             </div>
           </div>
         </div>
@@ -459,18 +431,6 @@
     </div>
   </div>
 
-  <!-- 赛后统计浮层 -->
-  <div class="room-stats-modal" id="room-stats-modal">
-    <div class="room-stats-backdrop" id="room-stats-backdrop"></div>
-    <div class="room-stats-panel">
-      <div class="room-stats-header">
-        <span> 赛后统计</span>
-        <button class="room-stats-close-btn" id="room-stats-close-btn">✕</button>
-      </div>
-      <div class="room-stats-content" id="room-stats-content"></div>
-    </div>
-  </div>
-
   <!-- Tencent Map API -->
   <script charset="utf-8" src="https://map.qq.com/api/js?v=2.exp&key=OB4BZ-D4W3U-B7VVO-4PJWW-6TKDJ-WPB77&libraries=geometry,convertor"></script>
 
@@ -487,12 +447,12 @@
 
   <!-- MQTT（多人位置共享） -->
   <script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
-  <script src="js/room.js?t=20260710v9"></script>
+  <script src="js/room.js?t=20260710v10"></script>
 
-  <script src="js/app-core.js?t=20260801v23"></script>
+  <script src="js/app-core.js?t=20260801v24"></script>
   <script src="js/app-gps-ui.js?t=20260730v5"></script>
-  <script src="js/app-circle-ui.js?t=20260730v6"></script>
-  <script src="js/app-room-ui.js?t=20260730v3"></script>
+  <script src="js/app-circle-ui.js?t=20260730v7"></script>
+  <script src="js/app-room-ui.js?t=20260730v4"></script>
 
 <!-- 功能提示浮层（逐个显示在对应功能旁） -->
 <div id="hint-tooltip" class="hint-tooltip" style="display:none">

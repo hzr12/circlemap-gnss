@@ -98,7 +98,6 @@ class App {
     // 多人房间
     this.roomManager = null;
     this._roomJoined = false;
-    this._gameDurationInterval = null; // 游戏倒计时定时器
     this._followedPlayerId = null; // 远程圆关注的玩家 ID
   }
 
@@ -629,37 +628,6 @@ class App {
       CONFIG.ENABLE_PREDICTION = saved === '1';
       this._roomPredictionEnable.checked = CONFIG.ENABLE_PREDICTION;
     }
-
-    // —— 游戏控制 ————
-    this._roomGameSection = document.getElementById('room-game-section');
-    this._roomGameStatus = document.getElementById('room-game-status');
-    this._roomGameStartBtn = document.getElementById('room-game-start-btn');
-    this._roomGameEndBtn = document.getElementById('room-game-end-btn');
-    this._roomGameAssignBtn = document.getElementById('room-game-assign-btn');
-    this._roomGameRandomBtn = document.getElementById('room-game-random-btn');
-    this._roomGameRoleDisplay = document.getElementById('room-game-role-display');
-    this._roomGameHostBadge = document.getElementById('room-game-host-badge');
-    this._roomEndTimeSelect = document.getElementById('room-end-time-select');
-    this._roomGameEndInput = document.getElementById('room-game-end-input');
-    this._roomGameTimerRow = document.getElementById('room-game-timer-row');
-    this._roomGameTimeRemaining = document.getElementById('room-game-time-remaining');
-    this._roomGameEndShortBtn = document.getElementById('room-game-end-short-btn');
-
-    // —— 赛后统计 ————
-    this._roomStatsModal = document.getElementById('room-stats-modal');
-    this._roomStatsClose = document.getElementById('room-stats-close-btn');
-    this._roomStatsBackdrop = document.getElementById('room-stats-backdrop');
-    this._roomStatsContent = document.getElementById('room-stats-content');
-
-    // 游戏按钮事件
-    this._roomGameStartBtn.addEventListener('click', () => this._roomStartGame());
-    this._roomGameEndBtn.addEventListener('click', () => this._roomEndGame());
-    this._roomGameAssignBtn.addEventListener('click', () => this._roomAssignRole());
-    this._roomGameRandomBtn.addEventListener('click', () => this._roomRandomAssign());
-    if (this._roomGameEndShortBtn) this._roomGameEndShortBtn.addEventListener('click', () => this._roomEndGame());
-    const closeStats = () => this._roomStatsModal.classList.remove('visible');
-    if (this._roomStatsClose) this._roomStatsClose.addEventListener('click', closeStats);
-    if (this._roomStatsBackdrop) this._roomStatsBackdrop.addEventListener('click', closeStats);
   }
 
   /**
@@ -2201,7 +2169,7 @@ class App {
       ctx.fillStyle = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)';
       ctx.font = `${11 * S}px "HarmonyOS Sans", sans-serif`;
       ctx.textAlign = 'right';
-      ctx.fillText('Circlemap · 鬼抓人地图雷达', W - 24 * S, H - 16 * S);
+      ctx.fillText('Circlemap · 地图雷达', W - 24 * S, H - 16 * S);
       ctx.textAlign = 'left';
 
       // ── 导出 PNG ──
@@ -2231,7 +2199,7 @@ class App {
 
             await Capacitor.Plugins.Share.share({
               title: 'Circlemap 活动报告',
-              text: '鬼抓人·地图雷达 — 轨迹活动报告',
+              text: 'Circlemap 地图雷达 — 轨迹活动报告',
               url: result.uri,
               dialogTitle: '分享或保存活动报告',
             });
@@ -3483,10 +3451,6 @@ class App {
    */
   _roomToggleSharing() {
     if (!this.roomManager) return;
-    if (this.roomManager.getGameState() === 'playing') {
-      Toast.show(' 游戏中位置共享已锁定，无法关闭');
-      return;
-    }
     if (this.roomManager.isNpcTeam()) {
       Toast.show(' NPC 队持续共享，无法关闭');
       return;

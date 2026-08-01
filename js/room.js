@@ -104,7 +104,7 @@ class RoomManager {
     this._lastPosition = null;      // 最近一次 GPS 坐标
     this._lastSentPos = null;       // 最近一次实际下发的坐标（自适应位移判定用）
     this._lastSentSpeed = null;     // 最近一次下发时的速度（静止→移动 瞬间判定用）
-    this._sharingEnabled = false;     // 默认关闭，游戏开始时自动开启并锁定
+    this._sharingEnabled = false;     // 默认关闭，可由共享定位开关 / 统一开始开启
 
     // 其他玩家同步过来的圆（多人可见）：key = `${author}:${cid}`
     this._remoteCircles = {};
@@ -128,29 +128,18 @@ class RoomManager {
     this._topicAliasRegistered = null; // Set: 已向 broker 注册别名的 topic
     this._topicAliasMax = 0;          // broker 返回的 topicAliasMaximum
 
-    // 游戏开始倒计时
-    this._gameStartAt = 0;           // 游戏开始时间戳，0=未设置
+    // 统一开始倒计时
+    this._gameStartAt = 0;           // 开始时间戳，0=未设置
     this._gameTimerAborted = false;
 
-    // 游戏时长限制
-    this._gameDurationMs = 0;        // 0 = 无限制
-    this._gameEndAt = 0;             // 游戏结束时间戳
-    this._gameOverTimer = null;      // 自动结束定时器
-
-    // 游戏角色 — 鬼抓人
-    this._gameState = 'idle';        // idle | playing | finished
+    // 房主身份
     this._isHost = false;            // 创建房间的玩家为房主
     this._hostId = null;             // 当前房主 deviceId（房主离线后自动迁移）
     this._hostClaimTimer = null;     // 加入后无房主自荐定时器
-    this._playerRoles = {};          // { playerId: 'ghost' | 'hunter' }
-    this._caughtPlayers = {};        // { playerId: { caughtBy, ts } }
 
     // 设备健康信息（由 app 层注入）
     this._batteryLevel = 1;
     this._batteryCharging = false;
-    this._gameEvents = [];           // 事件日志 [{ type, playerId, ghostId, ts }]
-    this._gameStartTs = 0;
-    this._gameEndTs = 0;
 
     // 回调钩子
     this.onPositionUpdate = null;   // (players) → void
@@ -162,11 +151,7 @@ class RoomManager {
     this.onBurstPhaseChange = null; // (phase, phaseEnd) → void
     this.onGameTimerUpdate = null;  // (startAt) → void
     this.onGameTimerAborted = null; // () → void
-    this.onGameStateChange = null;  // (state) → void
-    this.onRoleAssigned = null;     // (playerId, role, assignerId) → void
     this.onCircleSync = null;       // (circles[]) → void，其他玩家的圆变更
-    this.onPlayerCaught = null;     // (targetId, ghostId) → void
-    this.onGameStatsReady = null;   // (stats) → void
     this.onHostChange = null;       // (hostId) → void，房主变更（含接管）
     this.onRequestCircles = null;   // () → void，新玩家请求同步圆
   }
@@ -185,7 +170,7 @@ class RoomManager {
     const p = {
       id, name: '未知', color: '#888', online: true, sharing: true,
       teamId: null, teamBroadcaster: false, teamSeparation: false,
-      spectator: false, isNpc: false, role: null, caught: false, caughtBy: null, _lastSeen: 0,
+      spectator: false, isNpc: false, _lastSeen: 0,
     };
     this._players[id] = p;
     return p;
@@ -603,65 +588,13 @@ class RoomManager {
         return;
       }
 
-      // === 游戏状态消息 ===
-      if (data.type === 'game_start') {
-        // 房主已在 startGame() 本地处理，跳过自身回声避免重复初始化事件
+      // === 统一开始（房主广播）：全员自动开启共享定位 + 爆发周期 ===
+      if (data.type === 'burst_start') {
         if (data.id === this._deviceId) return;
-        this._resetGameState();
-        this._gameState = 'playing';
-        this._gameStartTs = data.ts || Date.now();
-        this._gameEvents = [{ type: 'game_start', ts: this._gameStartTs }];
-        // 同步房主的位置共享设定
-        if (data.burstSilent != null) this._burstSilentMin = Math.max(1, data.burstSilent);
-        if (data.burstShare != null) this._burstShareMin = Math.max(1, data.burstShare);
-        // 同步共享/burst 状态
-        if (data.sharingEnabled != null) this._sharingEnabled = data.sharingEnabled;
-        if (data.burstEnabled != null) this._burstEnabled = data.burstEnabled;
-        if (data.burstPhase) this._burstPhase = data.burstPhase;
-        if (data.burstPhaseEnd) this._burstPhaseEnd = data.burstPhaseEnd;
-        // 同步游戏结束时间
-        if (data.endAt) this._gameEndAt = data.endAt;
-        if (data.endAt) this._gameDurationMs = Math.max(0, data.endAt - Date.now());
-        if (this.onGameStateChange) this.onGameStateChange('playing');
-        return;
-      }
-
-      if (data.type === 'game_end') {
-        // 房主已在 endGame() 本地处理，跳过自身回声避免重复 push 事件
-        if (data.id === this._deviceId) return;
-        this._gameState = 'finished';
-        this._gameEndTs = data.ts || Date.now();
-        this._gameEvents.push({ type: 'game_end', ts: this._gameEndTs });
-        // 触发统计
-        if (this.onGameStateChange) this.onGameStateChange('finished');
-        if (this.onGameStatsReady) this.onGameStatsReady(this._buildGameStats());
-        return;
-      }
-
-      if (data.type === 'role_assign') {
-        // 房主已在 assignRole() 本地处理，跳过自身回声
-        if (data.id === this._deviceId) return;
-        this._playerRoles[data.targetId] = data.role;
-        if (this._players[data.targetId]) {
-          this._players[data.targetId].role = data.role;
-        }
-        if (this.onRoleAssigned) this.onRoleAssigned(data.targetId, data.role, data.id);
-        return;
-      }
-
-      if (data.type === 'player_caught') {
-        // 房主已在 catchPlayer() 本地 push 事件，跳过自身回声避免时间线重复
-        if (data.id === this._deviceId) return;
-        const targetId = data.targetId;
-        const ghostId = data.ghostId;
-        this._caughtPlayers[targetId] = { caughtBy: ghostId, ts: data.ts || Date.now() };
-        this._gameEvents.push({ type: 'player_caught', playerId: targetId, ghostId, ts: data.ts || Date.now() });
-        if (this._players[targetId]) {
-          this._players[targetId].caught = true;
-          this._players[targetId].caughtBy = ghostId;
-        }
-        if (this.onPlayerCaught) this.onPlayerCaught(targetId, ghostId);
-        this._schedulePositionUpdate();
+        this.setSharingEnabled(true);
+        this._burstSilentMin = Math.max(1, data.silent || 25);
+        this._burstShareMin = Math.max(1, data.share || 5);
+        // 阶段由随后 burst_phase 消息接管（QoS1 保序）
         return;
       }
 
@@ -697,7 +630,7 @@ class RoomManager {
           this._pendingPlayerTeams = { ...data.playerTeams };
           this._schedulePositionUpdate();
         }
-        // 同步房主的位置共享设定（必须在 onGameStateChange 之前，否则读到默认值）
+        // 同步房主的位置共享设定
         if (data.burstSilent != null) this._burstSilentMin = Math.max(1, data.burstSilent);
         if (data.burstShare != null) this._burstShareMin = Math.max(1, data.burstShare);
         // 同步共享/burst 状态
@@ -707,40 +640,10 @@ class RoomManager {
         if (data.burstPhaseEnd) this._burstPhaseEnd = data.burstPhaseEnd;
         // 同步房主身份（新加入者据此得知房主，超时自荐不触发）
         if (data.hostId) this._hostId = data.hostId;
-        // 重建游戏状态
-        if (data.gameState && data.gameState !== 'idle') {
-          this._gameState = data.gameState;
-          if (data.gameStartTs) this._gameStartTs = data.gameStartTs;
-          if (data.gameEndTs) this._gameEndTs = data.gameEndTs;
-          if (data.gameDurationMs) this._gameDurationMs = data.gameDurationMs;
-          if (data.gameEndAt) this._gameEndAt = data.gameEndAt;
-          if (this.onGameStateChange) this.onGameStateChange(data.gameState);
-        }
-        // 重建游戏倒计时（仅在 idle 状态下，说明倒计时已设但未开始）
-        if (data.gameStartAt && (!data.gameState || data.gameState === 'idle')) {
+        // 重建统一开始倒计时（说明倒计时已设但未开始）
+        if (data.gameStartAt) {
           this._gameStartAt = data.gameStartAt;
           if (this.onGameTimerUpdate) this.onGameTimerUpdate(data.gameStartAt);
-        }
-        // 重建角色
-        if (data.playerRoles) {
-          for (const [playerId, role] of Object.entries(data.playerRoles)) {
-            this._playerRoles[playerId] = role;
-            if (this._players[playerId]) {
-              this._players[playerId].role = role;
-            }
-          }
-          this._schedulePositionUpdate();
-        }
-        // 重建被抓状态
-        if (data.caughtPlayers) {
-          for (const [playerId, info] of Object.entries(data.caughtPlayers)) {
-            this._caughtPlayers[playerId] = info;
-            if (this._players[playerId]) {
-              this._players[playerId].caught = true;
-              this._players[playerId].caughtBy = info.caughtBy;
-            }
-          }
-          this._schedulePositionUpdate();
         }
         return;
       }
@@ -817,17 +720,8 @@ class RoomManager {
     this._isSpectator = false;
     this._gameStartAt = 0;
     this._gameTimerAborted = false;
-    if (this._gameOverTimer) { clearTimeout(this._gameOverTimer); this._gameOverTimer = null; }
     this._isHost = false;
     this._hostId = null;
-    this._gameState = 'idle';
-    this._playerRoles = {};
-    this._caughtPlayers = {};
-    this._gameEvents = [];
-    this._gameStartTs = 0;
-    this._gameEndTs = 0;
-    this._gameDurationMs = 0;
-    this._gameEndAt = 0;
   }
 
   /**
@@ -862,10 +756,6 @@ class RoomManager {
     if (this._teamSeparation) msg.teamSeparation = true;
     if (this._isSpectator) msg.spectator = true;
     if (this._isNpcTeam()) msg.isNpc = true;
-    // 游戏状态随位置消息广播，保证迟到/漏收的玩家也能同步角色与被抓状态
-    const myRole = this._playerRoles[this._deviceId];
-    if (myRole) msg.role = myRole;
-    if (this._caughtPlayers[this._deviceId] != null) msg.caught = true;
     this._publishWithAlias(topic, JSON.stringify(msg), { qos: 1, retain: false });
   }
 
@@ -893,9 +783,6 @@ class RoomManager {
     player.bearing = pos.bearing || 0;
     player.lastPosUpdate = Date.now();
     player.isNpc = (this._teams[player.teamId] && this._teams[player.teamId].isNpc) || false;
-    player.role = this._playerRoles[senderId] || player.role || null;
-    player.caught = (this._caughtPlayers[senderId] != null) || player.caught || false;
-    player.caughtBy = this._caughtPlayers[senderId] ? this._caughtPlayers[senderId].caughtBy : (player.caughtBy || null);
     player._lastSeen = Date.now();
     if (isNew && this.onPlayerJoin) this.onPlayerJoin(senderId, player.name);
     this._schedulePositionUpdate(senderId);
@@ -933,7 +820,7 @@ class RoomManager {
     this._schedulePositionUpdate(senderId);
   }
 
-  // 在场消息：低频回填静态身份（name/color/teamId/spectator/isNpc/role/caught）
+  // 在场消息：低频回填静态身份（name/color/teamId/spectator/isNpc）
   _onPresenceMsg(senderId, p) {
     if (senderId === this._deviceId) return;
     this._cancelPendingOffline(senderId);
@@ -948,9 +835,6 @@ class RoomManager {
     }
     player.spectator = p.spectator === true;
     player.isNpc = (this._teams[player.teamId] && this._teams[player.teamId].isNpc) || p.isNpc === true;
-    player.role = p.role || this._playerRoles[senderId] || player.role || null;
-    player.caught = p.caught === true || (this._caughtPlayers[senderId] != null) || player.caught || false;
-    player.caughtBy = this._caughtPlayers[senderId] ? this._caughtPlayers[senderId].caughtBy : (player.caughtBy || null);
     player._lastSeen = Date.now();
     this._schedulePositionUpdate(senderId);
   }
@@ -1079,7 +963,7 @@ class RoomManager {
   }
 
   // 在场包：1 字节 flags + 三段变长字符串（name/color/teamId，各 1 字节长度前缀 + UTF-8）
-  // flags bit0 旁观 / bit1 NPC / bit2 被抓 / bit3 有角色 / bit4 角色为鬼（其余保留）
+  // flags bit0 旁观 / bit1 NPC（其余保留）
   _encodePresence(p) {
     const nameU = new TextEncoder().encode(p.name || '');
     const colorU = new TextEncoder().encode(p.color || '');
@@ -1090,9 +974,6 @@ class RoomManager {
     let f = 0;
     if (p.spectator) f |= 1;
     if (p.isNpc) f |= 2;
-    if (p.caught) f |= 4;
-    if (p.role) f |= 8;
-    if (p.role === 'ghost') f |= 16;
     let o = 0;
     dv.setUint8(o, f); o += 1;
     u8[o] = nameU.length; o += 1; u8.set(nameU, o); o += nameU.length;
@@ -1117,13 +998,10 @@ class RoomManager {
     const teamLen = u8[o]; o += 1;
     const teamId = teamLen ? new TextDecoder().decode(u8.subarray(o, o + teamLen)) : null;
     o += teamLen;
-    const hasRole = !!(f & 8);
     return {
       name, color, teamId,
       spectator: !!(f & 1),
       isNpc: !!(f & 2),
-      caught: !!(f & 4),
-      role: hasRole ? ((f & 16) ? 'ghost' : 'hunter') : null,
     };
   }
 
@@ -1193,7 +1071,7 @@ class RoomManager {
   }
 
   _publishPresence() {
-    // 静态身份低频回填（二进制，像 pos/ping）：name/color/teamId/spectator/isNpc/role/caught
+    // 静态身份低频回填（二进制，像 pos/ping）：name/color/teamId/spectator/isNpc
     if (!this._client || !this._connected || !this._roomCode) return;
     const topic = `${ROOM_CONFIG.TOPIC_PREFIX}/${this._roomCode}/${this._deviceId}/presence`;
     const bytes = this._encodePresence({
@@ -1202,8 +1080,6 @@ class RoomManager {
       teamId: this._myTeamId,
       spectator: this._isSpectator,
       isNpc: this._isNpcTeam(),
-      role: this._playerRoles[this._deviceId] || null,
-      caught: this._caughtPlayers[this._deviceId] != null,
     });
     this._publishWithAlias(topic, bytes, { qos: 1, retain: false, binary: true });
   }
@@ -1213,7 +1089,7 @@ class RoomManager {
   // ============================================================
 
   /**
-   * 广播当前房间完整状态（队伍、游戏状态、角色、被抓等）
+   * 广播当前房间完整状态（队伍、统一开始、共享设定等）
    * 当收到 request_state 时调用，让重新加入的玩家同步
    */
   _broadcastFullState() {
@@ -1227,8 +1103,6 @@ class RoomManager {
       hostId: this._hostId || (this._isHost ? this._deviceId : null),
       teams: { ...this._teams },
       playerTeams,
-      gameState: this._gameState,
-      gameStartTs: this._gameStartTs || 0,
       gameStartAt: this._gameStartAt || 0,
       burstSilent: this._burstSilentMin,
       burstShare: this._burstShareMin,
@@ -1236,15 +1110,7 @@ class RoomManager {
       burstEnabled: this._burstEnabled,
       burstPhase: this._burstPhase,
       burstPhaseEnd: this._burstPhaseEnd,
-      playerRoles: { ...this._playerRoles },
-      caughtPlayers: {},
-      gameEndTs: this._gameEndTs || 0,
-      gameDurationMs: this._gameDurationMs || 0,
-      gameEndAt: this._gameEndAt || 0,
     };
-    for (const [id, info] of Object.entries(this._caughtPlayers)) {
-      msg.caughtPlayers[id] = { caughtBy: info.caughtBy, ts: info.ts };
-    }
     this._publish(msg);
   }
 
@@ -1269,15 +1135,14 @@ class RoomManager {
     const canShare = this._sharingEnabled && this._lastPosition &&
       (!this._burstEnabled || this._burstPhase === 'sharing');
     if (!canShare) return false;
-    // 游戏中（鬼抓人）取消发报员压制：每人各自广播，保证所有人互相可见
-    const broadcasterOk = this._gameState === 'playing' ||
-      this._myAmBroadcaster || this._teamSeparation || !this._myTeamId;
+    // 发报员压制：每队仅发报员广播，无队伍/已分离者各自广播
+    const broadcasterOk = this._myAmBroadcaster || this._teamSeparation || !this._myTeamId;
     if (!broadcasterOk) return false;
     const sinceSent = this._lastSentPos ? Date.now() - this._lastSentPos.ts : Infinity;
     return sinceSent >= this._computePositionInterval();
   }
 
-  /** 立即补发一次当前位置（游戏开始 / 到点进入共享阶段时调用） */
+  /** 立即补发一次当前位置（开启共享 / 到点进入共享阶段时调用） */
   flushPositionNow() {
     if (this._shouldSendPosition()) this._publishPosition();
   }
@@ -1784,11 +1649,11 @@ class RoomManager {
   }
 
   // ============================================================
-  //  游戏开始倒计时
+  //  统一开始倒计时
   // ============================================================
 
   /**
-   * 设置游戏开始时间（任何玩家可设，覆盖上一次）
+   * 设置统一开始时间（任何玩家可设，覆盖上一次）
    * @param {number} startAt 开始时间戳（Date.now() + 秒数*1000）
    */
   setGameTimer(startAt) {
@@ -1799,7 +1664,7 @@ class RoomManager {
   }
 
   /**
-   * 取消游戏倒计时
+   * 取消统一开始倒计时
    */
   abortGameTimer() {
     this._gameStartAt = 0;
@@ -1810,18 +1675,18 @@ class RoomManager {
 
   getGameStartAt() { return this._gameStartAt; }
   isGameTimerAborted() { return this._gameTimerAborted; }
-  getGameEndAt() { return this._gameEndAt; }
-  getGameDurationMs() { return this._gameDurationMs; }
-
-  // ============================================================
-  //  游戏角色 — 鬼抓人
-  // ============================================================
 
   /**
-   * 获取当前游戏状态
-   * @returns {string} 'idle' | 'playing' | 'finished'
+   * 统一开始（房主专用）：本地开启共享定位 + 爆发周期，并广播全员同步
+   * @param {number} silentMin 静默时长（分钟）
+   * @param {number} shareMin 共享时长（分钟）
    */
-  getGameState() { return this._gameState; }
+  burstStart(silentMin, shareMin) {
+    if (!this._isHost) return;
+    this.setSharingEnabled(true);
+    this.startBurstCycle(silentMin, shareMin); // 内部发布 burst_phase 同步阶段
+    this._publish({ type: 'burst_start', silent: silentMin, share: shareMin });
+  }
 
   /**
    * 我是否是房主
@@ -1843,252 +1708,6 @@ class RoomManager {
     this._publish({ type: 'host_elect', hostId: this._deviceId });
     this._publishPing();
     if (this.onHostChange) this.onHostChange(this._hostId);
-  }
-
-  /**
-   * 获取玩家角色
-   * @param {string} playerId
-   * @returns {string|null} 'ghost' | 'hunter' | null
-   */
-  getPlayerRole(playerId) {
-    return this._playerRoles[playerId] || null;
-  }
-
-  /**
-   * 我是否已被抓
-   */
-  isPlayerCaught(playerId) {
-    return this._caughtPlayers[playerId] != null;
-  }
-
-  /**
-   * 开始游戏（房主专用）
-   * 广播 game_start → 所有人进入 playing 状态
-   * @param {number} [burstSilent] 静默时长（分钟），随 game_start 同步给所有人
-   * @param {number} [burstShare] 共享时长（分钟），随 game_start 同步给所有人
-   * @param {number} [endAt] 游戏结束时间戳（毫秒），0=无限制
-   */
-  startGame(burstSilent, burstShare, endAt) {
-    if (!this._isHost) return;
-    if (this._gameState === 'playing') return; // 进行中不允许重复开始；idle / finished 均可开新局
-    this._resetGameState();
-    this._gameState = 'playing';
-    this._gameStartTs = Date.now();
-    this._gameEvents = [{ type: 'game_start', ts: this._gameStartTs }];
-    // 同步房主的位置共享设定
-    if (burstSilent != null) this._burstSilentMin = Math.max(1, burstSilent);
-    if (burstShare != null) this._burstShareMin = Math.max(1, burstShare);
-    // 同步共享/burst 状态
-    this._sharingEnabled = true;
-    this._burstEnabled = true;
-    this._burstPhase = 'silent';
-    this._burstPhaseEnd = Date.now() + this._burstSilentMin * 60 * 1000;
-    // 游戏结束时间
-    if (endAt) {
-      this._gameEndAt = endAt;
-      this._gameDurationMs = Math.max(0, endAt - Date.now());
-      this._gameOverTimer = setTimeout(() => this.endGame(), this._gameDurationMs);
-    }
-    const msg = {
-      type: 'game_start',
-      burstSilent: this._burstSilentMin,
-      burstShare: this._burstShareMin,
-      sharingEnabled: true,
-      burstEnabled: true,
-      burstPhase: 'silent',
-      burstPhaseEnd: this._burstPhaseEnd,
-    };
-    if (this._gameEndAt) msg.endAt = this._gameEndAt;
-    this._publish(msg);
-    // 自动按队伍分配角色：随机选一个非 NPC 队为鬼队，其余为人队
-    this._autoAssignTeamRoles();
-    if (this.onGameStateChange) this.onGameStateChange('playing');
-  }
-
-  /**
-   * 重置单局状态（结束后再开新局用）：清掉被抓 / 角色 / 事件，玩家标记回归初始
-   */
-  _resetGameState() {
-    if (this._gameOverTimer) { clearTimeout(this._gameOverTimer); this._gameOverTimer = null; }
-    this._caughtPlayers = {};
-    this._playerRoles = {};
-    this._gameEvents = [];
-    this._gameStartTs = 0;
-    this._gameEndTs = 0;
-    this._gameEndAt = 0;
-    Object.values(this._players).forEach((p) => {
-      p.caught = false;
-      p.caughtBy = null;
-      p.role = null;
-    });
-  }
-
-  /**
-   * 自动按队伍分配角色（鬼抓人）：随机选一个非 NPC 队为鬼队，其余为人队
-   * NPC 队和观战者不参与
-   */
-  _autoAssignTeamRoles() {
-    const nonNpcTeams = Object.values(this._teams).filter(t => !t.isNpc);
-    if (nonNpcTeams.length < 2) return; // 至少需要2个非NPC队才能自动分配
-    // 随机选一个队为鬼队
-    const shuffled = [...nonNpcTeams].sort(() => Math.random() - 0.5);
-    const ghostTeamId = shuffled[0].id;
-    // 分配角色
-    for (const player of Object.values(this._players)) {
-      if (player.spectator || player.isNpc) continue;
-      const role = player.teamId === ghostTeamId ? 'ghost' : 'hunter';
-      this.assignRole(player.id, role);
-    }
-    // 房主不在 _players 中，需单独分配角色
-    if (this._myTeamId && !this._isNpcTeam() && !this._isSpectator) {
-      const hostRole = this._myTeamId === ghostTeamId ? 'ghost' : 'hunter';
-      this.assignRole(this._deviceId, hostRole);
-    }
-  }
-
-  /**
-   * 结束游戏（房主专用）
-   */
-  endGame() {
-    if (!this._isHost) return;
-    if (this._gameState !== 'playing') return;
-    if (this._gameOverTimer) { clearTimeout(this._gameOverTimer); this._gameOverTimer = null; }
-    this._gameState = 'finished';
-    this._gameEndTs = Date.now();
-    this._gameEvents.push({ type: 'game_end', ts: this._gameEndTs });
-    this._publish({ type: 'game_end' });
-    if (this.onGameStateChange) this.onGameStateChange('finished');
-    if (this.onGameStatsReady) this.onGameStatsReady(this._buildGameStats());
-  }
-
-  /**
-   * 分配角色（房主专用）
-   * @param {string} targetId
-   * @param {'ghost'|'hunter'} role
-   */
-  assignRole(targetId, role) {
-    if (!this._isHost) return;
-    if (this._gameState !== 'idle' && this._gameState !== 'playing') return;
-    this._playerRoles[targetId] = role;
-    if (this._players[targetId]) {
-      this._players[targetId].role = role;
-    }
-    this._publish({ type: 'role_assign', targetId, role });
-    if (this.onRoleAssigned) this.onRoleAssigned(targetId, role, this._deviceId);
-    this._schedulePositionUpdate();
-  }
-
-  /**
-   * 随机分配角色（房主专用）
-   * 默认 1 鬼，其余为人
-   * @param {number} ghostCount 鬼的数量，默认1
-   */
-  randomAssignRoles(ghostCount = 1) {
-    if (!this._isHost) return;
-    // 排除观战者与 NPC（NPC 不参与鬼抓人）
-    const candidates = Object.values(this._players).filter(p => p.online && !p.spectator && !p.isNpc);
-    if (candidates.length < 2) return;
-
-    // 洗牌
-    const shuffled = [...candidates].sort(() => Math.random() - 0.5);
-    const ghosts = shuffled.slice(0, Math.min(ghostCount, shuffled.length - 1));
-
-    for (const p of candidates) {
-      const role = ghosts.find(g => g.id === p.id) ? 'ghost' : 'hunter';
-      this.assignRole(p.id, role);
-    }
-  }
-
-  /**
-   * 标记玩家被抓（房主专用）
-   * @param {string} targetId 被抓玩家 ID
-   * @param {string} ghostId 抓到人的鬼 ID
-   */
-  catchPlayer(targetId, ghostId) {
-    if (!this._isHost) return;
-    if (this._caughtPlayers[targetId]) return; // 已抓过
-    const tgt = this._players[targetId];
-    if (tgt && tgt.isNpc) return; // NPC 不可被抓
-    this._caughtPlayers[targetId] = { caughtBy: ghostId, ts: Date.now() };
-    this._gameEvents.push({ type: 'player_caught', playerId: targetId, ghostId, ts: Date.now() });
-    if (this._players[targetId]) {
-      this._players[targetId].caught = true;
-      this._players[targetId].caughtBy = ghostId;
-    }
-    this._publish({ type: 'player_caught', targetId, ghostId });
-    if (this.onPlayerCaught) this.onPlayerCaught(targetId, ghostId);
-    this._schedulePositionUpdate();
-  }
-
-  /**
-   * 构建赛后统计数据
-   */
-  _buildGameStats() {
-    const duration = this._gameEndTs - this._gameStartTs;
-    // 角色统计（基于 _playerRoles，已包含房主自身）
-    const roles = {};
-    for (const [id, role] of Object.entries(this._playerRoles)) {
-      // NPC 不参与统计（含 NPC 队房主自身——自身不在 _players 中，需单独判定）
-      const npc = (this._players[id] && this._players[id].isNpc) || (id === this._deviceId && this._isNpcTeam());
-      if (npc) continue;
-      if (!roles[role]) roles[role] = [];
-      const p = this._players[id];
-      // 房主自身不在 _players 中，用昵称兜底
-      const name = p ? p.name : (id === this._deviceId ? this._nickname : '未知');
-      roles[role].push({
-        id,
-        name,
-        caught: this._caughtPlayers[id] != null,
-        caughtBy: this._caughtPlayers[id] ? this._caughtPlayers[id].caughtBy : null,
-        caughtTs: this._caughtPlayers[id] ? this._caughtPlayers[id].ts : null,
-      });
-    }
-
-    // 被抓事件时间线
-    const timeline = this._gameEvents
-      .filter(e => e.type === 'player_caught')
-      .map(e => ({
-        ...e,
-        playerName: this._players[e.playerId] ? this._players[e.playerId].name : '未知',
-        ghostName: this._players[e.ghostId] ? this._players[e.ghostId].name : '未知',
-        offset: this._gameStartTs ? ((e.ts - this._gameStartTs) / 1000).toFixed(0) : 0,
-      }));
-
-    // 胜负判定
-    const hunters = roles.hunter ? roles.hunter.filter(h => !h.caught) : [];
-    const ghosts = roles.ghost ? roles.ghost : [];
-    const allCaught = roles.hunter ? roles.hunter.every(h => h.caught) : false;
-    const winner = allCaught ? 'ghost' : (this._gameState === 'finished' && !allCaught ? 'hunter' : null);
-
-    return {
-      startTs: this._gameStartTs,
-      endTs: this._gameEndTs,
-      duration,
-      durationStr: this._formatDuration(duration),
-      // 玩家数：其他玩家（排除 NPC）+ 房主自身（非 NPC 队时计入）
-      playerCount: Object.values(this._players).filter(p => !p.isNpc).length + (this._isNpcTeam() ? 0 : 1),
-      roles,
-      timeline,
-      survivors: hunters.length,
-      totalCaught: Object.keys(this._caughtPlayers).length,
-      winner,
-    };
-  }
-
-  /** 毫秒→可读时长 */
-  _formatDuration(ms) {
-    if (ms <= 0) return '0:00';
-    const totalSec = Math.floor(ms / 1000);
-    const min = Math.floor(totalSec / 60);
-    const sec = totalSec % 60;
-    return `${min}:${sec.toString().padStart(2, '0')}`;
-  }
-
-  /**
-   * 获取所有被抓玩家
-   */
-  getCaughtPlayers() {
-    return { ...this._caughtPlayers };
   }
 
   // ============================================================
@@ -2378,16 +1997,10 @@ class RoomManager {
     this._gameStartAt = 0;
     this._gameTimerAborted = false;
     this._isHost = false;
-    this._gameState = 'idle';
-    this._playerRoles = {};
-    this._caughtPlayers = {};
-      this._gameEvents = [];
-      this._gameStartTs = 0;
-      this._gameEndTs = 0;
-    }
   }
+}
 
-  // 仅用于 Node 测试桩（浏览器中 module 未定义，无副作用）
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { RoomManager, ROOM_CONFIG };
-  }
+// 仅用于 Node 测试桩（浏览器中 module 未定义，无副作用）
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { RoomManager, ROOM_CONFIG };
+}

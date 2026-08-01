@@ -218,14 +218,13 @@ App.prototype._updateCircleList = function (force) {
               const p = players[follower];
               const dist = calcDistance({ lat: p.lat, lng: p.lng }, rc.center);
               const pName = p.name || '未知';
-              const tag = p.role === 'ghost' ? '鬼' : p.role === 'hunter' ? '人' : '';
               let rangeTag = '';
               if (dist <= rc.maxRadius) rangeTag = ' <span class="tag-inrange">范围内</span>';
               else {
                 const fb = Math.max(this._lastAccuracy || 0, 15);
                 rangeTag = (dist - fb) <= rc.maxRadius ? ' <span class="tag-maybe">可能范围内</span>' : ' <span class="tag-outside">范围外</span>';
               }
-              distLines.push(`<span class="npc-dist-line followed-line"><span class="npc-follow-star" data-player="${this._escapeHtml(follower)}">★</span><span class="npc-dist-player" style="color:${p.color || '#ccc'}">${this._escapeHtml(pName)}</span>${tag ? `<span class="player-tag tag-${p.role}">${tag}</span>` : ''} ${formatDistance(dist)}${rangeTag}</span>`);
+              distLines.push(`<span class="npc-dist-line followed-line"><span class="npc-follow-star" data-player="${this._escapeHtml(follower)}">★</span><span class="npc-dist-player" style="color:${p.color || '#ccc'}">${this._escapeHtml(pName)}</span> ${formatDistance(dist)}${rangeTag}</span>`);
             }
 
             Object.values(players).forEach((p) => {
@@ -234,7 +233,6 @@ App.prototype._updateCircleList = function (force) {
               if (p.lat == null || p.lng == null) return;
               const dist = calcDistance({ lat: p.lat, lng: p.lng }, rc.center);
               const pName = p.name || '未知';
-              const tag = p.role === 'ghost' ? '鬼' : p.role === 'hunter' ? '人' : '';
               let rangeTag = '';
               if (dist <= rc.maxRadius) rangeTag = ' <span class="tag-inrange">范围内</span>';
               else {
@@ -242,7 +240,7 @@ App.prototype._updateCircleList = function (force) {
                 rangeTag = (dist - fb) <= rc.maxRadius ? ' <span class="tag-maybe">可能范围内</span>' : ' <span class="tag-outside">范围外</span>';
               }
               const isFollowed = p.id === follower;
-              distLines.push(`<span class="npc-dist-line${isFollowed ? ' followed-line' : ''}"><span class="npc-follow-btn${isFollowed ? ' followed' : ''}" data-player="${this._escapeHtml(p.id)}">${isFollowed ? '★' : '☆'}</span><span class="npc-dist-player" style="color:${p.color || '#ccc'}">${this._escapeHtml(pName)}</span>${tag ? `<span class="player-tag tag-${p.role}">${tag}</span>` : ''} ${formatDistance(dist)}${rangeTag}</span>`);
+              distLines.push(`<span class="npc-dist-line${isFollowed ? ' followed-line' : ''}"><span class="npc-follow-btn${isFollowed ? ' followed' : ''}" data-player="${this._escapeHtml(p.id)}">${isFollowed ? '★' : '☆'}</span><span class="npc-dist-player" style="color:${p.color || '#ccc'}">${this._escapeHtml(pName)}</span> ${formatDistance(dist)}${rangeTag}</span>`);
             });
 
             html += `<div class="circle-item remote ${freshnessClass}" data-remote-idx="${idx}">

@@ -1,7 +1,7 @@
 /**
  * 圆圈地图 - 多人房间 UI 渲染
  * ============================================
- * 追加 App.prototype 方法：玩家列表、队伍、游戏控制、统计
+ * 追加 App.prototype 方法：玩家列表、队伍、位置共享、统一开始
  * 加载顺序：app-core.js 之后
  */
 
@@ -207,6 +207,8 @@ App.prototype._bindRoomEvents = function () {
       this._roomBurstPhase.textContent = '未激活';
       return;
     }
+    // 统一开始 / 手动开启时同步开关状态，避免 UI 漂移
+    if (this._roomBurstEnable) this._roomBurstEnable.checked = true;
     this._burstPhase = phase;
     this._burstPhaseEnd = phaseEnd;
     const updatePhase = () => {
@@ -246,103 +248,11 @@ App.prototype._bindRoomEvents = function () {
     this._roomTimerAbortBtn.classList.add('hidden');
   };
 
-  this.roomManager.onGameStateChange = (state) => {
-    this._updateGameUI();
-    if (state === 'playing') {
-      if (this.roomManager) {
-        this.roomManager.setSharingEnabled(true);
-        this.roomManager.resumeBurstCycle();
-        const settings = this.roomManager.getBurstSettings();
-        const burst = this.roomManager.isBurstEnabled();
-        const phase = this.roomManager.getBurstPhase();
-        if (this._roomBurstSilent) this._roomBurstSilent.value = settings.silent;
-        if (this._roomBurstShare) this._roomBurstShare.value = settings.share;
-        if (this._roomBurstEnable) this._roomBurstEnable.checked = burst;
-        this.roomManager.flushPositionNow();
-      }
-      if (this._roomSharingBtn) {
-        this._roomSharingBtn.disabled = true;
-        this._roomSharingBtn.textContent = ' 游戏中·带静默共享';
-        this._roomSharingBtn.classList.remove('sharing-off');
-      }
-      Toast.show(' 游戏开始！带静默位置共享已开启');
-      this._updateRoomPlayerList();
-      this._updateCircleList();
-      // 启动游戏时长倒计时
-      if (this._gameDurationInterval) {
-        clearInterval(this._gameDurationInterval);
-        this._gameDurationInterval = null;
-      }
-      if (this.roomManager && this.roomManager.getGameEndAt() > 0) {
-        this._updateGameCountdown();
-        this._gameDurationInterval = setInterval(() => this._updateGameCountdown(), 1000);
-      }
-    } else if (state === 'finished') {
-      if (this.roomManager) this.roomManager.stopBurstCycle();
-      if (this._roomBurstEnable) this._roomBurstEnable.checked = false;
-      if (this._roomSharingBtn) {
-        this._roomSharingBtn.disabled = false;
-        this._updateSharingBtn();
-      }
-      Toast.show(' 游戏结束！位置共享可手动关闭');
-      this._updateRoomPlayerList();
-      if (this._gameDurationInterval) {
-        clearInterval(this._gameDurationInterval);
-        this._gameDurationInterval = null;
-      }
-    } else {
-      if (this._roomSharingBtn) {
-        this._roomSharingBtn.disabled = false;
-        this._updateSharingBtn();
-      }
-      if (this._gameDurationInterval) {
-        clearInterval(this._gameDurationInterval);
-        this._gameDurationInterval = null;
-      }
-    }
-  };
-
-  this.roomManager.onRoleAssigned = (playerId, role, assignerId) => {
-    this._updateGameUI();
-    this._updateRoomPlayerList();
-    const myInfo = this.roomManager.getMyInfo();
-    if (playerId === myInfo.id) {
-      const roleName = role === 'ghost' ? ' 鬼' : ' 人';
-      Toast.show(`你的角色：${roleName}`);
-    }
-  };
-
-  this.roomManager.onPlayerCaught = (targetId, ghostId) => {
-    this._updateRoomPlayerList();
-    const players = this.roomManager.getPlayers();
-    const targetName = players[targetId] ? players[targetId].name : '未知';
-    const ghostName = players[ghostId] ? players[ghostId].name : '未知';
-    Toast.show(` ${targetName} 被 ${ghostName} 抓住了！`);
-    if (this.roomManager) {
-      const myInfo = this.roomManager.getMyInfo();
-      const allPlayers = this.roomManager.getPlayers();
-      const now = Date.now();
-      const POSITION_STALE_MS = 30000;
-      this.mapManager.clearPlayerMarkers();
-      this.mapManager.clearPlayerPredictions();
-      Object.values(allPlayers).forEach((p) => {
-        if (p.id !== myInfo.id && p.online && !p.spectator) this._renderPlayerMarker(p, myInfo, now, POSITION_STALE_MS);
-      });
-    }
-  };
-
-  this.roomManager.onGameStatsReady = (stats) => {
-    this._roomShowGameStats(stats);
-  };
   this.roomManager.onCircleSync = (circles) => {
     this.mapManager.setRemoteCircles(circles);
   };
   this.roomManager.onRequestCircles = () => {
     this.mapManager.getCircles().forEach((c) => this.roomManager.publishCircle('add', c));
-  };
-  // 房主变更（离线迁移/无主接管）：静默刷新游戏控制按钮与房主徽章
-  this.roomManager.onHostChange = (hostId) => {
-    this._updateGameUI();
   };
 };
 
@@ -358,10 +268,9 @@ App.prototype._renderPlayerMarker = function (p, myInfo, now, staleMs) {
   const stale = p.lastPosUpdate && (now - p.lastPosUpdate > staleMs);
   const color = p.teamId && teams[p.teamId] ? teams[p.teamId].color : p.color;
   let opacity = stale ? 0.3 : p.teamSeparation ? 0.5 : 1;
-  if (p.caught) opacity = 0.2;
   const teamLabel = (p.teamId && teams[p.teamId]) ? (teams[p.teamId].name || '').trim().charAt(0) || '' : '';
   this.mapManager.updatePlayerMarker(p.id, p.lat, p.lng, p.name, color, opacity, p.acc, teamLabel);
-  if (!stale && p.lat != null && p.lng != null && p.bearing != null && !p.caught) {
+  if (!stale && p.lat != null && p.lng != null && p.bearing != null) {
     this.mapManager.setPlayerPrediction(p.id, p.lat, p.lng, p.bearing, p.speed || 0, p.acc || 0);
   }
 };
@@ -406,9 +315,7 @@ App.prototype._updateRoomPlayerList = function () {
     color: myInfo.color,
     teamId: myTeamId,
     spectator: this.roomManager.isSpectator(),
-    role: this.roomManager.getPlayerRole(myInfo.id),
     isNpc: this.roomManager.isNpcTeam(),
-    caught: this.roomManager.isPlayerCaught(myInfo.id),
     statusText: this.roomManager.isSpectator() ? '观战中' : (mySharing ? '在线' : '定位关闭'),
     statusClass: this.roomManager.isSpectator() ? 'spectator' : (mySharing ? 'online' : 'sharing-off'),
     isSelf: true,
@@ -447,8 +354,6 @@ App.prototype._updateRoomPlayerList = function () {
       isBroadcaster: p.teamBroadcaster === true,
       teamSeparation: p.teamSeparation === true,
       spectator: p.spectator === true,
-      role: p.role || null,
-      caught: p.caught === true,
     };
     if (p.teamId && teams[p.teamId]) {
       if (!grouped[p.teamId]) grouped[p.teamId] = [];
@@ -528,18 +433,10 @@ App.prototype._updateRoomPlayerList = function () {
 
 App.prototype._getPlayerTagsHtml = function (p) {
   let tags = '';
-  const gameState = this.roomManager ? this.roomManager.getGameState() : 'idle';
   if (p.isNpc) {
     tags += '<span class="player-tag tag-npc"> NPC</span> ';
   } else if (p.spectator) {
     tags += '<span class="player-tag tag-spectator"> 观战</span> ';
-  } else if (p.role === 'ghost') {
-    tags += '<span class="player-tag tag-ghost"> 鬼</span> ';
-  } else if (p.role === 'hunter') {
-    tags += '<span class="player-tag tag-hunter"> 人</span> ';
-  }
-  if (p.caught) {
-    tags += '<span class="player-tag tag-caught"> 被抓</span> ';
   }
   if (p.isBroadcaster) {
     tags += '<span class="player-tag tag-broadcaster"> 发报中</span> ';
@@ -564,16 +461,6 @@ App.prototype._roomCleanup = function () {
   if (this._roomPlayerList) this._roomPlayerList.innerHTML = '<div class="room-empty">尚未加入房间</div>';
   if (this._roomConnDot) this._roomConnDot.classList.remove('online');
   if (this._roomCodeValue) this._roomCodeValue.textContent = '------';
-  if (this._roomGameStatus) this._roomGameStatus.textContent = ' 等待开始';
-  if (this._roomGameRoleDisplay) this._roomGameRoleDisplay.textContent = '';
-  if (this._roomGameHostBadge) this._roomGameHostBadge.classList.add('hidden');
-  if (this._roomGameStartBtn) {
-    this._roomGameStartBtn.textContent = ' 开始游戏';
-    this._roomGameStartBtn.classList.remove('hidden');
-  }
-  if (this._roomGameEndBtn) this._roomGameEndBtn.classList.add('hidden');
-  if (this._roomGameAssignBtn) this._roomGameAssignBtn.classList.add('hidden');
-  if (this._roomGameRandomBtn) this._roomGameRandomBtn.classList.add('hidden');
   if (this._roomSharingBtn) {
     this._roomSharingBtn.textContent = ' 共享定位';
     this._roomSharingBtn.classList.remove('sharing-off');
@@ -581,8 +468,6 @@ App.prototype._roomCleanup = function () {
   if (this._roomTimerSection) this._roomTimerSection.classList.remove('visible');
   if (this._roomBurstSection) this._roomBurstSection.classList.remove('visible');
   if (this._roomPredictionSection) this._roomPredictionSection.classList.remove('visible');
-  if (this._roomGameSection) this._roomGameSection.classList.remove('visible');
-  if (this._roomStatsModal) this._roomStatsModal.classList.remove('visible');
   if (this._roomTimerCountdown) this._roomTimerCountdown.classList.add('hidden');
   if (this._roomTimerSetFrm) this._roomTimerSetFrm.classList.remove('hidden');
   if (this._roomTimerAbortBtn) this._roomTimerAbortBtn.classList.add('hidden');
@@ -596,13 +481,6 @@ App.prototype._roomCleanup = function () {
     clearInterval(this._burstPhaseInterval);
     this._burstPhaseInterval = null;
   }
-  if (this._gameDurationInterval) {
-    clearInterval(this._gameDurationInterval);
-    this._gameDurationInterval = null;
-  }
-  if (this._roomGameTimerRow) this._roomGameTimerRow.classList.add('hidden');
-  if (this._roomEndTimeSelect) this._roomEndTimeSelect.classList.add('hidden');
-  if (this._roomGameTimeRemaining) this._roomGameTimeRemaining.textContent = '--:--';
 };
 
 /* ── 显示扩展模块 ───────────────────────────────────── */
@@ -611,10 +489,9 @@ App.prototype._showRoomExtras = function () {
   if (this._roomTimerSection) this._roomTimerSection.classList.add('visible');
   if (this._roomBurstSection) this._roomBurstSection.classList.add('visible');
   if (this._roomPredictionSection) this._roomPredictionSection.classList.add('visible');
-  this._updateGameUI();
 };
 
-/* ── 游戏倒计时 ─────────────────────────────────────── */
+/* ── 统一开始倒计时 ─────────────────────────────────── */
 
 App.prototype._roomSetTimer = function () {
   if (!this.roomManager || !this._roomTimerInput) return;
@@ -628,7 +505,7 @@ App.prototype._roomSetTimer = function () {
   this.roomManager.setGameTimer(startAt);
   this._roomTimerSetFrm.classList.add('hidden');
   this._roomTimerAbortBtn.classList.remove('hidden');
-  Toast.show(` 游戏开始时间已设为 ${val}`);
+  Toast.show(` 统一开始时间已设为 ${val}`);
 };
 
 App.prototype._roomAbortTimer = function () {
@@ -654,15 +531,11 @@ App.prototype._updateTimerCountdown = function () {
     this._roomTimerValue.textContent = '00:00';
     this._roomTimerCountdown.classList.remove('hidden');
     this._roomTimerSetFrm.classList.add('hidden');
-    Toast.show(' 游戏开始！');
+    Toast.show(' 统一开始！');
     if (this.roomManager.isHost()) {
-      const st = this.roomManager.getGameState();
-      if (st === 'idle' || st === 'finished') {
-        const silent = parseInt(this._roomBurstSilent.value) || 25;
-        const share = parseInt(this._roomBurstShare.value) || 5;
-        const endAt = this._computeEndTimeFromInput();
-        this.roomManager.startGame(silent, share, endAt);
-      }
+      const silent = parseInt(this._roomBurstSilent.value) || 25;
+      const share = parseInt(this._roomBurstShare.value) || 5;
+      this.roomManager.burstStart(silent, share); // 广播 → 全员同步开启共享+爆发
     }
     if (this._timerInterval) {
       clearInterval(this._timerInterval);
@@ -723,188 +596,4 @@ App.prototype._sanitizeColor = function (c) {
   if (/^#[0-9a-fA-F]{3,8}$/.test(s)) return s;
   if (/^rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(,\s*[\d.]+\s*)?\)$/.test(s)) return s;
   return '#888';
-};
-
-/* ── 游戏控制 ───────────────────────────────────────── */
-
-App.prototype._computeEndTimeFromInput = function () {
-  if (!this._roomGameEndInput || !this._roomGameEndInput.value) return 0;
-  const parts = this._roomGameEndInput.value.split(':');
-  if (parts.length < 2) return 0;
-  const hh = parseInt(parts[0], 10);
-  const mm = parseInt(parts[1], 10);
-  if (isNaN(hh) || isNaN(mm)) return 0;
-  const d = new Date();
-  d.setHours(hh, mm, 0, 0);
-  if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
-  return d.getTime();
-};
-
-App.prototype._roomStartGame = function () {
-  if (!this.roomManager || !this.roomManager.isHost()) return;
-  const restart = this.roomManager.getGameState() === 'finished';
-  const silent = parseInt(this._roomBurstSilent.value) || 25;
-  const share = parseInt(this._roomBurstShare.value) || 5;
-  const endAt = this._computeEndTimeFromInput();
-  this.roomManager.startGame(silent, share, endAt);
-  Toast.show(restart ? ' 新一局开始！鬼去抓人吧！' : ' 游戏开始！鬼去抓人吧！');
-};
-
-App.prototype._roomEndGame = function () {
-  if (!this.roomManager || !this.roomManager.isHost()) return;
-  this.roomManager.endGame();
-};
-
-App.prototype._roomAssignRole = function () {
-  if (!this.roomManager || !this.roomManager.isHost()) return;
-  const players = this.roomManager.getPlayers();
-  const candidates = Object.values(players).filter(p => p.online && !p.spectator && !p.isNpc);
-  if (candidates.length < 2) { Toast.show(' 至少需要 2 名玩家'); return; }
-  const ghost = candidates.find(p => p.role === 'ghost');
-  if (ghost) {
-    this.roomManager.assignRole(ghost.id, 'hunter');
-    const nextIdx = (candidates.indexOf(ghost) + 1) % candidates.length;
-    this.roomManager.assignRole(candidates[nextIdx].id, 'ghost');
-    Toast.show(` 鬼已更换为 ${candidates[nextIdx].name}`);
-  } else {
-    this.roomManager.assignRole(candidates[0].id, 'ghost');
-    candidates.slice(1).forEach(p => this.roomManager.assignRole(p.id, 'hunter'));
-    Toast.show(` ${candidates[0].name} 是鬼！其他人快跑！`);
-  }
-};
-
-App.prototype._roomRandomAssign = function () {
-  if (!this.roomManager || !this.roomManager.isHost()) return;
-  this.roomManager.randomAssignRoles(1);
-  const players = this.roomManager.getPlayers();
-  const ghost = Object.values(players).find(p => p.role === 'ghost' && !p.isNpc);
-  Toast.show(` 随机分配完成！${ghost ? ' 鬼是 ' + ghost.name : ''}`);
-};
-
-App.prototype._updateGameUI = function () {
-  if (!this.roomManager || !this._roomGameSection) return;
-  const state = this.roomManager.getGameState();
-  const isHost = this.roomManager.isHost();
-  const myRole = this.roomManager.getPlayerRole(this.roomManager.getMyInfo().id);
-
-  this._roomGameSection.classList.add('visible');
-
-  if (this._roomGameHostBadge) {
-    this._roomGameHostBadge.classList.toggle('hidden', !isHost);
-  }
-
-  const stateMap = { idle: ' 等待开始', playing: ' 游戏中', finished: ' 已结束' };
-  if (this._roomGameStatus) this._roomGameStatus.textContent = stateMap[state] || ' 等待开始';
-
-  if (this._roomGameRoleDisplay) {
-    const roleMap = { ghost: ' 鬼', hunter: ' 人' };
-    this._roomGameRoleDisplay.textContent = myRole ? roleMap[myRole] || '' : '';
-  }
-
-  const inGame = state === 'playing';
-  this._roomGameStartBtn.classList.toggle('hidden', !isHost || inGame);
-  this._roomGameStartBtn.textContent = state === 'finished' ? ' 再来一局' : ' 开始游戏';
-  this._roomGameEndBtn.classList.toggle('hidden', !isHost || !inGame);
-  this._roomGameAssignBtn.classList.toggle('hidden', !isHost);
-  this._roomGameRandomBtn.classList.toggle('hidden', !isHost);
-
-  // 结束时间选择器：空闲且房主可见
-  if (this._roomEndTimeSelect) {
-    this._roomEndTimeSelect.classList.toggle('hidden', !isHost || inGame);
-  }
-  // 倒计时显示：游戏中且有结束时间
-  const hasDuration = inGame && this.roomManager.getGameEndAt() > 0;
-  if (this._roomGameTimerRow) {
-    this._roomGameTimerRow.classList.toggle('hidden', !hasDuration);
-  }
-  if (this._roomGameEndShortBtn && this._roomGameEndBtn) {
-    this._roomGameEndShortBtn.classList.toggle('hidden', !isHost || !hasDuration);
-  }
-};
-
-/* ── 游戏时长倒计时 ─────────────────────────────────── */
-
-App.prototype._updateGameCountdown = function () {
-  if (!this.roomManager || !this._roomGameTimeRemaining) return;
-  const endAt = this.roomManager.getGameEndAt();
-  if (!endAt) {
-    this._roomGameTimeRemaining.textContent = '--:--';
-    return;
-  }
-  const remaining = Math.max(0, endAt - Date.now());
-  if (remaining <= 0) {
-    this._roomGameTimeRemaining.textContent = '00:00';
-    return;
-  }
-  const mins = Math.floor(remaining / 60000);
-  const secs = Math.floor((remaining % 60000) / 1000);
-  this._roomGameTimeRemaining.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-};
-
-/* ── 赛后统计 ───────────────────────────────────────── */
-
-App.prototype._roomShowGameStats = function (stats) {
-  if (!this._roomStatsModal || !this._roomStatsContent) return;
-  if (!stats) return;
-
-  const winnerHtml = stats.winner === 'ghost'
-    ? '<div class="stats-winner stats-winner-ghost"> 鬼方获胜！</div>'
-    : stats.winner === 'hunter'
-      ? '<div class="stats-winner stats-winner-hunter"> 人方获胜！</div>'
-      : '';
-
-  const ghostList = (stats.roles.ghost || []).map(g =>
-    `<span class="stats-role-tag tag-ghost"> ${this._escapeHtml(g.name)}</span>`
-  ).join(' ');
-
-  const hunterList = (stats.roles.hunter || []).map(h => {
-    const caughtBadge = h.caught ? ' <span class="stats-caught-badge"> 被抓</span>' : ' <span class="stats-survive-badge"> 存活</span>';
-    return `<div class="stats-hunter-row">
-      <span class="stats-role-tag tag-hunter"> ${this._escapeHtml(h.name)}</span>${caughtBadge}
-    </div>`;
-  }).join('');
-
-  let timelineHtml = '';
-  if (stats.timeline && stats.timeline.length > 0) {
-    timelineHtml = '<div class="stats-timeline"><div class="stats-section-title"> 事件时间线</div>';
-    stats.timeline.forEach(e => {
-      timelineHtml += `<div class="stats-timeline-item">
-        <span class="stats-time">+${e.offset}s</span>
-        <span class="stats-event"> ${this._escapeHtml(e.playerName)} 被 ${this._escapeHtml(e.ghostName)} 抓住</span>
-      </div>`;
-    });
-    timelineHtml += '</div>';
-  }
-
-  this._roomStatsContent.innerHTML = `
-    ${winnerHtml}
-    <div class="stats-grid">
-      <div class="stats-item">
-        <div class="stats-label"> 游戏时长</div>
-        <div class="stats-value">${stats.durationStr}</div>
-      </div>
-      <div class="stats-item">
-        <div class="stats-label"> 玩家数</div>
-        <div class="stats-value">${stats.playerCount}</div>
-      </div>
-      <div class="stats-item">
-        <div class="stats-label"> 被抓</div>
-        <div class="stats-value">${stats.totalCaught}/${stats.playerCount}</div>
-      </div>
-      <div class="stats-item">
-        <div class="stats-label"> 幸存</div>
-        <div class="stats-value">${stats.survivors}</div>
-      </div>
-    </div>
-    <div class="stats-section">
-      <div class="stats-section-title"> 鬼 </div>
-      <div class="stats-role-list">${ghostList}</div>
-    </div>
-    <div class="stats-section">
-      <div class="stats-section-title"> 人 </div>
-      <div class="stats-role-list">${hunterList}</div>
-    </div>
-    ${timelineHtml}
-  `;
-  this._roomStatsModal.classList.add('visible');
 };
