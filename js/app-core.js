@@ -1856,7 +1856,7 @@ class App {
             const px = toX(tileLng);
             const py = toY(latTop);
             const ph = toY(latBot) - toY(latTop);
-            ctx.drawImage(tileImages[i++], px, py, tileWpx, ph);
+            ctx.drawImage(tileImages[i++], px - 0.5, py - 0.5, tileWpx + 1, ph + 1);
           }
         }
         ctx.restore();
