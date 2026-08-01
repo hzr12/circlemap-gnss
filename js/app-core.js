@@ -1756,11 +1756,9 @@ class App {
       const mapW = W - 48 * S;
       const mapX = 24 * S;
 
-      // 地图背景（圆角矩形）
+      // 地图背景（无圆角，瓦片完整铺满）
       ctx.fillStyle = isDark ? '#0f3460' : '#dce5f0';
-      ctx.beginPath();
-      ctx.roundRect(mapX, mapY, mapW, mapH, 12 * S);
-      ctx.fill();
+      ctx.fillRect(mapX, mapY, mapW, mapH);
 
       // 计算 trail 边界
       let minLat = Infinity, maxLat = -Infinity;
@@ -1841,7 +1839,7 @@ class App {
       if (tileRange && tileImages.length === tileRange.count) {
         ctx.save();
         ctx.beginPath();
-        ctx.roundRect(mapX, mapY, mapW, mapH, 12 * S);
+        ctx.rect(mapX, mapY, mapW, mapH);
         ctx.clip();
         const tileWpx = (360 / (1 << z)) * cosLat * scale;
         let i = 0;
