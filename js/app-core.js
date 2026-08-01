@@ -1773,7 +1773,7 @@ class App {
       }
       const rawLatSpan = maxLat - minLat || 0.001;
       const rawLngSpan = maxLng - minLng || 0.001;
-      const padR = Math.max(0.0005, Math.max(rawLatSpan, rawLngSpan) * 0.3); // 动态外扩：至少50m，最大30%余量
+      const padR = Math.max(0.001, Math.max(rawLatSpan, rawLngSpan) * 0.5); // 动态外扩：至少100m，最大50%余量
       minLat -= padR; maxLat += padR;
       minLng -= padR; maxLng += padR;
       const lngSpan = maxLng - minLng || 0.001;
@@ -1964,6 +1964,13 @@ class App {
       // ── 速度曲线图（从 SpeedChart canvas 抓取） ──
       let chartY = mapY + mapH + 16 * S;
       if (this._speedChart && this._speedChart.canvas) {
+        // 确保 chart.js data 与 _speedHistory 同步（清轨迹后 chart.js data 被清空）
+        const chartData = this._speedChart.data.datasets[0].data;
+        if (chartData.length === 0 && this._speedHistory.length > 0) {
+          const win = this._speedHistory.slice(-2500);
+          for (const p of win) chartData.push(p);
+          this._speedChart.update('none');
+        }
         const chartCanvas = this._speedChart.canvas;
         // 导出前峰值降采样：点数过多时分段取最大值（保峰谷），避免曲线糊成带
         const ds = this._speedChart.data.datasets[0];
