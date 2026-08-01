@@ -207,8 +207,6 @@ App.prototype._bindRoomEvents = function () {
       this._roomBurstPhase.textContent = '未激活';
       return;
     }
-    // 统一开始 / 手动开启时同步开关状态，避免 UI 漂移
-    if (this._roomBurstEnable) this._roomBurstEnable.checked = true;
     this._burstPhase = phase;
     this._burstPhaseEnd = phaseEnd;
     const updatePhase = () => {
@@ -222,6 +220,43 @@ App.prototype._bindRoomEvents = function () {
     this._burstPhaseInterval = setInterval(updatePhase, 1000);
   };
 
+  // 共享会话结束时间变化：更新倒计时显示 + 输入框回填
+  this.roomManager.onBurstEndChange = (endAt) => {
+    if (this._burstEndInterval) {
+      clearInterval(this._burstEndInterval);
+      this._burstEndInterval = null;
+    }
+    if (!this._roomEndCountdown) return;
+    if (!endAt) {
+      this._roomEndCountdown.classList.add('hidden');
+      if (this._roomEndValue) this._roomEndValue.textContent = '--:--';
+      if (this._roomBurstEndInput) this._roomBurstEndInput.value = '';
+      this._endAtPending = false;
+      this._updateScheduleBtns();
+      return;
+    }
+    this._endAtPending = true;
+    this._updateScheduleBtns();
+    if (this._roomBurstEndInput) {
+      const d = new Date(endAt);
+      this._roomBurstEndInput.value = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    }
+    const updateEnd = () => {
+      const rem = Math.max(0, endAt - Date.now());
+      const m = Math.floor(rem / 60000);
+      const s = Math.floor((rem % 60000) / 1000);
+      if (this._roomEndValue) this._roomEndValue.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    };
+    updateEnd();
+    this._roomEndCountdown.classList.remove('hidden');
+    this._burstEndInterval = setInterval(updateEnd, 1000);
+  };
+
+  // 共享会话结束（到点/房主终止）：复位 UI
+  this.roomManager.onBurstEnded = () => {
+    Toast.show(' 共享已结束');
+  };
+
   this.roomManager.onGameTimerUpdate = (startAt) => {
     if (!this._roomTimerSection) return;
     this._roomTimerSection.classList.add('visible');
@@ -231,6 +266,8 @@ App.prototype._bindRoomEvents = function () {
       const mm = String(d.getMinutes()).padStart(2, '0');
       this._roomTimerInput.value = `${hh}:${mm}`;
     }
+    this._timerPending = true;
+    this._updateScheduleBtns();
     if (this._timerInterval) clearInterval(this._timerInterval);
     this._timerInterval = setInterval(() => this._updateTimerCountdown(), 1000);
     this._updateTimerCountdown();
@@ -244,8 +281,8 @@ App.prototype._bindRoomEvents = function () {
     if (this._roomTimerInput) this._roomTimerInput.value = '';
     this._roomTimerValue.textContent = '--:--';
     this._roomTimerCountdown.classList.add('hidden');
-    this._roomTimerSetFrm.classList.remove('hidden');
-    this._roomTimerAbortBtn.classList.add('hidden');
+    this._timerPending = false;
+    this._updateScheduleBtns();
   };
 
   this.roomManager.onCircleSync = (circles) => {
@@ -469,10 +506,15 @@ App.prototype._roomCleanup = function () {
   if (this._roomBurstSection) this._roomBurstSection.classList.remove('visible');
   if (this._roomPredictionSection) this._roomPredictionSection.classList.remove('visible');
   if (this._roomTimerCountdown) this._roomTimerCountdown.classList.add('hidden');
-  if (this._roomTimerSetFrm) this._roomTimerSetFrm.classList.remove('hidden');
-  if (this._roomTimerAbortBtn) this._roomTimerAbortBtn.classList.add('hidden');
   if (this._roomTimerValue) this._roomTimerValue.textContent = '--:--';
   if (this._roomBurstPhase) this._roomBurstPhase.textContent = '未激活';
+  if (this._roomEndCountdown) this._roomEndCountdown.classList.add('hidden');
+  if (this._roomEndValue) this._roomEndValue.textContent = '--:--';
+  if (this._roomTimerInput) this._roomTimerInput.value = '';
+  if (this._roomBurstEndInput) this._roomBurstEndInput.value = '';
+  this._timerPending = false;
+  this._endAtPending = false;
+  this._updateScheduleBtns();
   if (this._timerInterval) {
     clearInterval(this._timerInterval);
     this._timerInterval = null;
@@ -480,6 +522,10 @@ App.prototype._roomCleanup = function () {
   if (this._burstPhaseInterval) {
     clearInterval(this._burstPhaseInterval);
     this._burstPhaseInterval = null;
+  }
+  if (this._burstEndInterval) {
+    clearInterval(this._burstEndInterval);
+    this._burstEndInterval = null;
   }
 };
 
@@ -491,31 +537,51 @@ App.prototype._showRoomExtras = function () {
   if (this._roomPredictionSection) this._roomPredictionSection.classList.add('visible');
 };
 
-/* ── 统一开始倒计时 ─────────────────────────────────── */
+/* ── 统一开始 + 结束时间 ─────────────────────────────── */
 
-App.prototype._roomSetTimer = function () {
-  if (!this.roomManager || !this._roomTimerInput) return;
-  const val = this._roomTimerInput.value;
-  if (!val) { Toast.show(' 请选择时间'); return; }
-  const [h, m] = val.split(':').map(Number);
-  const now = new Date();
-  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0);
-  if (target <= now) target.setDate(target.getDate() + 1);
-  const startAt = target.getTime();
-  this.roomManager.setGameTimer(startAt);
-  this._roomTimerSetFrm.classList.add('hidden');
-  this._roomTimerAbortBtn.classList.remove('hidden');
-  Toast.show(` 统一开始时间已设为 ${val}`);
+App.prototype._updateScheduleBtns = function () {
+  const active = this._timerPending || this._endAtPending;
+  if (this._roomScheduleSetBtn) this._roomScheduleSetBtn.classList.toggle('hidden', active);
+  if (this._roomScheduleAbortBtn) this._roomScheduleAbortBtn.classList.toggle('hidden', !active);
 };
 
-App.prototype._roomAbortTimer = function () {
+App.prototype._roomSetSchedule = function () {
   if (!this.roomManager) return;
-  this.roomManager.abortGameTimer();
-  this._roomTimerSetFrm.classList.remove('hidden');
-  this._roomTimerCountdown.classList.add('hidden');
-  this._roomTimerAbortBtn.classList.add('hidden');
-  this._roomTimerValue.textContent = '--:--';
-  Toast.show(' 已取消游戏倒计时');
+  const timerVal = this._roomTimerInput ? this._roomTimerInput.value : '';
+  const endVal = this._roomBurstEndInput ? this._roomBurstEndInput.value : '';
+  if (!timerVal && !endVal) { Toast.show(' 请选择统一开始或结束时间'); return; }
+  if (timerVal) {
+    const [h, m] = timerVal.split(':').map(Number);
+    const now = new Date();
+    const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0);
+    if (target <= now) target.setDate(target.getDate() + 1);
+    this.roomManager.setGameTimer(target.getTime());
+    this._timerPending = true;
+    Toast.show(` 统一开始时间已设为 ${timerVal}`);
+  }
+  if (endVal) {
+    const [h, m] = endVal.split(':').map(Number);
+    const target = new Date();
+    target.setHours(h, m, 0, 0);
+    if (target.getTime() <= Date.now()) target.setDate(target.getDate() + 1);
+    this.roomManager.setBurstEndAt(target.getTime());
+    this._endAtPending = true;
+    Toast.show(` 结束时间已设为 ${endVal}`);
+  }
+  this._updateScheduleBtns();
+};
+
+App.prototype._roomAbortSchedule = function () {
+  if (!this.roomManager) return;
+  if (this._timerPending) {
+    this.roomManager.abortGameTimer(); // 回调 onGameTimerAborted 复位倒计时 UI
+    Toast.show(' 已取消统一开始倒计时');
+  }
+  if (this._endAtPending) {
+    this.roomManager.setBurstEndAt(0); // 回调 onBurstEndChange(0) 复位结束时间 UI
+    Toast.show(' 已取消结束时间');
+  }
+  this._updateScheduleBtns();
 };
 
 App.prototype._updateTimerCountdown = function () {
@@ -523,14 +589,14 @@ App.prototype._updateTimerCountdown = function () {
   const startAt = this.roomManager.getGameStartAt();
   if (!startAt) {
     this._roomTimerCountdown.classList.add('hidden');
-    this._roomTimerSetFrm.classList.remove('hidden');
     return;
   }
   const remaining = Math.max(0, startAt - Date.now());
   if (remaining <= 0) {
     this._roomTimerValue.textContent = '00:00';
     this._roomTimerCountdown.classList.remove('hidden');
-    this._roomTimerSetFrm.classList.add('hidden');
+    this._timerPending = false;
+    this._updateScheduleBtns();
     Toast.show(' 统一开始！');
     if (this.roomManager.isHost()) {
       const silent = parseInt(this._roomBurstSilent.value) || 25;
@@ -547,33 +613,6 @@ App.prototype._updateTimerCountdown = function () {
   const secs = Math.floor((remaining % 60000) / 1000);
   this._roomTimerValue.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   this._roomTimerCountdown.classList.remove('hidden');
-  this._roomTimerSetFrm.classList.add('hidden');
-  this._roomTimerAbortBtn.classList.remove('hidden');
-};
-
-/* ── 位置共享 ───────────────────────────────────────── */
-
-App.prototype._roomToggleBurst = function () {
-  if (!this.roomManager) return;
-  if (this._roomBurstEnable.checked) {
-    const silent = parseInt(this._roomBurstSilent.value) || 25;
-    const share = parseInt(this._roomBurstShare.value) || 5;
-    if (silent < 1 || share < 1) {
-      Toast.show(' 静默和共享时长必须 ≥ 1 分钟');
-      this._roomBurstEnable.checked = false;
-      return;
-    }
-    this.roomManager.startBurstCycle(silent, share);
-    Toast.show(` 位置共享已开启：静默 ${silent} 分 / 共享 ${share} 分`);
-  } else {
-    this.roomManager.stopBurstCycle();
-    this._roomBurstPhase.textContent = '未激活';
-    if (this._burstPhaseInterval) {
-      clearInterval(this._burstPhaseInterval);
-      this._burstPhaseInterval = null;
-    }
-    Toast.show(' 位置共享已关闭');
-  }
 };
 
 App.prototype._roomTogglePrediction = function () {

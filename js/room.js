@@ -118,6 +118,10 @@ class RoomManager {
     this._burstPhase = 'silent';     // 'silent' | 'sharing'
     this._burstPhaseEnd = 0;         // 当前阶段结束时间戳
     this._burstTimer = null;
+    this._burstSeq = 0;              // 阶段序号（发起者权威同步，客户端按 seq 采纳，零时间运算）
+    this._burstPublishTimer = null;  // 阶段周期性重发定时器（仅发起者，10s）
+    this._burstEndAt = 0;            // 共享会话结束时间戳，0=未设置
+    this._burstEndTimer = null;      // 会话结束定时器（仅发起者）
 
     // 观战模式
     this._isSpectator = false;
@@ -149,6 +153,8 @@ class RoomManager {
     this.onRoomError = null;        // (msg) → void
     this.onConnectionChange = null; // (connected) → void
     this.onBurstPhaseChange = null; // (phase, phaseEnd) → void
+    this.onBurstEndChange = null;   // (endAt) → void，共享会话结束时间变化（0=清除）
+    this.onBurstEnded = null;       // () → void，共享会话结束（本地清理完成后）
     this.onGameTimerUpdate = null;  // (startAt) → void
     this.onGameTimerAborted = null; // () → void
     this.onCircleSync = null;       // (circles[]) → void，其他玩家的圆变更
@@ -409,15 +415,15 @@ class RoomManager {
    */
   _formatMqttError(err, suffix) {
     const msg = (err && err.message) || '';
-    let friendly = '游戏服务器连接失败';
+    let friendly = '房间服务连接失败';
     if (msg.includes('WebSocket is closed') || (msg.includes('close') && msg.includes('connect'))) {
-      friendly = '无法连接游戏服务器（WebSocket 握手失败），请检查网络或防火墙是否拦截 8084/8884 端口';
+      friendly = '无法连接房间服务（WebSocket 握手失败），请检查网络或防火墙是否拦截 8084/8884 端口';
     } else if (msg.includes('timeout') || msg.includes('Timeout')) {
-      friendly = '连接游戏服务器超时，请检查网络后重试';
+      friendly = '连接房间服务超时，请检查网络后重试';
     } else if (msg.includes('refused') || msg.includes('ECONNREFUSED')) {
-      friendly = '游戏服务器拒绝连接（可能已满或限流）';
+      friendly = '房间服务拒绝连接（可能已满或限流）';
     } else if (msg) {
-      friendly = '游戏服务器连接失败：' + msg;
+      friendly = '房间服务连接失败：' + msg;
     }
     return suffix ? `${friendly}（${suffix}）` : friendly;
   }
@@ -525,7 +531,7 @@ class RoomManager {
         return;
       }
 
-      // 游戏倒计时消息
+      // 统一开始倒计时消息
       if (data.type === 'game_timer_set') {
         this._gameStartAt = data.startAt;
         this._gameTimerAborted = false;
@@ -563,28 +569,28 @@ class RoomManager {
       }
 
       // === 位置共享周期阶段同步 ===
-      // 各设备本地 setTimeout 推进阶段会产生相位漂移 → 单向可见；
-      // 收到广播后重同步：只接受更新的 phaseEnd（防漂移收敛），忽略已过期阶段
+      // 阶段由发起者权威推进（附单调 seq），客户端按 seq 采纳状态，不做跨时钟时间运算，
+      // 彻底消除设备时钟偏差导致的阶段错位 → 单向可见
       if (data.type === 'burst_phase') {
         if (data.id === this._deviceId) return;
+        const seq = data.burstSeq || 0;
         if (data.burstEnabled === false) {
-          if (this._burstEnabled) this.stopBurstCycle();
+          if (seq >= this._burstSeq) {
+            this._burstSeq = seq;
+            this._stopBurstLocal();
+          }
           return;
         }
-        if (!data.burstPhase || !data.burstPhaseEnd) return;
-        if (data.burstPhaseEnd <= this._burstPhaseEnd) return;   // 自己已更新
-        if (data.burstPhaseEnd <= Date.now()) return;            // 阶段已过期
+        if (!data.burstPhase) return;
+        if (seq < this._burstSeq) return;   // 旧消息回放，忽略
+        const wasSharing = this._burstEnabled && this._burstPhase === 'sharing';
+        this._burstSeq = seq;
         this._burstEnabled = true;
         this._burstPhase = data.burstPhase;
-        this._burstPhaseEnd = data.burstPhaseEnd;
-        if (this._burstTimer) clearTimeout(this._burstTimer);
-        this._burstTimer = setTimeout(() => {
-          const next = this._burstPhase === 'silent' ? 'sharing' : 'silent';
-          this._enterBurstPhase(next);
-        }, data.burstPhaseEnd - Date.now());
+        this._burstPhaseEnd = data.burstPhaseEnd || 0;
         if (this.onBurstPhaseChange) this.onBurstPhaseChange(this._burstPhase, this._burstPhaseEnd);
-        // 同步到共享阶段立即补发一次，让他人尽快看到自己
-        if (this._burstPhase === 'sharing' && this._shouldSendPosition()) this._publishPosition();
+        // 采纳「共享中」立即补发一次，让对方马上看到自己
+        if (!wasSharing && this._burstPhase === 'sharing' && this._shouldSendPosition()) this._publishPosition();
         return;
       }
 
@@ -594,7 +600,31 @@ class RoomManager {
         this.setSharingEnabled(true);
         this._burstSilentMin = Math.max(1, data.silent || 25);
         this._burstShareMin = Math.max(1, data.share || 5);
+        if (data.endAt !== undefined && data.endAt !== this._burstEndAt) {
+          this._burstEndAt = data.endAt || 0;
+          if (this.onBurstEndChange) this.onBurstEndChange(this._burstEndAt);
+        }
         // 阶段由随后 burst_phase 消息接管（QoS1 保序）
+        return;
+      }
+
+      // === 共享会话结束时间同步 ===
+      if (data.type === 'burst_end_set') {
+        if (data.id === this._deviceId) return;
+        if (data.endAt !== this._burstEndAt) {
+          this._burstEndAt = data.endAt || 0;
+          if (this.onBurstEndChange) this.onBurstEndChange(this._burstEndAt);
+        }
+        return;
+      }
+
+      // === 共享会话结束（发起者到点/终止广播）===
+      if (data.type === 'burst_end') {
+        if (data.id === this._deviceId) return;
+        if ((data.seq || 0) >= this._burstSeq) {
+          this._burstSeq = data.seq || 0;
+          this._endBurstSession();
+        }
         return;
       }
 
@@ -605,7 +635,7 @@ class RoomManager {
         return;
       }
 
-      // 房间状态同步：收到后重建队伍、游戏状态、角色、被抓等信息
+      // 房间状态同步：收到后重建队伍、统一开始、共享会话等信息
       if (data.type === 'room_state') {
         if (data.id === this._deviceId) return;
         // 重建队伍
@@ -633,11 +663,19 @@ class RoomManager {
         // 同步房主的位置共享设定
         if (data.burstSilent != null) this._burstSilentMin = Math.max(1, data.burstSilent);
         if (data.burstShare != null) this._burstShareMin = Math.max(1, data.burstShare);
-        // 同步共享/burst 状态
+        // 同步共享/burst 状态（按 seq 采纳，防旧状态覆盖新会话）
         if (data.sharingEnabled != null) this._sharingEnabled = data.sharingEnabled;
-        if (data.burstEnabled != null) this._burstEnabled = data.burstEnabled;
-        if (data.burstPhase) this._burstPhase = data.burstPhase;
-        if (data.burstPhaseEnd) this._burstPhaseEnd = data.burstPhaseEnd;
+        if (data.burstSeq != null && data.burstSeq >= this._burstSeq) {
+          this._burstSeq = data.burstSeq;
+          if (data.burstEnabled != null) this._burstEnabled = data.burstEnabled;
+          if (data.burstPhase) this._burstPhase = data.burstPhase;
+          if (data.burstPhaseEnd) this._burstPhaseEnd = data.burstPhaseEnd;
+        }
+        // 同步共享会话结束时间
+        if (data.burstEndAt != null && data.burstEndAt !== this._burstEndAt) {
+          this._burstEndAt = data.burstEndAt;
+          if (this.onBurstEndChange) this.onBurstEndChange(this._burstEndAt);
+        }
         // 同步房主身份（新加入者据此得知房主，超时自荐不触发）
         if (data.hostId) this._hostId = data.hostId;
         // 重建统一开始倒计时（说明倒计时已设但未开始）
@@ -694,7 +732,7 @@ class RoomManager {
     }
 
     this._stopPublishing();
-    this.stopBurstCycle();
+    this._endBurstSession(); // 仅本地清理，不广播（离开房间不影响他人会话）
     if (this._hostClaimTimer) {
       clearTimeout(this._hostClaimTimer);
       this._hostClaimTimer = null;
@@ -785,7 +823,8 @@ class RoomManager {
     player.isNpc = (this._teams[player.teamId] && this._teams[player.teamId].isNpc) || false;
     player._lastSeen = Date.now();
     if (isNew && this.onPlayerJoin) this.onPlayerJoin(senderId, player.name);
-    this._schedulePositionUpdate(senderId);
+    // 新玩家（名字为默认"未知"）不触发 UI 更新，等加入/在场消息带来名字后再更新
+    if (!isNew) this._schedulePositionUpdate(senderId);
   }
 
   _onPingMsg(senderId, flags) {
@@ -817,7 +856,8 @@ class RoomManager {
     }
     player._lastSeen = Date.now();
     if (isNew && this.onPlayerJoin) this.onPlayerJoin(senderId, player.name);
-    this._schedulePositionUpdate(senderId);
+    // 新玩家（名字为默认"未知"）不触发 UI 更新，等加入/在场消息带来名字后再更新
+    if (!isNew) this._schedulePositionUpdate(senderId);
   }
 
   // 在场消息：低频回填静态身份（name/color/teamId/spectator/isNpc）
@@ -1110,6 +1150,8 @@ class RoomManager {
       burstEnabled: this._burstEnabled,
       burstPhase: this._burstPhase,
       burstPhaseEnd: this._burstPhaseEnd,
+      burstSeq: this._burstSeq,
+      burstEndAt: this._burstEndAt,
     };
     this._publish(msg);
   }
@@ -1195,7 +1237,7 @@ class RoomManager {
    */
   publishPosition(lat, lng, acc, speed, bearing) {
     if (this._isSpectator) return;
-    // 始终缓存最新坐标：即便共享关闭也记录，便于游戏开始立即补发（发送仍受共享开关控制）
+    // 始终缓存最新坐标：即便共享关闭也记录，便于统一开始后立即补发（发送仍受共享开关控制）
     this._lastPosition = { lat, lng, acc, speed, bearing };
     // NPC 队：忽略静默期与共享开关，持续共享
     const npc = this._isNpcTeam();
@@ -1308,7 +1350,7 @@ class RoomManager {
 
   /**
    * 启动定时发布
-   * - 坐标定时器（POSITION_INTERVAL=5s）：仅在有坐标可共享时发送，保证游戏内位置时效
+   * - 坐标定时器（POSITION_INTERVAL=5s）：仅在有坐标可共享时发送，保证共享时位置时效
    * - 心跳定时器（HEARTBEAT_INTERVAL=30s）：仅发轻量 ping 维持在线状态，与坐标解耦
    */
   _startPublishing() {
@@ -1498,73 +1540,166 @@ class RoomManager {
   // ============================================================
 
   /**
-   * 启动位置共享周期
+   * 启动位置共享周期（仅发起者/房主调用：统一开始）
+   * 阶段由发起者权威推进并附单调 seq 广播，客户端只按 seq 采纳状态，
+   * 不再依赖各设备本地时钟对齐，杜绝「单向可见」
    * @param {number} silentMin 静默时长（分钟）
    * @param {number} shareMin 共享时长（分钟）
    */
   startBurstCycle(silentMin, shareMin) {
-    this.stopBurstCycle();
+    if (this._burstEnabled) this._stopBurstLocal();
     this._burstEnabled = true;
     this._burstSilentMin = Math.max(1, silentMin || 25);
     this._burstShareMin = Math.max(1, shareMin || 5);
+    this._startBurstRepublish();
     this._enterBurstPhase('silent');
   }
 
   /**
-   * 恢复位置共享周期（中途加入时，根据已同步的 phase + phaseEnd 恢复定时器）
+   * 接管房主后恢复推进爆发周期（阶段已过期则直接进入共享）
    */
-  resumeBurstCycle() {
+  _resumeBurstOwner() {
     if (!this._burstEnabled) return;
-    if (this._burstPhaseEnd <= Date.now()) return; // 阶段已过期，不恢复
-    if (this.onBurstPhaseChange) this.onBurstPhaseChange(this._burstPhase, this._burstPhaseEnd);
-    if (this._burstTimer) clearTimeout(this._burstTimer);
-    const remaining = this._burstPhaseEnd - Date.now();
-    this._burstTimer = setTimeout(() => {
-      const next = this._burstPhase === 'silent' ? 'sharing' : 'silent';
-      this._enterBurstPhase(next);
-    }, remaining);
+    this._startBurstRepublish();
+    if (this._burstPhaseEnd > Date.now()) {
+      if (this._burstTimer) clearTimeout(this._burstTimer);
+      this._burstTimer = setTimeout(() => {
+        const next = this._burstPhase === 'silent' ? 'sharing' : 'silent';
+        this._enterBurstPhase(next);
+      }, this._burstPhaseEnd - Date.now());
+    } else {
+      this._enterBurstPhase('sharing');
+    }
   }
 
-  /**
-   * 停止位置共享，恢复连续共享
-   */
-  stopBurstCycle() {
-    this._burstEnabled = false;
-    this._burstPhase = 'silent';
-    this._burstPhaseEnd = 0;
+  /** 仅本地停止爆发周期（不广播），供客户端采纳停止消息 / 发起者复用 */
+  _stopBurstLocal() {
     if (this._burstTimer) {
       clearTimeout(this._burstTimer);
       this._burstTimer = null;
     }
+    this._burstEnabled = false;
+    this._burstPhase = 'silent';
+    this._burstPhaseEnd = 0;
     if (this.onBurstPhaseChange) this.onBurstPhaseChange(null, 0);
-    // 广播关闭，让房间内其他设备同步停用静默共享
-    this._publish({ type: 'burst_phase', burstEnabled: false });
   }
 
-  /** 进入位置共享下一阶段 */
+  /** 进入位置共享下一阶段（仅发起者），seq 单调递增后广播 */
   _enterBurstPhase(phase) {
     this._burstPhase = phase;
     const duration = phase === 'silent' ? this._burstSilentMin : this._burstShareMin;
     this._burstPhaseEnd = Date.now() + duration * 60 * 1000;
+    this._burstSeq += 1;
 
     if (this.onBurstPhaseChange) this.onBurstPhaseChange(phase, this._burstPhaseEnd);
 
-    // 阶段变更广播给全房间，避免各设备本地 setTimeout 漂移导致「单向可见」
+    // 阶段变更广播（QoS1 保序 + seq 单调 → 客户端确定性采纳）
     this._publish({
       type: 'burst_phase',
       burstEnabled: true,
       burstPhase: this._burstPhase,
       burstPhaseEnd: this._burstPhaseEnd,
+      burstSeq: this._burstSeq,
     });
 
     // 进入共享阶段立即发 1 次（到点不延迟）
     if (phase === 'sharing' && this._shouldSendPosition()) this._publishPosition();
 
+    // 本地推进下一阶段（仅发起者）
     if (this._burstTimer) clearTimeout(this._burstTimer);
     this._burstTimer = setTimeout(() => {
       const next = phase === 'silent' ? 'sharing' : 'silent';
       this._enterBurstPhase(next);
     }, duration * 60 * 1000);
+
+    this._scheduleBurstEndTimer();
+  }
+
+  /** 阶段周期性重发（防丢包/迟到加入者），会话激活期间每 10s 一次 */
+  _startBurstRepublish() {
+    if (this._burstPublishTimer) clearInterval(this._burstPublishTimer);
+    this._burstPublishTimer = setInterval(() => {
+      if (!this._burstEnabled) {
+        clearInterval(this._burstPublishTimer);
+        this._burstPublishTimer = null;
+        return;
+      }
+      this._publish({
+        type: 'burst_phase',
+        burstEnabled: true,
+        burstPhase: this._burstPhase,
+        burstPhaseEnd: this._burstPhaseEnd,
+        burstSeq: this._burstSeq,
+      });
+    }, 10000);
+  }
+
+  /**
+   * 设置共享会话结束时间（仅房主），0=清除
+   */
+  setBurstEndAt(ts) {
+    if (!this._isHost) return;
+    this._burstEndAt = ts || 0;
+    this._publish({ type: 'burst_end_set', endAt: this._burstEndAt });
+    if (this.onBurstEndChange) this.onBurstEndChange(this._burstEndAt);
+    this._scheduleBurstEndTimer();
+  }
+
+  /** 会话激活且已设结束时间 → 排定到点定时器（仅发起者）；结束时间已过 → 立即结束 */
+  _scheduleBurstEndTimer() {
+    if (this._burstEndTimer) {
+      clearTimeout(this._burstEndTimer);
+      this._burstEndTimer = null;
+    }
+    if (!this._burstEnabled || !this._burstEndAt) return;
+    const remaining = this._burstEndAt - Date.now();
+    if (remaining <= 0) {
+      this.endSharingSession();
+      return;
+    }
+    this._burstEndTimer = setTimeout(() => {
+      this._burstEndTimer = null;
+      this.endSharingSession();
+    }, remaining);
+  }
+
+  /**
+   * 结束共享会话（发起者调用）：广播结束并本地清理
+   */
+  endSharingSession() {
+    if (!this._burstEnabled && !this._burstEndAt) return;
+    this._burstSeq += 1;
+    this._publish({ type: 'burst_end', seq: this._burstSeq });
+    this._endBurstSession();
+  }
+
+  /**
+   * 本地清理共享会话（不广播）：停阶段/重发/结束定时器，关共享定位
+   */
+  _endBurstSession() {
+    if (this._burstTimer) {
+      clearTimeout(this._burstTimer);
+      this._burstTimer = null;
+    }
+    if (this._burstPublishTimer) {
+      clearInterval(this._burstPublishTimer);
+      this._burstPublishTimer = null;
+    }
+    if (this._burstEndTimer) {
+      clearTimeout(this._burstEndTimer);
+      this._burstEndTimer = null;
+    }
+    const wasActive = this._burstEnabled;
+    this._burstEnabled = false;
+    this._burstPhase = 'silent';
+    this._burstPhaseEnd = 0;
+    if (this._burstEndAt) {
+      this._burstEndAt = 0;
+      if (this.onBurstEndChange) this.onBurstEndChange(0);
+    }
+    if (this.onBurstPhaseChange) this.onBurstPhaseChange(null, 0);
+    this.setSharingEnabled(false);
+    if (wasActive && this.onBurstEnded) this.onBurstEnded();
   }
 
   isBurstEnabled() { return this._burstEnabled; }
@@ -1625,7 +1760,7 @@ class RoomManager {
     // 发布加入消息
     this._publish({ join: true, name: this._nickname, color: this._color });
     this._publishPresence(); // 立即回填静态身份，避免他人等 ≤30s 才拿到
-    // 请求房间状态同步（队伍、游戏状态、角色等），让已有玩家广播完整状态
+    // 请求房间状态同步（队伍、统一开始、共享会话等），让已有玩家广播完整状态
     this._publish({ type: 'request_state' });
     // 无主房间接管：一段时间内未同步到任何房主 → 自动成为新房主
     this._scheduleHostClaim();
@@ -1685,7 +1820,7 @@ class RoomManager {
     if (!this._isHost) return;
     this.setSharingEnabled(true);
     this.startBurstCycle(silentMin, shareMin); // 内部发布 burst_phase 同步阶段
-    this._publish({ type: 'burst_start', silent: silentMin, share: shareMin });
+    this._publish({ type: 'burst_start', silent: silentMin, share: shareMin, endAt: this._burstEndAt || 0 });
   }
 
   /**
@@ -1707,6 +1842,7 @@ class RoomManager {
     this._hostId = this._deviceId;
     this._publish({ type: 'host_elect', hostId: this._deviceId });
     this._publishPing();
+    this._resumeBurstOwner(); // 接管后若爆发会话仍激活，恢复推进阶段
     if (this.onHostChange) this.onHostChange(this._hostId);
   }
 
@@ -1985,7 +2121,7 @@ class RoomManager {
   destroy() {
     this.leaveRoom();
     this._disconnect();
-    this.stopBurstCycle();
+    this._endBurstSession();
     this._players = {};
     this._teams = {};
     this._myTeamId = null;

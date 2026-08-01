@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -17,7 +17,7 @@
   <link rel="stylesheet" href="css/toast-modal.css?t=20260710v1">
   <link rel="stylesheet" href="css/onboarding.css?t=20260710v1">
   <link rel="stylesheet" href="css/responsive.css?t=20260710v1">
-  <link rel="stylesheet" href="css/room.css?t=20260710v4">
+  <link rel="stylesheet" href="css/room.css?t=20260801v6">
 </head>
 <body>
   <div id="map">
@@ -167,31 +167,35 @@
           </div>
         </div>
 
-        <!-- 游戏倒计时 -->
+        <!-- 统一开始 + 结束时间 -->
         <div class="room-section-block hidden" id="room-timer-section">
           <div class="room-form" id="room-timer-set">
-            <div class="room-form-row">
-              <span class="field-label"> 游戏开始</span>
-              <input type="time" id="room-timer-input" class="room-timer-input">
-              <button class="room-btn mini primary" id="room-timer-set-btn">设定</button>
-              <button class="room-btn mini danger hidden" id="room-timer-abort-btn">取消</button>
+            <div class="room-form-row" id="room-schedule-row">
+              <label class="room-schedule-field">
+                <span class="field-label">统一开始</span>
+                <input type="time" id="room-timer-input" class="room-timer-input">
+              </label>
+              <label class="room-schedule-field">
+                <span class="field-label">结束时间</span>
+                <input type="time" id="room-burst-end-input" class="room-timer-input">
+              </label>
+              <div class="room-schedule-btns">
+                <button class="room-btn mini primary" id="room-schedule-set-btn">设定</button>
+                <button class="room-btn mini danger hidden" id="room-schedule-abort-btn">取消</button>
+              </div>
             </div>
           </div>
           <div class="room-burst-phase hidden" id="room-timer-countdown">
-            <span style="font-size:12px;color:var(--accent-1)"> 距游戏开始 <span id="room-timer-value">--:--</span></span>
+            <span style="font-size:12px;color:var(--accent-1)"> 距统一开始 <span id="room-timer-value">--:--</span></span>
+          </div>
+          <div class="room-burst-phase hidden" id="room-end-countdown">
+            <span style="font-size:12px;color:var(--accent-1)"> 距结束 <span id="room-end-value">--:--</span></span>
           </div>
         </div>
 
-        <!-- 位置共享 -->
+        <!-- 位置共享配置 -->
         <div class="room-section-block hidden" id="room-burst-section">
           <div class="room-form">
-            <div class="room-form-row">
-              <span class="field-label"> 位置共享</span>
-              <label class="room-burst-toggle">
-                <input type="checkbox" id="room-burst-enable">
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
             <div class="room-burst-config-row" id="room-burst-config">
               <span class="field-label" style="font-size:11px">静默</span>
               <input type="number" id="room-burst-silent" class="room-burst-input" value="25" min="1" max="240">
@@ -447,12 +451,12 @@
 
   <!-- MQTT（多人位置共享） -->
   <script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
-  <script src="js/room.js?t=20260710v10"></script>
+  <script src="js/room.js?t=20260710v12"></script>
 
-  <script src="js/app-core.js?t=20260801v24"></script>
+  <script src="js/app-core.js?t=20260801v26"></script>
   <script src="js/app-gps-ui.js?t=20260730v5"></script>
   <script src="js/app-circle-ui.js?t=20260730v7"></script>
-  <script src="js/app-room-ui.js?t=20260730v4"></script>
+  <script src="js/app-room-ui.js?t=20260801v6"></script>
 
 <!-- 功能提示浮层（逐个显示在对应功能旁） -->
 <div id="hint-tooltip" class="hint-tooltip" style="display:none">

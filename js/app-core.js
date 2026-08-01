@@ -590,35 +590,42 @@ class App {
     // —— 观战模式 ——
     this._roomSpectatorCheck = document.getElementById('room-spectator-check');
 
-    // —— 游戏倒计时 ——
+    // —— 统一开始 + 结束时间 ——
     this._roomTimerSection = document.getElementById('room-timer-section');
     this._roomTimerInput = document.getElementById('room-timer-input');
-    this._roomTimerSetBtn = document.getElementById('room-timer-set-btn');
-    this._roomTimerAbortBtn = document.getElementById('room-timer-abort-btn');
     this._roomTimerCountdown = document.getElementById('room-timer-countdown');
     this._roomTimerValue = document.getElementById('room-timer-value');
-    this._roomTimerSetFrm = document.getElementById('room-timer-set');
+    this._roomScheduleSetBtn = document.getElementById('room-schedule-set-btn');
+    this._roomScheduleAbortBtn = document.getElementById('room-schedule-abort-btn');
 
     // —— 位置共享 ——
     this._roomBurstSection = document.getElementById('room-burst-section');
-    this._roomBurstEnable = document.getElementById('room-burst-enable');
     this._roomBurstSilent = document.getElementById('room-burst-silent');
     this._roomBurstShare = document.getElementById('room-burst-share');
     this._roomBurstPhase = document.getElementById('room-burst-phase');
+
+    // —— 共享会话结束时间 ——
+    this._roomBurstEndInput = document.getElementById('room-burst-end-input');
+    this._roomEndCountdown = document.getElementById('room-end-countdown');
+    this._roomEndValue = document.getElementById('room-end-value');
 
     // —— 路径预测 ——
     this._roomPredictionSection = document.getElementById('room-prediction-section');
     this._roomPredictionEnable = document.getElementById('room-prediction-enable');
 
-    // 倒计时按钮
-    this._roomTimerSetBtn.addEventListener('click', () => this._roomSetTimer());
-    this._roomTimerAbortBtn.addEventListener('click', () => this._roomAbortTimer());
-    this._roomTimerInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') this._roomSetTimer();
-    });
-
-    // 位置共享切换
-    this._roomBurstEnable.addEventListener('change', () => this._roomToggleBurst());
+    // 设定/取消（统一开始 + 结束时间共用）
+    if (this._roomScheduleSetBtn) this._roomScheduleSetBtn.addEventListener('click', () => this._roomSetSchedule());
+    if (this._roomScheduleAbortBtn) this._roomScheduleAbortBtn.addEventListener('click', () => this._roomAbortSchedule());
+    if (this._roomTimerInput) {
+      this._roomTimerInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') this._roomSetSchedule();
+      });
+    }
+    if (this._roomBurstEndInput) {
+      this._roomBurstEndInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') this._roomSetSchedule();
+      });
+    }
 
     // —— 路径预测切换 ——
     this._roomPredictionEnable.addEventListener('change', () => this._roomTogglePrediction());

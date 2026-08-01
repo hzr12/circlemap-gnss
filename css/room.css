@@ -536,11 +536,33 @@
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 14px;
-  padding: 6px 10px;
+  font-size: 13px;
+  padding: 5px 8px;
   outline: none;
   flex: 1;
-  max-width: 120px;
+  min-width: 0;
+  max-width: 110px;
+}
+
+/* 统一开始 + 结束时间：标签在上、字段并排，任意宽度不溢出 */
+.room-schedule-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+.room-schedule-field .room-timer-input {
+  max-width: none;
+  width: 100%;
+}
+.room-schedule-field .field-label {
+  margin-bottom: 0;
+}
+.room-schedule-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* 位置共享切换 */
@@ -631,6 +653,10 @@
   }
   .room-form-row .room-btn {
     flex: 1 1 auto;
+  }
+  .room-schedule-btns {
+    flex: 1 1 100%;
+    justify-content: flex-end;
   }
 
   /* 表单内 padding 缩小以节省空间 */
