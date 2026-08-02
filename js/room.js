@@ -140,6 +140,7 @@ class RoomManager {
     this._isHost = false;            // 创建房间的玩家为房主
     this._hostId = null;             // 当前房主 deviceId（房主离线后自动迁移）
     this._hostClaimTimer = null;     // 加入后无房主自荐定时器
+    this._retryTimer = null;         // Broker 降级/切换的重试定时器（需随销毁清理）
 
     // 设备健康信息（由 app 层注入）
     this._batteryLevel = 1;
@@ -304,7 +305,7 @@ class RoomManager {
           this._topicAliasMax = 0;
           discarded.current = true;
           this._client.end(true);
-          setTimeout(() => {
+          this._retryTimer = setTimeout(() => {
             this._tryConnect(brokerUrl, fallbacks, clientId, resolve, reject);
           }, 100);
           return;
@@ -313,12 +314,19 @@ class RoomManager {
         discarded.current = true;
         this._connected = true;
 
+        // topicAlias 仅在单条连接内有效：重连后注册表必须重建，
+        // 否则沿用旧 alias 编号发空 topic 会被 Broker 当作协议错误丢弃
+        this._topicAliases = {};
+        this._topicAliasRegistered = new Set();
+
         // 重连场景：恢复订阅 + 重新宣告在线 + 请求全量同步
         if (this._roomCode) {
           this._subscribeRoom(this._roomCode);
           this._publishPresence();
           this._publish({ join: 1 });
           this._publish({ type: 'request_state' });
+          // 断线重连：房主恢复 burst 会话推进（离线期阶段定时器已过期，重新对齐）
+          if (this._isHost && this._burstEnabled) this._resumeBurstOwner();
         }
 
         // 提取 topicAliasMaximum（MQTT 5.0 CONNACK 属性）
@@ -338,11 +346,13 @@ class RoomManager {
       });
 
       this._client.on('close', () => {
+        if (discarded.current) return; // 已被降级/切换流程放弃的旧连接，事件不再处理
         this._connected = false;
         if (this.onConnectionChange) this.onConnectionChange(false);
       });
 
       this._client.on('offline', () => {
+        if (discarded.current) return; // 同上：切换 Broker 期间旧连接事件会污染状态
         this._connected = false;
         if (this.onConnectionChange) this.onConnectionChange(false);
       });
@@ -359,7 +369,7 @@ class RoomManager {
           this._topicAliasMax = 0;
           discarded.current = true;
           this._disconnect();
-          setTimeout(() => {
+          this._retryTimer = setTimeout(() => {
             this._tryConnect(brokerUrl, fallbacks, clientId, resolve, reject);
           }, 100);
           return;
@@ -386,6 +396,7 @@ class RoomManager {
       });
 
       this._client.on('message', (topic, payload) => {
+        if (discarded.current) return; // 旧连接消息丢弃，避免切换期间状态污染
         this._handleMessage(topic, payload);
       });
 
@@ -429,6 +440,13 @@ class RoomManager {
    */
   _disconnect() {
     this._stopPublishing();
+    // burst 会话本地收尾：定时器不随 _client 死亡自动停止，
+    // 否则降级/切换 Broker 的失败重试链中阶段定时器会空转（publish 被门控但 seq/UI 仍推进）
+    this._endBurstSession();
+    if (this._retryTimer) {
+      clearTimeout(this._retryTimer);
+      this._retryTimer = null;
+    }
     if (this._client) {
       try {
         this._client.end(true);
@@ -594,9 +612,10 @@ class RoomManager {
       if (data.type === 'burst_start') {
         if (data.id === this._deviceId) return;
         this.setSharingEnabled(true);
-        this._burstSilentMin = Math.max(1, data.silent || 25);
-        this._burstShareMin = Math.max(1, data.share || 5);
-        if (data.endAt !== undefined && data.endAt !== this._burstEndAt) {
+        // 时长钳制 [1,240] 分钟：远程值不可信，防野值撑爆阶段定时器
+        this._burstSilentMin = Math.min(240, Math.max(1, data.silent || 25));
+        this._burstShareMin = Math.min(240, Math.max(1, data.share || 5));
+        if (Number.isFinite(data.endAt) && data.endAt !== this._burstEndAt) {
           this._burstEndAt = data.endAt || 0;
           if (this.onBurstEndChange) this.onBurstEndChange(this._burstEndAt);
         }
@@ -660,9 +679,9 @@ class RoomManager {
         if (data.burstSilent != null) this._burstSilentMin = Math.max(1, data.burstSilent);
         if (data.burstShare != null) this._burstShareMin = Math.max(1, data.burstShare);
         // 同步共享/burst 状态（按 seq 采纳，防旧状态覆盖新会话）
-        if (data.sharingEnabled != null) this._sharingEnabled = data.sharingEnabled;
         if (data.burstSeq != null && data.burstSeq >= this._burstSeq) {
           this._burstSeq = data.burstSeq;
+          if (data.sharingEnabled != null) this._sharingEnabled = data.sharingEnabled;
           if (data.burstEnabled != null) this._burstEnabled = data.burstEnabled;
           if (data.burstPhase) this._burstPhase = data.burstPhase;
           if (data.burstPhaseEnd) this._burstPhaseEnd = data.burstPhaseEnd;
@@ -732,6 +751,10 @@ class RoomManager {
     if (this._hostClaimTimer) {
       clearTimeout(this._hostClaimTimer);
       this._hostClaimTimer = null;
+    }
+    if (this._retryTimer) {
+      clearTimeout(this._retryTimer);
+      this._retryTimer = null;
     }
     this._roomCode = null;
     this._players = {};
@@ -836,10 +859,11 @@ class RoomManager {
     player.teamSeparation = flags.teamSeparation;
     if (flags.batteryLevel != null) player.batteryLevel = flags.batteryLevel;
     if (flags.charging != null) player.charging = flags.charging;
-    // 房主身份同步：对方是房主 → 记录；若我已是房主则让位（防重连后双房主并存）
-    if (flags.host) {
+    // 房主身份同步：双房主并存（并发接管/重连竞态）按 deviceId 小者胜收敛；
+    // 无条件让位会让双方都让位 → 房间无人为房主
+    if (flags.host && senderId !== this._deviceId) {
       this._hostId = senderId;
-      if (this._isHost) {
+      if (this._isHost && senderId < this._deviceId) {
         this._isHost = false;
         if (this.onHostChange) this.onHostChange(senderId);
       }
@@ -865,9 +889,10 @@ class RoomManager {
     if (p.name) player.name = p.name;
     if (p.color) player.color = p.color;
     player.teamId = p.teamId || player.teamId || null;
-    // 重加入竞态：无 teamId 时回填 room_state 中缓存的队伍
+    // 重加入竞态：无 teamId 时回填 room_state 中缓存的队伍（回填后即删除，防泄漏）
     if (!player.teamId && this._pendingPlayerTeams[senderId]) {
       player.teamId = this._pendingPlayerTeams[senderId];
+      delete this._pendingPlayerTeams[senderId];
     }
     player.spectator = p.spectator === true;
     player.isNpc = (this._teams[player.teamId] && this._teams[player.teamId].isNpc) || p.isNpc === true;
@@ -1561,15 +1586,9 @@ class RoomManager {
   _resumeBurstOwner() {
     if (!this._burstEnabled) return;
     this._startBurstRepublish();
-    if (this._burstPhaseEnd > Date.now()) {
-      if (this._burstTimer) clearTimeout(this._burstTimer);
-      this._burstTimer = setTimeout(() => {
-        const next = this._burstPhase === 'silent' ? 'sharing' : 'silent';
-        this._enterBurstPhase(next);
-      }, this._burstPhaseEnd - Date.now());
-    } else {
-      this._enterBurstPhase('sharing');
-    }
+    // 接管/重连后旧 phaseEnd 是过期时钟值（delta 定时器会立即空转或迟到），
+    // 直接以本机时钟重启当前阶段：seq+1 广播后全员重新对齐
+    this._enterBurstPhase(this._burstPhase === 'sharing' ? 'sharing' : 'silent');
   }
 
   /** 仅本地停止爆发周期（不广播），供客户端采纳停止消息 / 发起者复用 */
@@ -1581,6 +1600,11 @@ class RoomManager {
     if (this._burstPublishTimer) {
       clearInterval(this._burstPublishTimer);
       this._burstPublishTimer = null;
+    }
+    if (this._burstEndTimer) {
+      // 重启周期时旧到点定时器必须清掉，否则会在新会话中途炸掉（提前广播结束）
+      clearTimeout(this._burstEndTimer);
+      this._burstEndTimer = null;
     }
     this._burstEnabled = false;
     this._burstPhase = 'silent';
@@ -1779,6 +1803,8 @@ class RoomManager {
     this._hostClaimTimer = setTimeout(() => {
       this._hostClaimTimer = null;
       if (!this._roomCode || this._isHost) return;
+      // 观战者不参与接管：观战房主只能看守房间，不能成为指挥者
+      if (this._isSpectator) return;
       const curHost = this._hostId ? this._players[this._hostId] : null;
       const hostIsSpectator = !!(curHost && curHost.spectator);
       if (!this._hostId || (hostIsSpectator && !this._isSpectator)) {
@@ -1842,6 +1868,7 @@ class RoomManager {
    */
   _becomeHost() {
     if (this._isHost) return;
+    if (this._isSpectator) return; // 观战者禁止接管房主（不能指挥游戏）
     this._isHost = true;
     this._hostId = this._deviceId;
     this._publish({ type: 'host_elect', hostId: this._deviceId });
@@ -2000,6 +2027,8 @@ class RoomManager {
    * 每次心跳前的发报准备：检查超时 → 选举 → 分离检测
    */
   _preparePublish() {
+    // 断线重连风暴期不判离线/不选举，避免误伤队友（_lastSeen 只在在线时更新）
+    if (!this._connected) return;
     // 静默掉线检测（不依赖队伍状态）：三路皆无消息超过宽限期 → 触发离线
     const now = Date.now();
     Object.keys(this._players).forEach((id) => {
@@ -2037,9 +2066,9 @@ class RoomManager {
   _electBroadcaster() {
     const candidates = [];
 
-    // 其他在线队友（需有坐标）
+    // 其他在线队友（需有坐标；sharing===false 者关闭了共享/观战，选了会成为"哑发报员"）
     Object.values(this._players).forEach(p => {
-      if (p.teamId === this._myTeamId && p.online && p.lat != null) {
+      if (p.teamId === this._myTeamId && p.online && p.lat != null && p.sharing !== false) {
         candidates.push({ id: p.id, acc: p.acc != null ? p.acc : 999 });
       }
     });
@@ -2137,6 +2166,27 @@ class RoomManager {
     this._gameStartAt = 0;
     this._gameTimerAborted = false;
     this._isHost = false;
+    // 排空合并队列 + 清空回调：destroy 后微任务/事件不得再触发任何 UI
+    this._updateScheduled = false;
+    this._changedPlayers.clear();
+    if (this._retryTimer) {
+      clearTimeout(this._retryTimer);
+      this._retryTimer = null;
+    }
+    this.onPositionUpdate = null;
+    this.onPlayerJoin = null;
+    this.onPlayerLeave = null;
+    this.onTeamUpdate = null;
+    this.onRoomError = null;
+    this.onConnectionChange = null;
+    this.onBurstPhaseChange = null;
+    this.onBurstEndChange = null;
+    this.onBurstEnded = null;
+    this.onGameTimerUpdate = null;
+    this.onGameTimerAborted = null;
+    this.onCircleSync = null;
+    this.onHostChange = null;
+    this.onRequestCircles = null;
   }
 }
 

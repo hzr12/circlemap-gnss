@@ -508,6 +508,8 @@ class App {
       const editBtn = e.target.closest('.circle-edit');
       const delBtn = e.target.closest('.circle-del');
       if (!item) return;
+      // 远程同步圆仅展示，不可本地编辑/删除/选中（其 id 是 "作者:序号" 复合键）
+      if (item.dataset.remote === '1') return;
       const id = parseInt(item.dataset.id);
       if (editBtn) {
         this._editCircle(id);
@@ -1077,6 +1079,11 @@ class App {
     this._isWatching = false;
 
     this.gpsManager.stopWatching();
+    // 清空回调钩子：停止后迟到的位置/错误/降级/恢复回调不得再触发 UI（_processPosition 等）
+    this.gpsManager.onPositionChange = null;
+    this.gpsManager.onError = null;
+    this.gpsManager.onDowngrade = null;
+    this.gpsManager.onRecovery = null;
     this._prevDistances = {};
     this._hideSpeedChart();
 
@@ -1287,8 +1294,6 @@ class App {
         const added = this.trail.addPoint({
           lat: convPos.lat,
           lng: convPos.lng,
-          wgsLat: pos.lat,
-          wgsLng: pos.lng,
           time: pos.timestamp || Date.now(),
           accuracy: pos.accuracy || 0,
           speed: pos.speed,
@@ -2398,7 +2403,7 @@ class App {
         this._gpsBtn.classList.add('located');
         setTimeout(() => this._gpsBtn.classList.remove('located'), CONFIG.LOCATED_ANIM_MS);
 
-        Toast.show(` 定位成功（精度 ±${pos.accuracy.toFixed(0)} 米）`);
+        Toast.show(` 定位成功（精度 ±${(pos.accuracy || 0).toFixed(0)} 米）`);
 
         // 首次定位成功 → 权限已确认，激活 GNSS 卫星监听
         this.gpsManager.startGnss().then(() => {
@@ -2428,8 +2433,6 @@ class App {
       const added = this.trail.addPoint({
         lat: convPos.lat,
         lng: convPos.lng,
-        wgsLat: pos.lat,
-        wgsLng: pos.lng,
         time: pos.timestamp || Date.now(),
         accuracy: pos.accuracy || 0,
         speed: pos.speed,
@@ -3018,10 +3021,15 @@ class App {
       // 恢复圆圈
       if (data.circles && Array.isArray(data.circles) && data.circles.length > 0) {
         for (const c of data.circles) {
+          // 损坏数据防御：非法圆直接跳过，防 NaN 入 canvas arc() 中断渲染
+          if (!c || !c.center || !Number.isFinite(c.center.lat) || !Number.isFinite(c.center.lng)) continue;
+          const maxRadius = (Number.isFinite(c.maxRadius) && c.maxRadius > 0)
+            ? Math.min(c.maxRadius, CONFIG.MAX_RADIUS)
+            : CONFIG.CONCENTRIC_INTERVAL;
           this.mapManager.circles.push({
             id: c.id,
             center: c.center,
-            maxRadius: c.maxRadius,
+            maxRadius,
             interval: CONFIG.CONCENTRIC_INTERVAL,
             color: c.color || '',
             createdAt: c.createdAt || Date.now()
@@ -3373,6 +3381,11 @@ class App {
       Toast.show(` 已自动重连至房间：${session.roomCode}`);
     } catch (e) {
       console.warn('[Room] 自动重连失败:', e.message);
+      // 失败路径必须销毁 manager：joinRoom 中途失败的连接会残留活跃状态与事件绑定
+      if (this.roomManager) {
+        this.roomManager.destroy();
+        this.roomManager = null;
+      }
       this._roomCleanup();
       this._clearRoomSession();
       Toast.show(' 房间已过期，已自动断开');
@@ -3401,6 +3414,11 @@ class App {
     } catch (e) {
       console.error('[Room] 创建失败:', e);
       Toast.show(' 房间创建失败：' + (e.message || '连接超时'));
+      // 失败路径销毁 manager（_roomCleanup 不销毁，防连接残留）
+      if (this.roomManager) {
+        this.roomManager.destroy();
+        this.roomManager = null;
+      }
       this._roomCleanup();
     }
   }
@@ -3432,6 +3450,11 @@ class App {
     } catch (e) {
       console.error('[Room] 加入失败:', e);
       Toast.show(' 加入失败：' + (e.message || '连接超时'));
+      // 失败路径销毁 manager（_roomCleanup 不销毁，防连接残留）
+      if (this.roomManager) {
+        this.roomManager.destroy();
+        this.roomManager = null;
+      }
       this._roomCleanup();
     }
   }

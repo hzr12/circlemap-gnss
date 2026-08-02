@@ -145,8 +145,9 @@ App.prototype._updateCircleList = function (force) {
       distClass = within === 'inrange' ? 'dist-within' : within === 'maybe' ? 'dist-maybe' : 'dist-outside';
     }
 
-    html += `<div class="circle-item${isSel ? ' active' : ''}" data-id="${c.id}"${c.color ? ` style="border-left-color:${c.color}"` : ''}>
-      <span class="circle-idx"${c.color ? ` style="background:${c.color};border-color:${c.color}"` : ''}>#${i + 1}</span>
+    const safeColor = this._sanitizeColor(c.color);
+    html += `<div class="circle-item${isSel ? ' active' : ''}" data-id="${c.id}"${safeColor ? ` style="border-left-color:${safeColor}"` : ''}>
+      <span class="circle-idx"${safeColor ? ` style="background:${safeColor};border-color:${safeColor}"` : ''}>#${i + 1}</span>
       <div class="circle-summary">
         <div class="circle-meta">${radiusStr} <span class="circle-created">${dateStr}</span></div>
       </div>
@@ -189,7 +190,8 @@ App.prototype._updateCircleList = function (force) {
 
       for (const [author, circles] of Object.entries(groups)) {
         const authorName = circles[0].authorName || '玩家';
-        const authorColor = circles[0].color || '#888';
+        // 远程颜色来自公共 Broker，消毒防 CSS 注入/结构破坏
+        const authorColor = this._sanitizeColor(circles[0].color);
         const isCollapsed = collapsedAuthors[author];
         const circleCount = circles.length;
 
@@ -210,7 +212,7 @@ App.prototype._updateCircleList = function (force) {
             const radiusStr = rc.maxRadius >= 1000
               ? (rc.maxRadius / 1000).toFixed(1) + ' km'
               : rc.maxRadius + ' m';
-            const teamColor = rc.color || '#888';
+            const teamColor = this._sanitizeColor(rc.color);
             const distLines = [];
 
             // 关注的玩家置顶
@@ -224,7 +226,7 @@ App.prototype._updateCircleList = function (force) {
                 const fb = Math.max(this._lastAccuracy || 0, 15);
                 rangeTag = (dist - fb) <= rc.maxRadius ? ' <span class="tag-maybe">可能范围内</span>' : ' <span class="tag-outside">范围外</span>';
               }
-              distLines.push(`<span class="npc-dist-line followed-line"><span class="npc-follow-star" data-player="${this._escapeHtml(follower)}">★</span><span class="npc-dist-player" style="color:${p.color || '#ccc'}">${this._escapeHtml(pName)}</span> ${formatDistance(dist)}${rangeTag}</span>`);
+              distLines.push(`<span class="npc-dist-line followed-line"><span class="npc-follow-star" data-player="${this._escapeHtml(follower)}">★</span><span class="npc-dist-player" style="color:${this._sanitizeColor(p.color)}">${this._escapeHtml(pName)}</span> ${formatDistance(dist)}${rangeTag}</span>`);
             }
 
             Object.values(players).forEach((p) => {
@@ -240,10 +242,10 @@ App.prototype._updateCircleList = function (force) {
                 rangeTag = (dist - fb) <= rc.maxRadius ? ' <span class="tag-maybe">可能范围内</span>' : ' <span class="tag-outside">范围外</span>';
               }
               const isFollowed = p.id === follower;
-              distLines.push(`<span class="npc-dist-line${isFollowed ? ' followed-line' : ''}"><span class="npc-follow-btn${isFollowed ? ' followed' : ''}" data-player="${this._escapeHtml(p.id)}">${isFollowed ? '★' : '☆'}</span><span class="npc-dist-player" style="color:${p.color || '#ccc'}">${this._escapeHtml(pName)}</span> ${formatDistance(dist)}${rangeTag}</span>`);
+              distLines.push(`<span class="npc-dist-line${isFollowed ? ' followed-line' : ''}"><span class="npc-follow-btn${isFollowed ? ' followed' : ''}" data-player="${this._escapeHtml(p.id)}">${isFollowed ? '★' : '☆'}</span><span class="npc-dist-player" style="color:${this._sanitizeColor(p.color)}">${this._escapeHtml(pName)}</span> ${formatDistance(dist)}${rangeTag}</span>`);
             });
 
-            html += `<div class="circle-item remote ${freshnessClass}" data-remote-idx="${idx}">
+            html += `<div class="circle-item remote ${freshnessClass}" data-remote="1" data-remote-idx="${idx}">
               <span class="circle-idx" style="border-color:${teamColor}">R${idx + 1}</span>
               <div class="circle-summary">
                 <div class="circle-name">${radiusStr} <span class="circle-created" style="color:${teamColor}">${this._escapeHtml(authorName)}</span></div>

@@ -80,7 +80,7 @@ const CONFIG = {
   // ----- 轨迹 -----
   TRAIL_SAMPLE_MIN_DIST: 10,            // 轨迹采样最小间隔（米）
   TRAIL_JITTER_FACTOR: 1.5,            // 抖动检测：位移必须 > accuracy × 倍数才记录
-  TRAIL_MAX_POINTS: 50000,              // 轨迹最大点数（>10m 采样 ≈ 500km 移动量）
+  TRAIL_MAX_POINTS: 75000,              // 轨迹最大点数（>10m 采样 ≈ 750km 移动量）
 
   // ----- GPS 节流（百度式速度自适应）-----
   GPS_ADAPTIVE_K: 8000,             // 自适应系数：间隔 = K/速度（跑动 2.3s、步行 5.7s、静止 60s）
@@ -129,10 +129,12 @@ function calcDistance(p1, p2) {
 function calcBearing(p1, p2) {
   try {
     if (typeof qq !== 'undefined' && qq.maps && qq.maps.spherical) {
-      return qq.maps.spherical.computeHeading(
+      const h = qq.maps.spherical.computeHeading(
         new qq.maps.LatLng(p1.lat, p1.lng),
         new qq.maps.LatLng(p2.lat, p2.lng)
       );
+      // QQ API 返回 [-180,180)，归一化到 [0,360) 与降级路径一致
+      return ((h % 360) + 360) % 360;
     }
   } catch (_) {}
   // Fallback: 手写方位角公式
@@ -151,7 +153,9 @@ function calcBearing(p1, p2) {
  */
 function bearingToDir(deg) {
   const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-  return dirs[Math.round(deg / 45) % 8];
+  if (!Number.isFinite(deg)) return '--';
+  // JS 负数取模得负数（-2 % 8 = -2），先归一化再取模
+  return dirs[((Math.round(deg / 45) % 8) + 8) % 8];
 }
 
 /**

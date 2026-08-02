@@ -54,6 +54,7 @@ class MapManager {
     this.locationMarker = null; // 我的位置标记（区别于圆心标识）
     this.accuracyCircle = null; // #17 定位精度圆环
     this.trailPolylines = [];   // 历史轨迹线（多段，按速度着色）
+    this._lastTrailCount = 0;   // 增量渲染基数：已渲染的点数
     this._targetPos = null;    // 对方位置坐标
     this.targetCircle = null;  // 对方精度范围圈
     this._myPos = null;        // 我的位置（Canvas 标注用）
@@ -79,6 +80,13 @@ class MapManager {
     this.ctx = this.canvas.getContext('2d');
     this.overlayCanvas = document.getElementById('overlay-canvas');
     this.overlayCtx = this.overlayCanvas ? this.overlayCanvas.getContext('2d') : null;
+
+    // —— 腾讯地图 SDK 加载失败兜底（网络被拦/key 失效/脚本注入失败） ——
+    if (typeof qq === 'undefined' || !qq.maps || typeof qq.maps.Map !== 'function') {
+      console.error('[MapManager] 腾讯地图 SDK 加载失败');
+      try { Toast.show(' 地图加载失败，请检查网络后刷新页面'); } catch (_) { /* 兜底 */ }
+      throw new Error('腾讯地图 SDK 未加载');
+    }
 
     // —— 腾讯地图 ——
     this.map = new qq.maps.Map(mapEl, {
@@ -179,6 +187,7 @@ class MapManager {
   }
 
   _latLngToContainerPoint(latLng) {
+    if (!this.map) return null; // destroy 后 rAF 迟到回调防御
     const key = `${latLng.getLat().toFixed(6)},${latLng.getLng().toFixed(6)}`;
     const cached = this._coordCache.get(key);
     const now = performance.now();
@@ -307,7 +316,7 @@ class MapManager {
 
   /** 仅重绘圆圈层（增删/选中/拖拽/缩放时触发） */
   _redrawCircles() {
-    if (!this.canvas) return;
+    if (!this.map || !this.canvas) return; // destroy 后 rAF 迟到回调防御
     const parent = this.canvas.parentElement;
     if (!parent) return;
 
@@ -347,6 +356,7 @@ class MapManager {
   }
 
   _drawScaleBar(ctx, w, h) {
+    if (!this.map) return; // destroy 后 rAF 迟到回调防御
     const zoom = this.map.getZoom();
     if (zoom < 3) return;
     const lat = this._syncCenter ? this._syncCenter.getLat() : 39.9;
@@ -388,7 +398,7 @@ class MapManager {
 
   /** 仅重绘叠加层（预测椭圆、距离标注，位置更新时触发） */
   _redrawOverlay() {
-    if (!this.overlayCanvas || !this.overlayCtx) return;
+    if (!this.map || !this.overlayCanvas || !this.overlayCtx) return; // destroy 后 rAF 迟到回调防御
     const parent = this.overlayCanvas.parentElement;
     if (!parent) return;
 
@@ -757,9 +767,15 @@ class MapManager {
 
   /**
    * 设置其他玩家同步过来的圆（多人可见），触发重绘
+   * 远程数据来自公共 Broker，必须先校验：非法半径/间隔会让 arc(NaN) 中断整个渲染
    */
   setRemoteCircles(circles) {
-    this._remoteCircles = Array.isArray(circles) ? circles : [];
+    const src = Array.isArray(circles) ? circles : [];
+    this._remoteCircles = src.filter(c => (
+      c && c.center
+      && Number.isFinite(c.center.lat) && Number.isFinite(c.center.lng)
+      && Number.isFinite(c.maxRadius) && c.maxRadius > 0 && c.maxRadius <= CONFIG.MAX_RADIUS
+    ));
     this._scheduleRedraw();
   }
 
@@ -767,18 +783,22 @@ class MapManager {
    * 其他玩家圆的渲染：作者色 + 虚线同心圆 + 昵称标注（与本地蓝圆区分）
    */
   _drawRemoteCircle(ctx, circle) {
+    const maxR = circle.maxRadius;
+    let interval = circle.interval;
+    // 远程数据不可信：非法值直接跳过该圆，避免 NaN 入 arc 抛错中断整个渲染循环
+    if (!Number.isFinite(maxR) || maxR <= 0 || maxR > CONFIG.MAX_RADIUS) return;
+    if (!Number.isFinite(interval) || interval <= 0) interval = CONFIG.CONCENTRIC_INTERVAL;
     const latLng = new qq.maps.LatLng(circle.center.lat, circle.center.lng);
     const cp = this._latLngToContainerPoint(latLng);
     if (!cp) return;
-    const maxR = circle.maxRadius;
-    const interval = circle.interval || CONFIG.CONCENTRIC_INTERVAL;
     const mp = this._metersToPixels(maxR, latLng);
     const ip = this._metersToPixels(interval, latLng);
     const { x: cx, y: cy } = cp;
     if (mp < CONFIG.MIN_DRAW_PX) return;
     const color = circle.color || '#FF8C00';
     const drawInner = ip >= 2;
-    const ringCount = drawInner ? Math.max(1, Math.floor(mp / ip)) : 0;
+    // 防 ringCount 爆炸：极小 interval（如 5m）+ 高 zoom 下可达数千圈，渲染卡死
+    const ringCount = drawInner ? Math.min(200, Math.max(1, Math.floor(mp / ip))) : 0;
     ctx.save();
     // 轻量填充（使用队伍颜色）
     ctx.beginPath();
@@ -1188,21 +1208,35 @@ class MapManager {
 
   /**
    * 更新历史轨迹线（按速度分段着色）
+   * 增量模式：轨迹点只追加时，仅从上次渲染位置起构建新段，避免每点全量重建数百条 Polyline
    * @param {Array<{lat:number,lng:number,speed?:number}>} positions GCJ-02 坐标数组
    */
   setTrail(positions) {
     if (!this.map) return;
-    if (positions.length < 2) {
+    if (!Array.isArray(positions) || positions.length < 2) {
       this.clearTrail();
       return;
     }
 
-    this.clearTrail();
+    // 数据回缩（清除/重置/环形截断）→ 全量重建
+    if (positions.length < (this._lastTrailCount || 0)) {
+      this.clearTrail();
+    }
+
+    const from = Math.max(1, this._lastTrailCount || 0);
+    if (from >= positions.length) return;
 
     let batchPath = [];       // 当前颜色段的路径
     let batchKey = null;      // 当前颜色段对应的 speed key
 
-    for (let i = 1; i < positions.length; i++) {
+    // 增量起点：用已渲染的最后一点作锚，保证衔接段颜色连续
+    if ((this._lastTrailCount || 0) > 0) {
+      const anchor = positions[this._lastTrailCount - 1];
+      batchPath.push(new qq.maps.LatLng(anchor.lat, anchor.lng));
+      batchKey = this._speedColorKey(this._segmentSpeed(anchor, positions[this._lastTrailCount]));
+    }
+
+    for (let i = from; i < positions.length; i++) {
       const p0 = positions[i - 1];
       const p1 = positions[i];
       const key = this._speedColorKey(this._segmentSpeed(p0, p1));
@@ -1214,7 +1248,10 @@ class MapManager {
       } else if (key === batchKey) {
         batchPath.push(new qq.maps.LatLng(p1.lat, p1.lng));
       } else {
-        this._flushSegment(batchPath, this._speedColorMap[batchKey]);
+        // 锚点单点（增量首段）时 batchPath 可能只有 1 点，长度不足不 flush，直接重开新段
+        if (batchPath.length >= 2) {
+          this._flushSegment(batchPath, this._speedColorMap[batchKey]);
+        }
         batchPath = [
           new qq.maps.LatLng(p0.lat, p0.lng),
           new qq.maps.LatLng(p1.lat, p1.lng)
@@ -1225,6 +1262,7 @@ class MapManager {
     if (batchPath.length >= 2) {
       this._flushSegment(batchPath, this._speedColorMap[batchKey]);
     }
+    this._lastTrailCount = positions.length;
   }
 
   /** 创建一条轨迹 Polyline 并存入数组 */
@@ -1246,6 +1284,7 @@ class MapManager {
       poly.setMap(null);
     }
     this.trailPolylines = [];
+    this._lastTrailCount = 0; // 增量渲染基数必须一并归零
   }
 
   // ----- 对方位置标记 -----
@@ -1356,7 +1395,10 @@ class MapManager {
    * 创建玩家标记图标（圆点 + 名称标签）
    */
   _createPlayerIcon(color, name, opacity = 1, labelOverride) {
-    const label = labelOverride || (name || '?').charAt(0).toUpperCase();
+    // 远程来源的 color 可能非法（公共 Broker 攻击面）：校验格式，非法回退灰色，
+    // 防引号/尖括号破坏 SVG 结构（属性注入）
+    const safeColor = /^#[0-9a-fA-F]{3,8}$/.test(color || '') ? color : '#888';
+    const label = (labelOverride || (name || '?').charAt(0).toUpperCase()).replace(/[<>&"']/g, '');
     // 与"我的位置 / 标记对方"一致的同心圆点样式，颜色用队伍色；中心保留昵称首字便于辨认
     const svg = [
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">',
@@ -1365,9 +1407,9 @@ class MapManager {
       '      <feDropShadow dx="0" dy="1" stdDeviation="3" flood-opacity="0.5"/>',
       '    </filter>',
       '  </defs>',
-      `  <circle cx="22" cy="22" r="20" fill="none" stroke="${color}" stroke-width="1.5" opacity="${(0.12 * opacity).toFixed(3)}"/>`,
-      `  <circle cx="22" cy="22" r="15" fill="none" stroke="${color}" stroke-width="2" opacity="${(0.28 * opacity).toFixed(3)}"/>`,
-      `  <circle cx="22" cy="22" r="9" fill="${color}" stroke="#fff" stroke-width="2.5" filter="url(#ps)" opacity="${opacity}"/>`,
+      `  <circle cx="22" cy="22" r="20" fill="none" stroke="${safeColor}" stroke-width="1.5" opacity="${(0.12 * opacity).toFixed(3)}"/>`,
+      `  <circle cx="22" cy="22" r="15" fill="none" stroke="${safeColor}" stroke-width="2" opacity="${(0.28 * opacity).toFixed(3)}"/>`,
+      `  <circle cx="22" cy="22" r="9" fill="${safeColor}" stroke="#fff" stroke-width="2.5" filter="url(#ps)" opacity="${opacity}"/>`,
       `  <text x="22" y="22" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="11" font-weight="bold" font-family="Arial" opacity="${opacity}">${label}</text>`,
       '</svg>'
     ].join('\n');
@@ -1396,11 +1438,13 @@ class MapManager {
   updatePlayerMarker(id, lat, lng, name, color, opacity = 1, accuracy, labelOverride) {
     if (!this.map) return;
     const latLng = new qq.maps.LatLng(lat, lng);
+    // 图标内容取决于 color/name/label/opacity 四元组：只比较 opacity 会导致改名/换队色后标记不刷新
+    const iconKey = `${color}|${name}|${labelOverride || ''}|${opacity}`;
     if (this.playerMarkers[id]) {
       this.playerMarkers[id].setPosition(latLng);
-      if (opacity !== this.playerMarkers[id]._lastOpacity) {
+      if (iconKey !== this.playerMarkers[id]._lastIconKey) {
         this.playerMarkers[id].setIcon(this._createPlayerIcon(color, name, opacity, labelOverride));
-        this.playerMarkers[id]._lastOpacity = opacity;
+        this.playerMarkers[id]._lastIconKey = iconKey;
       }
     } else {
       this.playerMarkers[id] = new qq.maps.Marker({
@@ -1410,7 +1454,7 @@ class MapManager {
         icon: this._createPlayerIcon(color, name, opacity, labelOverride),
         title: name || '玩家',
       });
-      this.playerMarkers[id]._lastOpacity = opacity;
+      this.playerMarkers[id]._lastIconKey = iconKey;
     }
     this._updatePlayerAccuracyCircle(id, latLng, accuracy, color);
   }

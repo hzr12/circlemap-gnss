@@ -53,7 +53,7 @@ config.js → toast.js → storage.js → trail.js → map.js → gps.js → [mq
 | 地图 | `js/map.js` | `MapManager`（腾讯地图 + Canvas 同心圆） |
 | 定位 | `js/gps.js` | `GPSManager` + `KalmanFilter` |
 | 多人 | `js/room.js` | `RoomManager`（MQTT 5.0） |
-| 轨迹 | `js/trail.js` | 采样/平滑/GPX 导出 |
+| 轨迹 | `js/trail.js` | 采样/平滑/统计 |
 | 主控核心 | `js/app-core.js` | `App` 类定义 + 核心逻辑 |
 | GPS UI | `js/app-gps-ui.js` | 状态条/速度曲线/定位列表/跟随 |
 | 圆 UI | `js/app-circle-ui.js` | 圆列表/info 面板/删除撤销/编辑半径 |
@@ -64,7 +64,7 @@ config.js → toast.js → storage.js → trail.js → map.js → gps.js → [mq
 - **坐标纠偏**：浏览器返回 WGS84，腾讯地图用 GCJ-02，纠偏 5s 超时降级到手写 Haversine
 - **GPS 节流**：百度式速度自适应，间隔 = `GPS_ADAPTIVE_K / 速度`（clamp 1s~60s），移动快→密、静止→60s 心跳；省电模式按 20s 下限（`_updateAdaptiveInterval()`，gps.js）
 - **位置过期**：10 分钟无更新自动提示重定位
-- **轨迹上限**：`TRAIL_MAX_POINTS = 50000`（>10m 距离采样，≈ 500km 移动量）
+- **轨迹上限**：`TRAIL_MAX_POINTS = 75000`（>10m 距离采样，≈ 750km 移动量），localStorage 二进制存储（26B/点 ≈ 1.95MB），旧 JSON 数据首次加载自动迁移
 - **MQTT Broker 注意**：`test.mosquitto.org` 的 wss(8081) 已被禁用，仅明文 ws 可用；https 页面下 ws 被混合内容策略拦截，仅 file:// / http:// 可用
 - **Android GNSS 插件**：注册顺序必须先 `addListener` 后 `startGnssListening`
 - **多人房间上限**：8 人（受公共 Broker 限制）

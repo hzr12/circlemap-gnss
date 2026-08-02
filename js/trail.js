@@ -53,9 +53,9 @@ class Trail {
   }
 
   /**
-   * 采样记录一个轨迹点（每 >10m 采一个点，最多 500 个）
+   * 采样记录一个轨迹点（每 >10m 采一个点，上限由 CONFIG.TRAIL_MAX_POINTS 控制）
    * 抖动过滤：位移必须同时超过最小间距和 accuracy × 抖动系数，避免站定时 GPS 漂移鬼点
-   * @param {{lat:number,lng:number,wgsLat?:number,wgsLng?:number,time?:number,accuracy?:number,speed?:number,heading?:number}} pt
+   * @param {{lat:number,lng:number,time?:number,accuracy?:number,speed?:number,heading?:number}} pt
    * @returns {boolean} 是否实际添加了点
    */
   addPoint(pt) {
@@ -65,7 +65,7 @@ class Trail {
     // 防御：拒绝无效坐标
     if (typeof pt.lat !== 'number' || !isFinite(pt.lat) ||
         typeof pt.lng !== 'number' || !isFinite(pt.lng)) {
-      console.warn('[Trail] 丢弃无效点:', pt.lat, pt.lng);
+      if (CONFIG.DEBUG) console.warn('[Trail] 丢弃无效点:', pt.lat, pt.lng);
       return false;
     }
     if (this.lastPos) {

@@ -249,6 +249,7 @@ class GPSManager {
     this._gnssInitError = null;    // 初始化失败原因
     this._gnssListeningStarted = false; // startGnss() 是否已调用
     this._gnssStarting = null;     // startGnss() 的 Promise，防止并发
+    this._gnssStopRequested = false; // stopGnss() 在启动过程中被调用时置位，中止启动
     this._gnssStatusHandle = null; // gnssStatus 事件监听器句柄
     this._gnssNmeaHandle = null;   // nmeaSentence 事件监听器句柄
     this._gnssPollId = null;       // GNSS 轮询兜底定时器
@@ -459,6 +460,7 @@ class GPSManager {
     if (this._gnssStarting) {
       return this._gnssStarting;
     }
+    this._gnssStopRequested = false; // 新的启动请求清除停止标记
     this._gnssStarting = this._startGnssImpl();
     try {
       await this._gnssStarting;
@@ -497,9 +499,14 @@ class GPSManager {
         }
       };
 
-      // 先注册（Capacitor 允许在 native 方法调用前注册 listener）
-      this._gnssStatusHandle = this._gnssPlugin.addListener('gnssStatus', gnssHandler);
-      this._gnssNmeaHandle = this._gnssPlugin.addListener('nmeaSentence', nmeaHandler);
+      // 先注册（Capacitor v3+ 的 addListener 返回 Promise<PluginListenerHandle>，必须 await 拿到真实句柄）
+      try {
+        this._gnssStatusHandle = await this._gnssPlugin.addListener('gnssStatus', gnssHandler);
+        this._gnssNmeaHandle = await this._gnssPlugin.addListener('nmeaSentence', nmeaHandler);
+      } catch (listenErr) {
+        // 监听器注册失败 → 交给外层 catch 统一清理（会移除已注册的第一个句柄）
+        throw listenErr;
+      }
 
       // 再启动原生监听
       try {
@@ -513,6 +520,15 @@ class GPSManager {
           Toast.show(` ACCESS_FINE_LOCATION 权限被拒 — 请到系统设置→应用→CircleMap→位置，开启"始终允许"`, 6000);
         }
         throw startErr;
+      }
+
+      // 启动期间 stopGnss() 被调用 → 立即中止，避免僵尸"已激活"状态（有标志无监听）
+      if (this._gnssStopRequested) {
+        this._removeGnssListeners();
+        try { this._gnssPlugin.stopGnssListening?.(); } catch (_) {}
+        this._gnssSatellites = [];
+        this._gnssInitError = null;
+        return;
       }
       this._gnssListeningStarted = true;
       this._gnssInitError = null;
@@ -608,13 +624,15 @@ class GPSManager {
    * 停止 GNSS 监听，移除事件监听器。
    */
   stopGnss() {
-    if (!this._gnssPlugin || !this._gnssListeningStarted) return;
+    this._gnssStopRequested = true;
     this._removeGnssListeners();
     this._stopGnssPollFallback();
-    try {
-      this._gnssPlugin.stopGnssListening?.();
-    } catch (e) {
-      // 插件可能没有这些方法
+    if (this._gnssPlugin && this._gnssListeningStarted) {
+      try {
+        this._gnssPlugin.stopGnssListening?.();
+      } catch (e) {
+        // 插件可能没有这些方法
+      }
     }
     this._gnssListeningStarted = false;
     this._gnssSatellites = [];
@@ -625,7 +643,12 @@ class GPSManager {
    * 获取当前生效的 GPS 超时时间
    */
   _getCurrentTimeout() {
-    return this._downgraded ? CONFIG.GPS_LOW_ACCURACY_TIMEOUT : CONFIG.GPS_WATCH_TIMEOUT;
+    // 对齐自适应节流间隔：静止时心跳可达 60s（省电模式 20s 下限），
+    // 固定 5s 看门狗会把 Android duty-cycle 下的正常慢 fix 误判为超时并降级
+    return Math.max(
+      this._downgraded ? CONFIG.GPS_LOW_ACCURACY_TIMEOUT : CONFIG.GPS_WATCH_TIMEOUT,
+      this._gpsMinInterval + 5000
+    );
   }
 
   /**
@@ -707,6 +730,8 @@ class GPSManager {
    */
   async _tryRecovery() {
     if (!this._downgraded || !this.isWatching) return;
+    // 省电模式本身就是低精度 + 20s 节流，恢复高精度会破坏省电设定，直接跳过
+    if (this._powerSaving) return;
     console.log('[GPS] 尝试恢复高精度定位...');
     try {
       await this.getCurrentPosition(CONFIG.GPS_WATCH_TIMEOUT);
@@ -881,7 +906,9 @@ class GPSManager {
 
         // ── 2D 卡尔曼滤波实时平滑 ──
         if (this._useFilter && pos.accuracy > 0 && pos.accuracy < 200) {
-          const ts = pos.timestamp || now;
+          // 用收到时刻而非 position.timestamp：maximumAge 缓存/重复 fix 的旧时间戳
+          // 会使 dt ≤ 0 触发滤波器重置，平滑被静默关闭
+          const ts = now;
           const acc = pos.accuracy || 10;
           const filtered = this._filter.update(pos.lat, pos.lng, acc, ts, pos.speed);
           pos.lat = filtered.lat;

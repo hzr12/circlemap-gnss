@@ -61,6 +61,7 @@ App.prototype._roomJoinTeam = function (teamId) {
   this.roomManager.joinTeam(teamId);
   this._updateTeamUI();
   this._updateRoomPlayerList();
+  this._updateSharingBtn(); // 加入 NPC 队 → 共享按钮变"NPC 持续共享中"并禁用
   Toast.show(' 已加入队伍');
 };
 
@@ -69,6 +70,7 @@ App.prototype._roomLeaveTeam = function (teamId) {
   this.roomManager.leaveTeam(teamId);
   this._updateTeamUI();
   this._updateRoomPlayerList();
+  this._updateSharingBtn(); // 离开 NPC 队 → 共享按钮恢复可操作
   Toast.show(' 已离开队伍');
 };
 
@@ -560,6 +562,11 @@ App.prototype._roomSetSchedule = function () {
     Toast.show(` 统一开始时间已设为 ${timerVal}`);
   }
   if (endVal) {
+    // setBurstEndAt 仅房主可执行：非房主直接拒绝，防止 Toast 谎报"已设置"而实际没生效
+    if (!this.roomManager.isHost()) {
+      Toast.show(' 仅房主可设置结束时间');
+      return;
+    }
     const [h, m] = endVal.split(':').map(Number);
     const target = new Date();
     target.setHours(h, m, 0, 0);
@@ -578,6 +585,11 @@ App.prototype._roomAbortSchedule = function () {
     Toast.show(' 已取消统一开始倒计时');
   }
   if (this._endAtPending) {
+    // setBurstEndAt(0) 仅房主可执行：非房主保持 pending，提示而不是谎报已取消
+    if (!this.roomManager.isHost()) {
+      Toast.show(' 仅房主可取消结束时间');
+      return;
+    }
     this.roomManager.setBurstEndAt(0); // 回调 onBurstEndChange(0) 复位结束时间 UI
     Toast.show(' 已取消结束时间');
   }
@@ -599,8 +611,9 @@ App.prototype._updateTimerCountdown = function () {
     this._updateScheduleBtns();
     Toast.show(' 统一开始！');
     if (this.roomManager.isHost()) {
-      const silent = parseInt(this._roomBurstSilent.value) || 25;
-      const share = parseInt(this._roomBurstShare.value) || 5;
+      // 时长钳制 [1,240] 分钟：输入框可能被手滑填野值，广播出去会撑爆全员阶段定时器
+      const silent = Math.min(240, Math.max(1, parseInt(this._roomBurstSilent.value) || 25));
+      const share = Math.min(240, Math.max(1, parseInt(this._roomBurstShare.value) || 5));
       this.roomManager.burstStart(silent, share); // 广播 → 全员同步开启共享+爆发
     }
     if (this._timerInterval) {

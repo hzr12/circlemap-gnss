@@ -43,9 +43,14 @@ class Toast {
     const existing = document.querySelector('.toast-msg');
     if (existing) existing.remove();
 
+    // toast.js 先于 app-core.js 加载，不能依赖 App._escapeHtml，此处内联转义
+    const safe = String(message).replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+
     const toast = document.createElement('div');
     toast.className = 'toast-msg toast-action';
-    toast.innerHTML = `<span>${message}</span><button class="toast-undo-btn">撤销</button>`;
+    toast.innerHTML = `<span>${safe}</span><button class="toast-undo-btn">撤销</button>`;
     document.body.appendChild(toast);
 
     requestAnimationFrame(() => toast.classList.add('show'));
