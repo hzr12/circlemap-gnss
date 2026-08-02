@@ -1,3 +1,8 @@
+/* 轨迹独立模式下隐藏的常规区块 */
+.hidden-by-mode {
+  display: none !important;
+}
+
 /* ---------- 底部面板 ---------- */
 .bottom-panel {
   position: fixed;

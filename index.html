@@ -11,10 +11,10 @@
   <link rel="stylesheet" href="css/theme.css?t=20260710v2">
   <link rel="stylesheet" href="css/base.css?t=20260710v1">
   <link rel="stylesheet" href="css/map.css?t=20260710v2">
-  <link rel="stylesheet" href="css/panel.css?t=20260710v6">
+  <link rel="stylesheet" href="css/panel.css?t=20260710v7">
   <link rel="stylesheet" href="css/gps.css?t=20260710v2">
   <link rel="stylesheet" href="css/circles.css?t=20260710v4">
-  <link rel="stylesheet" href="css/trail.css?t=20260710v3">
+  <link rel="stylesheet" href="css/trail.css?t=20260710v7">
   <link rel="stylesheet" href="css/toast-modal.css?t=20260710v1">
   <link rel="stylesheet" href="css/onboarding.css?t=20260710v1">
   <link rel="stylesheet" href="css/responsive.css?t=20260710v1">
@@ -93,6 +93,22 @@
           </svg>
           多人
         </button>
+        <button class="mode-tab" data-mode="trail" id="mode-trail">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 20c2-5 5-7 7-13"/>
+            <circle cx="4" cy="20" r="1.5"/>
+            <circle cx="17" cy="7" r="1.5"/>
+          </svg>
+          轨迹
+        </button>
+      </div>
+
+      <!-- 轨迹常驻记录条（非轨迹 tab 显示，可随时开始/停止录音） -->
+      <div class="trail-record-bar" id="trail-record-bar">
+        <span class="trail-dot" id="trail-bar-dot"></span>
+        <span class="trail-bar-state" id="trail-bar-state">未记录</span>
+        <button class="trail-bar-btn" id="trail-bar-btn">开始记录</button>
+        <span class="trail-bar-dist" id="trail-bar-dist">0m</span>
       </div>
 
       <!-- 坐标输入区 -->
@@ -341,7 +357,8 @@
         </button>
       </div>
 
-      <!-- 轨迹记录 -->
+      <!-- 轨迹记录（仅轨迹 tab 显示完整面板） -->
+      <div class="trail-mode-section" id="trail-mode-section">
       <div class="trail-section">
         <div class="trail-header">
           <span class="field-label">轨迹记录</span>
@@ -372,6 +389,21 @@
           <span class="speed-legend-item"><i style="background:rgba(255,140,40,0.95)"></i>3-5</span>
           <span class="speed-legend-item"><i style="background:rgba(255,60,60,1)"></i>&gt;5 m/s</span>
         </div>
+      </div>
+
+      <!-- 速度曲线面板 -->
+      <div id="speed-chart-section" class="speed-chart-section hidden">
+        <div class="speed-chart-header">
+          <span class="speed-chart-title">速度曲线</span>
+          <span class="speed-chart-info" id="speed-chart-info"></span>
+          <button id="speed-chart-toggle" class="speed-chart-toggle" title="展开/收起">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        </div>
+        <div class="speed-chart-body" id="speed-chart-body">
+          <canvas id="speed-chart-canvas"></canvas>
+        </div>
+      </div>
       </div>
 
       <!-- 圆列表 -->
@@ -419,20 +451,6 @@
 
       <!-- GNSS 卫星数据 bar：永远显示在面板最底部 -->
       <div id="gnss-bar" class="gnss-bar"></div>
-
-      <!-- 速度曲线面板 -->
-      <div id="speed-chart-section" class="speed-chart-section hidden">
-        <div class="speed-chart-header">
-          <span class="speed-chart-title">速度曲线</span>
-          <span class="speed-chart-info" id="speed-chart-info"></span>
-          <button id="speed-chart-toggle" class="speed-chart-toggle" title="展开/收起">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
-        </div>
-        <div class="speed-chart-body" id="speed-chart-body">
-          <canvas id="speed-chart-canvas"></canvas>
-        </div>
-      </div>
     </div>
   </div>
 
@@ -454,7 +472,7 @@
   <script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
   <script src="js/room.js?t=20260710v13"></script>
 
-  <script src="js/app-core.js?t=20260801v27"></script>
+  <script src="js/app-core.js?t=20260801v28"></script>
   <script src="js/app-gps-ui.js?t=20260730v5"></script>
   <script src="js/app-circle-ui.js?t=20260730v8"></script>
   <script src="js/app-room-ui.js?t=20260801v7"></script>

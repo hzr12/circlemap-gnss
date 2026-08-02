@@ -64,6 +64,74 @@
   width: 100% !important;
   height: 100% !important;
 }
+/* ---------- 轨迹独立模式容器（仅轨迹 tab 显示） ---------- */
+.trail-mode-section {
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+}
+.trail-mode-section.visible {
+  display: flex;
+}
+
+/* ---------- 常驻记录条（非轨迹 tab 显示） ---------- */
+.trail-record-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  margin-bottom: 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  color: var(--text-secondary);
+  height: 24px;
+  overflow: hidden;
+}
+.trail-record-bar.hidden {
+  display: none;
+}
+.trail-record-bar .trail-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  flex-shrink: 0;
+}
+.trail-record-bar .trail-dot.recording {
+  background: #FF4757;
+  box-shadow: 0 0 6px #FF4757;
+  animation: trailPulse 1s ease-in-out infinite;
+}
+.trail-bar-state {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  min-width: 0;
+}
+.trail-bar-btn {
+  border: none;
+  background: transparent;
+  color: var(--accent-1);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.trail-bar-btn.recording {
+  color: #FF4757;
+}
+.trail-bar-dist {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent-1);
+  flex-shrink: 0;
+}
 /* ---------- 轨迹记录�?---------- */
 .trail-section {
   margin-bottom: 14px;

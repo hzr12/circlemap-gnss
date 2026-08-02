@@ -398,6 +398,10 @@ class App {
     document.getElementById('export-report-btn').addEventListener('click', () => this._exportReport());
     document.getElementById('power-saving-btn').addEventListener('click', () => this._togglePowerSaving());
 
+    // —— 常驻记录条（非轨迹 tab） ——
+    const barBtn = document.getElementById('trail-bar-btn');
+    if (barBtn) barBtn.addEventListener('click', () => this._toggleTrailRecording());
+
     // —— 对方位置标记（复用坐标输入区） ——
     this._targetInfoEl = document.getElementById('target-info');
     this._targetClearBtn = document.getElementById('target-clear-btn');
@@ -653,10 +657,10 @@ class App {
 
   /* ============= 核心交互方法 ============= */
 
-  /**
-   * 切换选择模式
-   * @param {'click'|'input'} mode
-   */
+/**
+    * 切换选择模式
+    * @param {'click'|'input'|'room'|'trail'} mode
+    */
   _setMode(mode) {
     this.mode = mode;
     this.mapManager.setMode(mode);
@@ -677,6 +681,39 @@ class App {
     // 显示/隐藏多人房间区
     if (this._roomSection) {
       this._roomSection.classList.toggle('visible', mode === 'room');
+    }
+
+    // 显示/隐藏轨迹: 轨迹 tab → 独占完整面板，隐藏常驻记录条；其它模式反向
+    this._setTrailMode(mode === 'trail');
+  }
+
+  /**
+   * 切换轨迹模式区域显隐
+   * 轨迹 tab: 显示完整轨迹面板（记录/统计/速度曲线等），隐藏常驻记录条与其它常规区块
+   * 其它 tab: 显示常驻记录条，隐藏完整面板，其余区块由各自模式逻辑控制
+   * @param {boolean} visible 是否处于轨迹模式
+   */
+  _setTrailMode(visible) {
+    const modeSection = this._trailModeSection ||
+      (this._trailModeSection = document.getElementById('trail-mode-section'));
+    if (modeSection) modeSection.classList.toggle('visible', visible);
+
+    const recordBar = this._trailRecordBar ||
+      (this._trailRecordBar = document.getElementById('trail-record-bar'));
+    if (recordBar) recordBar.classList.toggle('hidden', visible);
+
+    if (!this._trailModeSections) {
+      this._trailModeSections = [
+        document.querySelector('.parse-section'),
+        document.querySelector('.radius-section'),
+        document.querySelector('.action-row'),
+        document.querySelector('.circle-list-section'),
+        document.querySelector('.fix-list-section'),
+        document.getElementById('infoArea'),
+      ].filter(Boolean);
+    }
+    for (const el of this._trailModeSections) {
+      el.classList.toggle('hidden-by-mode', visible);
     }
   }
 
@@ -1396,19 +1433,20 @@ class App {
   /**
    * 切换轨迹记录状态
    */
-  _toggleTrailRecording() {
-    if (this.trail.isRecording) {
-      this.trail.stop();
-      this._trailDirty = true;
-      Storage.saveTrail(this.trail); // 停止时保存最终轨迹
-      Toast.show(' 轨迹记录已停止');
-    } else {
-      this.trail.start();
-      this.mapManager.clearTrail();
-      Toast.show(' 轨迹记录已开始');
-    }
-    this._updateTrailUI();
-  }
+_toggleTrailRecording() {
+     if (this.trail.isRecording) {
+       this.trail.stop();
+       this._trailDirty = true;
+       Storage.saveTrail(this.trail); // 停止时保存最终轨迹
+       Toast.show(' 轨迹记录已停止');
+     } else {
+       this.trail.start();
+       this.mapManager.clearTrail();
+       Toast.show(' 轨迹记录已开始');
+       this._setMode('trail');
+     }
+     this._updateTrailUI();
+   }
 
   /**
    * 切换轨迹暂停/继续状态
@@ -2273,49 +2311,77 @@ class App {
   /**
    * 更新轨迹 UI（按钮状态 + 距离显示）
    */
-  _updateTrailUI() {
-    const btn = this._trailRecordBtn || (this._trailRecordBtn = document.getElementById('trail-record-btn'));
-    const pauseBtn = this._trailPauseBtn || (this._trailPauseBtn = document.getElementById('trail-pause-btn'));
-    const clearBtn = this._trailClearBtn || (this._trailClearBtn = document.getElementById('trail-clear-btn'));
-    const statsBtn = this._trailStatsBtn || (this._trailStatsBtn = document.getElementById('trail-stats-btn'));
-    const exportBtn = this._trailExportBtn || (this._trailExportBtn = document.getElementById('export-report-btn'));
-    const smoothBtn = this._trailSmoothBtn || (this._trailSmoothBtn = document.getElementById('trail-smooth-btn'));
-    const distEl = this._trailDistEl || (this._trailDistEl = document.getElementById('trail-distance'));
+_updateTrailUI() {
+     const btn = this._trailRecordBtn || (this._trailRecordBtn = document.getElementById('trail-record-btn'));
+     const pauseBtn = this._trailPauseBtn || (this._trailPauseBtn = document.getElementById('trail-pause-btn'));
+     const clearBtn = this._trailClearBtn || (this._trailClearBtn = document.getElementById('trail-clear-btn'));
+     const statsBtn = this._trailStatsBtn || (this._trailStatsBtn = document.getElementById('trail-stats-btn'));
+     const exportBtn = this._trailExportBtn || (this._trailExportBtn = document.getElementById('export-report-btn'));
+     const smoothBtn = this._trailSmoothBtn || (this._trailSmoothBtn = document.getElementById('trail-smooth-btn'));
+     const distEl = this._trailDistEl || (this._trailDistEl = document.getElementById('trail-distance'));
 
-    // 记录按钮
-    if (btn) {
-      btn.classList.toggle('recording', this.trail.isRecording);
-      btn.innerHTML = this.trail.isRecording
-        ? '<span class="trail-dot"></span> 记录中...'
-        : '<span class="trail-dot"></span> 开始记录';
-    }
+     // 记录按钮
+     if (btn) {
+       btn.classList.toggle('recording', this.trail.isRecording);
+       btn.innerHTML = this.trail.isRecording
+         ? '<span class="trail-dot"></span> 记录中...'
+         : '<span class="trail-dot"></span> 开始记录';
+     }
 
-    // 暂停按钮
-    if (pauseBtn) {
-      pauseBtn.disabled = !this.trail.isRecording;
-      pauseBtn.textContent = this.trail.isPaused ? '继续' : '暂停';
-    }
+     // 暂停按钮
+     if (pauseBtn) {
+       pauseBtn.disabled = !this.trail.isRecording;
+       pauseBtn.textContent = this.trail.isPaused ? '继续' : '暂停';
+     }
 
-    // 距离
-    const dist = this.trail.getDistance();
-    if (distEl) {
-      distEl.textContent = dist > 0 ? formatDistance(dist) : '0m';
-    }
+     // 距离
+     const dist = this.trail.getDistance();
+     if (distEl) {
+       distEl.textContent = dist > 0 ? formatDistance(dist) : '0m';
+     }
 
-    // 操作按钮状态
-    const hasPoints = this.trail.positions.length > 0;
-    if (clearBtn) clearBtn.disabled = !hasPoints;
-    if (statsBtn) statsBtn.disabled = this.trail.positions.length < 2;
-    if (exportBtn) exportBtn.disabled = this.trail.positions.length < 2;
+     // 操作按钮状态
+     const hasPoints = this.trail.positions.length > 0;
+     if (clearBtn) clearBtn.disabled = !hasPoints;
+     if (statsBtn) statsBtn.disabled = this.trail.positions.length < 2;
+     if (exportBtn) exportBtn.disabled = this.trail.positions.length < 2;
 
-    // 平滑按钮状态
-    if (smoothBtn) {
-      smoothBtn.classList.toggle('active', this._trailSmoothing);
-      smoothBtn.innerHTML = this._trailSmoothing
-        ? '<span class="smooth-icon"></span> 平滑'
-        : '<span class="smooth-icon"></span> 平滑';
-    }
-  }
+     // 平滑按钮状态
+     if (smoothBtn) {
+       smoothBtn.classList.toggle('active', this._trailSmoothing);
+       smoothBtn.innerHTML = this._trailSmoothing
+         ? '<span class="smooth-icon"></span> 平滑'
+         : '<span class="smooth-icon"></span> 平滑';
+     }
+
+     // 同步常驻记录条
+     this._updateTrailBar();
+   }
+
+   /**
+    * 同步常驻记录条 UI 状态
+    */
+   _updateTrailBar() {
+     const dot = this._trailBarDot || (this._trailBarDot = document.getElementById('trail-bar-dot'));
+     const state = this._trailBarState || (this._trailBarState = document.getElementById('trail-bar-state'));
+     const btn = this._trailBarBtn || (this._trailBarBtn = document.getElementById('trail-bar-btn'));
+     const dist = this._trailBarDist || (this._trailBarDist = document.getElementById('trail-bar-dist'));
+
+     if (dot) dot.classList.toggle('recording', this.trail.isRecording);
+     if (state) {
+       state.textContent = this.trail.isRecording
+         ? '记录中'
+         : this.trail.isPaused ? '已暂停' : '未记录';
+     }
+     if (btn) {
+       btn.classList.toggle('recording', this.trail.isRecording);
+       btn.textContent = this.trail.isRecording ? '结束记录' : '开始记录';
+     }
+     if (dist) {
+       const d = this.trail.getDistance();
+       dist.textContent = d > 0 ? formatDistance(d) : '0m';
+     }
+   }
 
   /* ========== 通用位置处理 ========== */
 
@@ -2803,11 +2869,11 @@ class App {
       text: '设好半径后点击绘制同心圆',
       placement: 'top',
     },
-    {
-      target: '.trail-section',
-      text: '记录运动路线，查看速度与统计',
-      placement: 'top',
-    },
+{
+       target: '#mode-trail',
+       text: '切换到轨迹模式，记录运动路线并查看统计',
+       placement: 'bottom',
+     },
   ];
 
   /**
