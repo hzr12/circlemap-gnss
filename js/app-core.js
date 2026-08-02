@@ -177,8 +177,8 @@ class App {
         this._enterBackgroundMode();
       }
       this._updatePowerStatus();
-      // 轨迹保存
-      if (this.trail.positions.length > 0) {
+      // 轨迹保存（无论是否有点，都保存录制状态）
+      if (this.trail.positions.length > 0 || this.trail.isRecording) {
         Storage.saveTrail(this.trail);
       }
     };
@@ -3105,14 +3105,26 @@ _updateTrailUI() {
 
     // 恢复轨迹数据（IndexedDB 异步）
     Storage.loadTrail().then(trailData => {
-      if (trailData && Array.isArray(trailData.positions) && trailData.positions.length > 0) {
+      if (!trailData) return;
+
+      const hasPositions = trailData.positions && trailData.positions.length > 0;
+
+      if (hasPositions) {
         this.trail.positions = trailData.positions;
         this.trail.lastPos = trailData.positions[trailData.positions.length - 1];
-        this._updateTrailUI();
         if (trailData.positions.length >= 2) {
           this.mapManager.setTrail(this._getTrailPositions());
         }
       }
+
+      // 恢复录制状态
+      if (trailData.isRecording) {
+        this.trail.isRecording = true;
+        this.trail.isPaused = trailData.isPaused || false;
+        Toast.show(trailData.isPaused ? '轨迹记录已恢复（暂停中）' : '轨迹记录已恢复');
+      }
+
+      this._updateTrailUI();
     }).catch(err => {
       console.warn('[App] 轨迹恢复失败:', err.message);
     });

@@ -54,6 +54,7 @@ class Storage {
 
   static _activeEngine = null;       // 当前使用的引擎：'indexeddb' | 'localstorage'
   static _engineDetected = false;     // 是否已完成引擎检测
+  static _fallbackAttempted = false;  // 本次保存是否已尝试过降级（防止无限循环）
 
   /**
    * 检测并选择存储引擎
@@ -219,9 +220,11 @@ class Storage {
 
   static _indexedDBStore = {
     save(trail) {
-      if (!trail || !trail.positions || trail.positions.length === 0) return;
+      if (!trail) return;
+      // 无点且未录制 → 不保存
+      if ((!trail.positions || trail.positions.length === 0) && !trail.isRecording) return;
 
-      const positions = trail.positions;
+      const positions = trail.positions || [];
       let workingPositions = positions;
       let estimatedSize = Storage._estimateSize(workingPositions);
       const maxSize = Storage._getMaxSize();
@@ -232,7 +235,7 @@ class Storage {
         const step = workingPositions.length / keepCount;
         workingPositions = workingPositions.filter((_, i) => Math.floor(i / step) < keepCount);
         estimatedSize = Storage._estimateSize(workingPositions);
-        console.warn('[Storage] 轨迹超配额（', positions.length, '点），已抽稀至', workingPositions.length, '点');
+        console.warn('[Storage] IndexedDB 轨迹超配额（', positions.length, '点），已抽稀至', workingPositions.length, '点');
       }
 
       const trailData = {
@@ -240,17 +243,22 @@ class Storage {
         positions: workingPositions,
         updatedAt: Date.now(),
         pointCount: workingPositions.length,
-        sizeBytes: estimatedSize
+        sizeBytes: estimatedSize,
+        isRecording: trail.isRecording || false,
+        isPaused: trail.isPaused || false
       };
 
       Storage._saveToIndexedDB(trailData).catch(err => {
         console.warn('[Storage] IndexedDB 保存失败:', err.message);
-        if (Storage._activeEngine === 'indexeddb' && CONFIG.TRAIL_STORAGE_ENGINE === 'auto') {
-          console.info('[Storage] 降级到 localStorage');
+        // auto 模式且未尝试过降级 → 回退到 localStorage
+        if (Storage._activeEngine === 'indexeddb' && CONFIG.TRAIL_STORAGE_ENGINE === 'auto' && !Storage._fallbackAttempted) {
+          console.info('[Storage] IndexedDB 失败，降级到 localStorage');
+          Storage._fallbackAttempted = true;
           Storage._activeEngine = 'localstorage';
           Storage._localStorageStore.save(trail);
+          Storage._fallbackAttempted = false;
         } else {
-          try { Toast.show(' 轨迹保存失败：本地存储空间不足'); } catch (_) {}
+          try { Toast.show('轨迹保存失败：本地存储空间不足'); } catch (_) {}
         }
       });
     },
@@ -258,11 +266,15 @@ class Storage {
     load() {
       return Storage._loadFromIndexedDB()
         .then(data => {
-          if (!data || !data.positions || data.positions.length === 0) return null;
+          if (!data) return null;
+          const hasPositions = data.positions && data.positions.length > 0;
+          if (!hasPositions && !data.isRecording) return null;
           return {
-            positions: data.positions,
+            positions: data.positions || [],
             updatedAt: data.updatedAt,
-            pointCount: data.pointCount
+            pointCount: data.pointCount || (data.positions ? data.positions.length : 0),
+            isRecording: data.isRecording || false,
+            isPaused: data.isPaused || false
           };
         })
         .catch(err => {
@@ -283,7 +295,10 @@ class Storage {
           const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
           store.delete('current');
           transaction.oncomplete = () => {
-            try { localStorage.removeItem(Storage.TRAIL_KEY); } catch (_) {}
+            try {
+              localStorage.removeItem(Storage.TRAIL_KEY);
+              localStorage.removeItem(Storage.TRAIL_META_KEY);
+            } catch (_) {}
             resolve();
           };
           transaction.onerror = (e) => reject(e.target.error);
@@ -296,12 +311,26 @@ class Storage {
 
   static _localStorageStore = {
     save(trail) {
-      if (!trail || !trail.positions || trail.positions.length === 0) return;
+      if (!trail) return;
+      // 无点且未录制 → 不保存
+      if ((!trail.positions || trail.positions.length === 0) && !trail.isRecording) return;
 
-      const positions = trail.positions;
+      const positions = trail.positions || [];
       let workingPositions = positions;
       let estimatedSize = Storage._estimateSize(workingPositions);
       const maxSize = Storage._getMaxSize();
+
+      // 保存录制状态元数据
+      try {
+        const meta = JSON.stringify({
+          isRecording: trail.isRecording || false,
+          isPaused: trail.isPaused || false,
+          updatedAt: Date.now()
+        });
+        localStorage.setItem(Storage.TRAIL_META_KEY, meta);
+      } catch (_) {}
+
+      if (positions.length === 0) return; // 仅保存了元数据，无需保存位置
 
       // 尝试直接保存
       const encoded = Storage._encodeTrail(workingPositions);
@@ -327,35 +356,87 @@ class Storage {
         } else {
           console.warn('[Storage] localStorage 保存失败:', e.message);
         }
-        try { Toast.show(' 轨迹保存失败：本地存储空间不足'); } catch (_) {}
+
+        // auto 模式：localStorage 也失败，尝试回退到 IndexedDB
+        if (Storage._activeEngine === 'localstorage' && CONFIG.TRAIL_STORAGE_ENGINE === 'auto' && Storage._isIndexedDBAvailable() && !Storage._fallbackAttempted) {
+          console.info('[Storage] localStorage 失败，回退到 IndexedDB');
+          Storage._fallbackAttempted = true;
+          Storage._activeEngine = 'indexeddb';
+          Storage._indexedDBStore.save(trail);
+          Storage._fallbackAttempted = false;
+          return;
+        }
+
+        // 彻底失败
+        try { Toast.show('轨迹保存失败：本地存储空间不足，建议切换存储引擎'); } catch (_) {}
       }
     },
 
     load() {
       try {
         const raw = localStorage.getItem(Storage.TRAIL_KEY);
-        if (!raw) return null;
+        let result = null;
 
-        if (raw.charCodeAt(0) === 67) {
-          const decoded = Storage._decodeTrail(raw);
-          if (decoded) {
-            return {
-              positions: decoded.positions,
-              updatedAt: null,
-              pointCount: decoded.positions.length
-            };
+        if (raw) {
+          if (raw.charCodeAt(0) === 67) {
+            const decoded = Storage._decodeTrail(raw);
+            if (decoded) {
+              result = {
+                positions: decoded.positions,
+                updatedAt: null,
+                pointCount: decoded.positions.length
+              };
+            }
+          } else {
+            const data = JSON.parse(raw);
+            if (data && Array.isArray(data.positions)) {
+              result = {
+                positions: data.positions,
+                updatedAt: null,
+                pointCount: data.positions.length
+              };
+            }
           }
         }
 
-        // 旧 JSON 格式
-        const data = JSON.parse(raw);
-        if (data && Array.isArray(data.positions)) {
+        // 读取录制状态元数据（即使没有位置数据也可能有录制状态）
+        let metaResult = null;
+        try {
+          const metaRaw = localStorage.getItem(Storage.TRAIL_META_KEY);
+          if (metaRaw) {
+            const meta = JSON.parse(metaRaw);
+            metaResult = {
+              isRecording: meta.isRecording || false,
+              isPaused: meta.isPaused || false,
+              updatedAt: meta.updatedAt || null
+            };
+          }
+        } catch (_) {}
+
+        // 合并结果
+        if (result) {
+          if (metaResult) {
+            result.isRecording = metaResult.isRecording;
+            result.isPaused = metaResult.isPaused;
+            result.updatedAt = metaResult.updatedAt;
+          } else {
+            result.isRecording = false;
+            result.isPaused = false;
+          }
+          return result;
+        }
+
+        // 无位置数据但有录制状态
+        if (metaResult && metaResult.isRecording) {
           return {
-            positions: data.positions,
-            updatedAt: null,
-            pointCount: data.positions.length
+            positions: [],
+            pointCount: 0,
+            isRecording: metaResult.isRecording,
+            isPaused: metaResult.isPaused,
+            updatedAt: metaResult.updatedAt
           };
         }
+
         return null;
       } catch (e) {
         console.warn('[Storage] localStorage 恢复失败:', e.message);
@@ -366,6 +447,7 @@ class Storage {
     clear() {
       try {
         localStorage.removeItem(Storage.TRAIL_KEY);
+        localStorage.removeItem(Storage.TRAIL_META_KEY);
       } catch (_) {}
       return Promise.resolve();
     }
@@ -374,6 +456,7 @@ class Storage {
   // ===== 轨迹持久化公共接口 =====
 
   static TRAIL_KEY = 'circlemap_trail';
+  static TRAIL_META_KEY = 'circlemap_trail_meta';  // 轨迹元数据（录制状态等）
 
   // 编码参数
   static _TRAIL_MAGIC = 'CT1';
