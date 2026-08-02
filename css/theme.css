@@ -25,6 +25,8 @@
   --bg-warning-subtle: rgba(255, 165, 2, 0.12);
   --shadow-panel: 0 -8px 40px rgba(0, 0, 0, 0.5);
   --shadow-fab: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --handle-bar: rgba(255, 255, 255, 0.15);
+  --handle-bar-active: rgba(255, 255, 255, 0.25);
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 20px;
@@ -86,6 +88,8 @@
   --shadow-fab: 0 4px 16px rgba(0, 0, 0, 0.12);
   --bg-danger-subtle: rgba(255, 71, 87, 0.08);
   --bg-warning-subtle: rgba(255, 165, 2, 0.10);
+  --handle-bar: rgba(0, 0, 0, 0.15);
+  --handle-bar-active: rgba(0, 0, 0, 0.25);
 }
 
 [data-theme="light"] .qq-map .map-controls {

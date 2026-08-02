@@ -43,12 +43,12 @@
   width: 36px;
   height: 4px;
   border-radius: 2px;
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--handle-bar);
   transition: background 0.2s;
 }
 
 .panel-handle:active .handle-bar {
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--handle-bar-active);
 }
 
 /* 面板头部 */
