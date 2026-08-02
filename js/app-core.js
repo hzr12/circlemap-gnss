@@ -1427,12 +1427,17 @@ class App {
    * 切换轨迹记录状态
    */
 _toggleTrailRecording() {
-     if (this.trail.isRecording) {
-       this.trail.stop();
-       this._trailDirty = true;
-       Storage.saveTrail(this.trail); // 停止时保存最终轨迹
-       Toast.show(' 轨迹记录已停止');
-     } else {
+    if (this.trail.isRecording) {
+      const pointCount = this.trail.positions.length;
+      this.trail.stop();
+      this._trailDirty = true;
+      if (pointCount === 0) {
+        Storage.clearTrail(); // 空轨迹 → 清除旧数据
+      } else {
+        Storage.saveTrail(this.trail); // 停止时保存最终轨迹
+      }
+      Toast.show(pointCount === 0 ? ' 未记录到轨迹数据' : ' 轨迹记录已停止');
+    } else {
        this.trail.start();
        this.mapManager.clearTrail();
        Toast.show(' 轨迹记录已开始');

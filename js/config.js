@@ -88,11 +88,18 @@ const CONFIG = {
   GPS_MAX_INTERVAL: 60000,          // 定位最大间隔（静止心跳，ms）
   GPS_MOVE_THRESHOLD: 0.5,          // 运动检测阈值（m/s），超过此速度立即打断静止节流
 
-  // ----- IndexedDB 存储 -----
+  // ----- 存储引擎（IndexedDB / localStorage 可选）-----
+  // 'auto'    - 优先 IndexedDB，失败时降级 localStorage
+  // 'indexeddb' - 强制使用 IndexedDB
+  // 'localstorage' - 强制使用 localStorage（5MB 配额）
+  TRAIL_STORAGE_ENGINE: 'auto',
+
   DB_NAME: 'circlemap_db',          // IndexedDB 数据库名称
   DB_VERSION: 1,                    // IndexedDB 版本号
   DB_STORE_TRAIL: 'trail',          // 轨迹数据存储对象名称
   DB_MAX_SIZE: 25 * 1024 * 1024,   // IndexedDB 最大存储上限（25MB）
+
+  LS_MAX_SIZE: 5 * 1024 * 1024,    // localStorage 最大存储上限（5MB）
 
   // ----- Debug -----
   DEBUG: false,                         // debug 日志开关，true=输出 console.log/console.info

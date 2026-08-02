@@ -2,7 +2,7 @@
  * 数据持久化
  * =============================================
  * 圆圈状态：localStorage 读写（小数据量）
- * 轨迹数据：IndexedDB 存储（大数据量，支持最大 25MB）
+ * 轨迹数据：IndexedDB / localStorage 可选（通过 CONFIG.TRAIL_STORAGE_ENGINE 切换）
  */
 
 class Storage {
@@ -50,7 +50,60 @@ class Storage {
     }
   }
 
-  // ----- IndexedDB 引擎 -----
+  // ===== 存储引擎选择 =====
+
+  static _activeEngine = null;       // 当前使用的引擎：'indexeddb' | 'localstorage'
+  static _engineDetected = false;     // 是否已完成引擎检测
+
+  /**
+   * 检测并选择存储引擎
+   * @returns {'indexeddb'|'localstorage'}
+   */
+  static _resolveEngine() {
+    if (Storage._engineDetected) return Storage._activeEngine;
+
+    const config = CONFIG.TRAIL_STORAGE_ENGINE || 'auto';
+
+    if (config === 'localstorage') {
+      Storage._activeEngine = 'localstorage';
+    } else if (config === 'indexeddb') {
+      Storage._activeEngine = 'indexeddb';
+    } else {
+      // auto：优先 IndexedDB
+      Storage._activeEngine = Storage._isIndexedDBAvailable()
+        ? 'indexeddb'
+        : 'localstorage';
+    }
+
+    Storage._engineDetected = true;
+    console.info('[Storage] 轨迹存储引擎:', Storage._activeEngine);
+    return Storage._activeEngine;
+  }
+
+  /**
+   * 检测 IndexedDB 是否可用
+   * @returns {boolean}
+   */
+  static _isIndexedDBAvailable() {
+    try {
+      return 'indexedDB' in window && typeof window.indexedDB === 'object';
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
+   * 获取当前活跃的存储引擎接口
+   * @returns {object} 包含 save/load 方法的存储接口
+   */
+  static _getActiveStore() {
+    const engine = Storage._resolveEngine();
+    return engine === 'indexeddb'
+      ? Storage._indexedDBStore
+      : Storage._localStorageStore;
+  }
+
+  // ===== IndexedDB 引擎 =====
 
   static _db = null;             // IndexedDB 连接实例
   static _dbInitPromise = null;  // 初始化 Promise（防止并发初始化）
@@ -70,9 +123,7 @@ class Storage {
       request.onupgradeneeded = (e) => {
         const db = e.target.result;
         if (!db.objectStoreNames.contains(CONFIG.DB_STORE_TRAIL)) {
-          // 轨迹存储：keyPath 为 'id'（固定 key='current'）
           const store = db.createObjectStore(CONFIG.DB_STORE_TRAIL, { keyPath: 'id' });
-          // 添加时间戳索引，便于未来查询历史
           store.createIndex('updatedAt', 'updatedAt', { unique: false });
         }
       };
@@ -80,7 +131,6 @@ class Storage {
       request.onsuccess = (e) => {
         Storage._db = e.target.result;
         Storage._dbInitialized = true;
-        // 触发数据迁移（localStorage → IndexedDB）
         Storage._migrateFromLocalStorage().catch(err => {
           console.warn('[Storage] 数据迁移失败:', err.message);
         });
@@ -89,7 +139,7 @@ class Storage {
 
       request.onerror = (e) => {
         console.warn('[Storage] IndexedDB 打开失败:', e.target.error);
-        Storage._dbInitPromise = null; // 允许重试
+        Storage._dbInitPromise = null;
         reject(e.target.error);
       };
     });
@@ -99,24 +149,18 @@ class Storage {
 
   /**
    * 数据迁移：将旧 localStorage 中的轨迹数据迁移到 IndexedDB
-   * 仅在首次初始化时执行一次
    */
   static _migrateFromLocalStorage() {
     return new Promise((resolve) => {
       try {
         const oldData = localStorage.getItem(Storage.TRAIL_KEY);
-        if (!oldData) {
-          resolve(); // 无旧数据
-          return;
-        }
+        if (!oldData) { resolve(); return; }
 
         let positions = null;
         if (oldData.charCodeAt(0) === 67) {
-          // 二进制格式
           const decoded = Storage._decodeTrail(oldData);
           if (decoded) positions = decoded.positions;
         } else {
-          // JSON 格式
           const data = JSON.parse(oldData);
           if (data && Array.isArray(data.positions)) {
             positions = data.positions.filter(p => p && Number.isFinite(p.lat) && Number.isFinite(p.lng));
@@ -124,7 +168,6 @@ class Storage {
         }
 
         if (positions && positions.length > 0) {
-          // 迁移到 IndexedDB
           const trailData = {
             id: 'current',
             positions: positions,
@@ -133,119 +176,63 @@ class Storage {
             sizeBytes: new Blob([oldData]).size
           };
           Storage._saveToIndexedDB(trailData).then(() => {
-            // 迁移成功后清除 localStorage 中的旧数据
             try {
               localStorage.removeItem(Storage.TRAIL_KEY);
-              console.info('[Storage] 轨迹数据已从 localStorage 迁移到 IndexedDB（', positions.length, '点）');
+              console.info('[Storage] 轨迹数据已迁移到 IndexedDB（', positions.length, '点）');
             } catch (_) {}
             resolve();
-          }).catch(err => {
-            console.warn('[Storage] 迁移保存失败:', err.message);
-            resolve(); // 不阻塞主流程
-          });
+          }).catch(() => resolve());
         } else {
           resolve();
         }
       } catch (e) {
-        console.warn('[Storage] 数据迁移异常:', e.message);
         resolve();
       }
     });
   }
 
-  /**
-   * 将轨迹数据保存到 IndexedDB
-   * @param {object} data - { id, positions, updatedAt, pointCount, sizeBytes }
-   * @returns {Promise<void>}
-   */
   static _saveToIndexedDB(data) {
     return Storage._initDB().then(db => {
       return new Promise((resolve, reject) => {
         const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readwrite');
         const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
         store.put(data);
-
         transaction.oncomplete = () => resolve();
         transaction.onerror = (e) => reject(e.target.error);
       });
     });
   }
 
-  /**
-   * 从 IndexedDB 加载轨迹数据
-   * @returns {Promise<object|null>}
-   */
   static _loadFromIndexedDB() {
     return Storage._initDB().then(db => {
       return new Promise((resolve, reject) => {
         const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readonly');
         const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
         const request = store.get('current');
-
-        request.onsuccess = () => {
-          resolve(request.result || null);
-        };
+        request.onsuccess = () => resolve(request.result || null);
         request.onerror = (e) => reject(e.target.error);
       });
     });
   }
 
-  // ----- 轨迹持久化 -----
+  // ===== IndexedDB 存储接口 =====
 
-  static TRAIL_KEY = 'circlemap_trail';
-
-  // 魔数 'CT1'（3B）+ 版本（1B）头部，随后每点定长 26 字节：
-  //   lat/lng: float64（全精度无损往返）| time: uint32 秒 | speed: uint16 ×100
-  //   heading: uint16 ×100 | accuracy: uint16（0-65535m，地下高精度不截断）
-  // 25MB 配额可存储约 96 万点（25MB / 26B），远超 15 万点上限
-  static _TRAIL_MAGIC = 'CT1';
-  static _TRAIL_VERSION = 1;
-  static _TRAIL_POINT_BYTES = 26;
-
-  /**
-   * 计算轨迹数据的估算大小（字节）
-   * @param {Array} positions
-   * @returns {number}
-   */
-  static _estimateSize(positions) {
-    return 4 + positions.length * Storage._TRAIL_POINT_BYTES;
-  }
-
-  /**
-   * 检查是否超出存储上限
-   * @param {number} sizeBytes
-   * @returns {boolean}
-   */
-  static _isOverLimit(sizeBytes) {
-    return sizeBytes > CONFIG.DB_MAX_SIZE;
-  }
-
-  /**
-   * 轨迹存储适配层（IndexedDB 实现）：
-   *   异步保存/加载，内部自行吞错并告警
-   *   save(trail) → void（异步，fire-and-forget）
-   *   load()      → Promise<{positions:Array}|null>
-   */
-  static _trailStore = {
+  static _indexedDBStore = {
     save(trail) {
-      if (!trail || !trail.positions || trail.positions.length === 0) {
-        return;
-      }
+      if (!trail || !trail.positions || trail.positions.length === 0) return;
 
       const positions = trail.positions;
       let workingPositions = positions;
-
-      // 检查存储上限，必要时抽稀
       let estimatedSize = Storage._estimateSize(workingPositions);
-      if (Storage._isOverLimit(estimatedSize)) {
-        // 计算需要抽稀的比例
-        const ratio = CONFIG.DB_MAX_SIZE / estimatedSize;
+      const maxSize = Storage._getMaxSize();
+
+      if (estimatedSize > maxSize) {
+        const ratio = maxSize / estimatedSize;
         const keepCount = Math.floor(workingPositions.length * ratio);
-        // 等间隔抽稀
         const step = workingPositions.length / keepCount;
         workingPositions = workingPositions.filter((_, i) => Math.floor(i / step) < keepCount);
         estimatedSize = Storage._estimateSize(workingPositions);
-        console.warn('[Storage] 轨迹超配额（', positions.length, '点），已抽稀至', workingPositions.length, '点保存');
+        console.warn('[Storage] 轨迹超配额（', positions.length, '点），已抽稀至', workingPositions.length, '点');
       }
 
       const trailData = {
@@ -256,19 +243,22 @@ class Storage {
         sizeBytes: estimatedSize
       };
 
-      // 异步保存，fire-and-forget
       Storage._saveToIndexedDB(trailData).catch(err => {
-        console.warn('[Storage] 轨迹保存失败:', err.message);
-        try { Toast.show(' 轨迹保存失败：本地存储空间不足'); } catch (_) { /* 页面隐藏时无 toast */ }
+        console.warn('[Storage] IndexedDB 保存失败:', err.message);
+        if (Storage._activeEngine === 'indexeddb' && CONFIG.TRAIL_STORAGE_ENGINE === 'auto') {
+          console.info('[Storage] 降级到 localStorage');
+          Storage._activeEngine = 'localstorage';
+          Storage._localStorageStore.save(trail);
+        } else {
+          try { Toast.show(' 轨迹保存失败：本地存储空间不足'); } catch (_) {}
+        }
       });
     },
 
     load() {
       return Storage._loadFromIndexedDB()
         .then(data => {
-          if (!data || !data.positions || data.positions.length === 0) {
-            return null;
-          }
+          if (!data || !data.positions || data.positions.length === 0) return null;
           return {
             positions: data.positions,
             updatedAt: data.updatedAt,
@@ -276,43 +266,171 @@ class Storage {
           };
         })
         .catch(err => {
-          console.warn('[Storage] 轨迹恢复失败:', err.message);
+          console.warn('[Storage] IndexedDB 恢复失败:', err.message);
+          if (Storage._activeEngine === 'indexeddb' && CONFIG.TRAIL_STORAGE_ENGINE === 'auto') {
+            console.info('[Storage] 降级到 localStorage 读取');
+            Storage._activeEngine = 'localstorage';
+            return Storage._localStorageStore.load();
+          }
           return null;
         });
+    },
+
+    clear() {
+      return Storage._initDB().then(db => {
+        return new Promise((resolve, reject) => {
+          const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readwrite');
+          const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
+          store.delete('current');
+          transaction.oncomplete = () => {
+            try { localStorage.removeItem(Storage.TRAIL_KEY); } catch (_) {}
+            resolve();
+          };
+          transaction.onerror = (e) => reject(e.target.error);
+        });
+      });
     }
   };
 
+  // ===== localStorage 存储接口 =====
+
+  static _localStorageStore = {
+    save(trail) {
+      if (!trail || !trail.positions || trail.positions.length === 0) return;
+
+      const positions = trail.positions;
+      let workingPositions = positions;
+      let estimatedSize = Storage._estimateSize(workingPositions);
+      const maxSize = Storage._getMaxSize();
+
+      // 尝试直接保存
+      const encoded = Storage._encodeTrail(workingPositions);
+      try {
+        localStorage.setItem(Storage.TRAIL_KEY, encoded);
+        return;
+      } catch (e) {
+        if (e.name === 'QuotaExceededError' || e.code === 22) {
+          // 抽稀重试
+          const ratio = maxSize / estimatedSize;
+          const keepCount = Math.floor(workingPositions.length * ratio);
+          const step = workingPositions.length / keepCount;
+          workingPositions = workingPositions.filter((_, i) => Math.floor(i / step) < keepCount);
+          console.warn('[Storage] localStorage 超配额（', positions.length, '点），已抽稀至', workingPositions.length, '点');
+
+          try {
+            const encodedHalf = Storage._encodeTrail(workingPositions);
+            localStorage.setItem(Storage.TRAIL_KEY, encodedHalf);
+            return;
+          } catch (e2) {
+            console.warn('[Storage] localStorage 抽稀保存也失败:', e2.message);
+          }
+        } else {
+          console.warn('[Storage] localStorage 保存失败:', e.message);
+        }
+        try { Toast.show(' 轨迹保存失败：本地存储空间不足'); } catch (_) {}
+      }
+    },
+
+    load() {
+      try {
+        const raw = localStorage.getItem(Storage.TRAIL_KEY);
+        if (!raw) return null;
+
+        if (raw.charCodeAt(0) === 67) {
+          const decoded = Storage._decodeTrail(raw);
+          if (decoded) {
+            return {
+              positions: decoded.positions,
+              updatedAt: null,
+              pointCount: decoded.positions.length
+            };
+          }
+        }
+
+        // 旧 JSON 格式
+        const data = JSON.parse(raw);
+        if (data && Array.isArray(data.positions)) {
+          return {
+            positions: data.positions,
+            updatedAt: null,
+            pointCount: data.positions.length
+          };
+        }
+        return null;
+      } catch (e) {
+        console.warn('[Storage] localStorage 恢复失败:', e.message);
+        return null;
+      }
+    },
+
+    clear() {
+      try {
+        localStorage.removeItem(Storage.TRAIL_KEY);
+      } catch (_) {}
+      return Promise.resolve();
+    }
+  };
+
+  // ===== 轨迹持久化公共接口 =====
+
+  static TRAIL_KEY = 'circlemap_trail';
+
+  // 编码参数
+  static _TRAIL_MAGIC = 'CT1';
+  static _TRAIL_VERSION = 1;
+  static _TRAIL_POINT_BYTES = 26;
+
   /**
-   * 保存轨迹数据（兼容旧同步签名，内部走 IndexedDB 异步）
+   * 获取当前引擎的存储上限
+   * @returns {number} 字节
+   */
+  static _getMaxSize() {
+    const engine = Storage._resolveEngine();
+    return engine === 'indexeddb' ? CONFIG.DB_MAX_SIZE : CONFIG.LS_MAX_SIZE;
+  }
+
+  static _estimateSize(positions) {
+    return 4 + positions.length * Storage._TRAIL_POINT_BYTES;
+  }
+
+  /**
+   * 保存轨迹数据
    * @param {Trail} trail
    */
   static saveTrail(trail) {
-    Storage._trailStore.save(trail);
+    const store = Storage._getActiveStore();
+    store.save(trail);
   }
 
   /**
-   * 恢复轨迹数据（异步，返回 Promise）
+   * 恢复轨迹数据
    * @returns {Promise<{positions:Array}|null>}
    */
   static loadTrail() {
-    return Storage._trailStore.load();
+    const store = Storage._getActiveStore();
+    const result = store.load();
+    // localStorage store.load() 返回同步值，包装为 Promise
+    if (result && typeof result.then === 'function') {
+      return result;
+    }
+    return Promise.resolve(result);
   }
 
   /**
-   * 获取 IndexedDB 存储统计信息
-   * @returns {Promise<{pointCount:number,sizeBytes:number,updatedAt:number}|null>}
+   * 获取轨迹存储统计信息
+   * @returns {Promise<{pointCount:number,sizeBytes:number,updatedAt:number,engine:string}|null>}
    */
   static getTrailInfo() {
-    return Storage._loadFromIndexedDB()
-      .then(data => {
-        if (!data) return null;
-        return {
-          pointCount: data.pointCount || (data.positions ? data.positions.length : 0),
-          sizeBytes: data.sizeBytes || 0,
-          updatedAt: data.updatedAt || 0
-        };
-      })
-      .catch(() => null);
+    const engine = Storage._resolveEngine();
+    return Storage.loadTrail().then(data => {
+      if (!data) return null;
+      return {
+        pointCount: data.pointCount || (data.positions ? data.positions.length : 0),
+        sizeBytes: data.positions ? Storage._estimateSize(data.positions) : 0,
+        updatedAt: data.updatedAt || 0,
+        engine: engine
+      };
+    });
   }
 
   /**
@@ -320,23 +438,33 @@ class Storage {
    * @returns {Promise<void>}
    */
   static clearTrail() {
-    return Storage._initDB().then(db => {
-      return new Promise((resolve, reject) => {
-        const transaction = db.transaction(CONFIG.DB_STORE_TRAIL, 'readwrite');
-        const store = transaction.objectStore(CONFIG.DB_STORE_TRAIL);
-        store.delete('current');
-
-        transaction.oncomplete = () => {
-          // 同时清除 localStorage 中的旧数据
-          try { localStorage.removeItem(Storage.TRAIL_KEY); } catch (_) {}
-          resolve();
-        };
-        transaction.onerror = (e) => reject(e.target.error);
-      });
-    });
+    const store = Storage._getActiveStore();
+    return Promise.resolve(store.clear());
   }
 
-  /** 轨迹点数组 → Latin1 二进制字符串（编码工具函数，保留供未来导出使用） */
+  /**
+   * 切换存储引擎（运行时切换）
+   * @param {'indexeddb'|'localstorage'|'auto'} engine
+   */
+  static setEngine(engine) {
+    CONFIG.TRAIL_STORAGE_ENGINE = engine;
+    Storage._engineDetected = false;
+    Storage._activeEngine = null;
+    const resolved = Storage._resolveEngine();
+    console.info('[Storage] 切换存储引擎:', resolved);
+  }
+
+  /**
+   * 获取当前存储引擎名称
+   * @returns {'indexeddb'|'localstorage'}
+   */
+  static getEngine() {
+    return Storage._resolveEngine();
+  }
+
+  // ===== 编解码工具 =====
+
+  /** 轨迹点数组 → Latin1 二进制字符串 */
   static _encodeTrail(positions) {
     const n = positions.length;
     const PB = Storage._TRAIL_POINT_BYTES;
@@ -354,7 +482,6 @@ class Storage {
       dv.setUint16(o, Math.max(0, Math.min(35999, Math.round(h * 100))), true); o += 2;
       dv.setUint16(o, Math.max(0, Math.min(65535, Math.round(Number(p.accuracy) || 0))), true); o += 2;
     }
-    // Uint8Array → Latin1 字符串（1 字节/字符），分块拼接防栈溢出
     let str = '';
     const CHUNK = 8192;
     for (let i = 0; i < bytes.length; i += CHUNK) {
@@ -363,7 +490,7 @@ class Storage {
     return str;
   }
 
-  /** Latin1 二进制字符串 → 轨迹点数组（魔数/版本校验失败返回 null） */
+  /** Latin1 二进制字符串 → 轨迹点数组 */
   static _decodeTrail(str) {
     const len = str.length;
     const bytes = new Uint8Array(len);
