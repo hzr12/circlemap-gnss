@@ -683,25 +683,17 @@ class App {
       this._roomSection.classList.toggle('visible', mode === 'room');
     }
 
-    // 显示/隐藏轨迹: 轨迹 tab → 独占完整面板，隐藏常驻记录条；其它模式反向
+    // 轨迹模式: 隐藏其它常规区块，轨迹面板始终显示在底部
     this._setTrailMode(mode === 'trail');
   }
 
   /**
-   * 切换轨迹模式区域显隐
-   * 轨迹 tab: 显示完整轨迹面板（记录/统计/速度曲线等），隐藏常驻记录条与其它常规区块
-   * 其它 tab: 显示常驻记录条，隐藏完整面板，其余区块由各自模式逻辑控制
+   * 切换轨迹模式下的区块显隐
+   * 轨迹 tab: 隐藏其它常规区块
+   * 其它 tab: 显示所有区块
    * @param {boolean} visible 是否处于轨迹模式
    */
   _setTrailMode(visible) {
-    const modeSection = this._trailModeSection ||
-      (this._trailModeSection = document.getElementById('trail-mode-section'));
-    if (modeSection) modeSection.classList.toggle('visible', visible);
-
-    const recordBar = this._trailRecordBar ||
-      (this._trailRecordBar = document.getElementById('trail-record-bar'));
-    if (recordBar) recordBar.classList.toggle('hidden', visible);
-
     if (!this._trailModeSections) {
       this._trailModeSections = [
         document.querySelector('.parse-section'),

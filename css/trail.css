@@ -64,17 +64,7 @@
   width: 100% !important;
   height: 100% !important;
 }
-/* ---------- 轨迹独立模式容器（仅轨迹 tab 显示） ---------- */
-.trail-mode-section {
-  display: none;
-  flex-direction: column;
-  gap: 10px;
-}
-.trail-mode-section.visible {
-  display: flex;
-}
-
-/* ---------- 常驻记录条（非轨迹 tab 显示） ---------- */
+/* ---------- 常驻记录条 ---------- */
 .trail-record-bar {
   display: flex;
   align-items: center;
@@ -88,9 +78,6 @@
   color: var(--text-secondary);
   height: 24px;
   overflow: hidden;
-}
-.trail-record-bar.hidden {
-  display: none;
 }
 .trail-record-bar .trail-dot {
   width: 8px;
