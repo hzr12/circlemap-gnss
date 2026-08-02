@@ -146,7 +146,10 @@ class Storage {
       dv.setFloat64(o, Number(p.lng) || 0, true); o += 8;
       dv.setUint32(o, Math.max(0, Math.floor((Number(p.time) || 0) / 1000)), true); o += 4;
       dv.setUint16(o, Math.max(0, Math.min(65535, Math.round((Number(p.speed) || 0) * 100))), true); o += 2;
-      dv.setUint16(o, Math.max(0, Math.min(65535, Math.round((Number(p.heading) || 0) * 100))), true); o += 2;
+      // heading：角度循环量，先归一化 [0,360)（720°→0、-45°→315°），
+      // 上限 35999 防 359.999° 舍入后溢出为 360.00
+      const h = (((Number(p.heading) || 0) % 360) + 360) % 360;
+      dv.setUint16(o, Math.max(0, Math.min(35999, Math.round(h * 100))), true); o += 2;
       dv.setUint16(o, Math.max(0, Math.min(65535, Math.round(Number(p.accuracy) || 0))), true); o += 2;
     }
     // Uint8Array → Latin1 字符串（1 字节/字符），分块拼接防栈溢出
