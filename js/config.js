@@ -78,14 +78,21 @@ const CONFIG = {
   ENABLE_PREDICTION: true,              // 玩家路径预测椭圆（多人模式 10s/30s 椭圆投影）
 
   // ----- 轨迹 -----
-  TRAIL_SAMPLE_MIN_DIST: 10,            // 轨迹采样最小间隔（米）
+  TRAIL_SAMPLE_MIN_DIST: 5,             // 轨迹采样最小间隔（米）
   TRAIL_JITTER_FACTOR: 1.5,            // 抖动检测：位移必须 > accuracy × 倍数才记录
-  TRAIL_MAX_POINTS: 75000,              // 轨迹最大点数（>10m 采样 ≈ 750km 移动量）
+  TRAIL_MAX_POINTS: 150000,             // 轨迹最大点数（>5m 采样 ≈ 750km 移动量）
 
   // ----- GPS 节流（百度式速度自适应）-----
   GPS_ADAPTIVE_K: 8000,             // 自适应系数：间隔 = K/速度（跑动 2.3s、步行 5.7s、静止 60s）
   GPS_MIN_INTERVAL: 1000,           // 定位最小间隔（ms）
   GPS_MAX_INTERVAL: 60000,          // 定位最大间隔（静止心跳，ms）
+  GPS_MOVE_THRESHOLD: 0.5,          // 运动检测阈值（m/s），超过此速度立即打断静止节流
+
+  // ----- IndexedDB 存储 -----
+  DB_NAME: 'circlemap_db',          // IndexedDB 数据库名称
+  DB_VERSION: 1,                    // IndexedDB 版本号
+  DB_STORE_TRAIL: 'trail',          // 轨迹数据存储对象名称
+  DB_MAX_SIZE: 25 * 1024 * 1024,   // IndexedDB 最大存储上限（25MB）
 
   // ----- Debug -----
   DEBUG: false,                         // debug 日志开关，true=输出 console.log/console.info

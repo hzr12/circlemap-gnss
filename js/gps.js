@@ -423,6 +423,13 @@ class GPSManager {
   }
 
   /**
+   * 获取当前节流间隔（毫秒）
+   */
+  get currentInterval() {
+    return this._gpsMinInterval;
+  }
+
+  /**
    * 探测 Capacitor GNSS 原生插件是否存在。
    * 仅存储插件引用，不启动监听——监听需要定位权限，延迟到 startGnss() 调用。
    */
@@ -880,6 +887,11 @@ class GPSManager {
         });
 
         if (now - this._lastProcessedTime < this._gpsMinInterval) {
+          // 静止节流中的运动检测：若浏览器报告速度 > 阈值，立即跳过节流窗口
+          // 防止静止时突然移动却要等 60s 才反应过来
+          const rawSpeed = position.coords.speed;
+          const rawSpeedOK = rawSpeed != null && rawSpeed > CONFIG.GPS_MOVE_THRESHOLD;
+
           // 择优缓存：节流窗口内保留精度最佳的位置，而非直接丢弃
           const curAcc = position.coords.accuracy || Infinity;
           if (!this._bestPendingPosition || curAcc < this._bestPendingPosition.accuracy) {
@@ -888,7 +900,10 @@ class GPSManager {
           // 仍视为有效信号，更新超时检测
           this._lastPositionTime = now;
           this._consecutiveTimeouts = 0;
-          return;
+
+          if (!rawSpeedOK) return;
+          // 强制打断：重置节流计时，让当前位置立即被处理
+          this._lastProcessedTime = now - this._gpsMinInterval;
         }
         this._lastProcessedTime = now;
 

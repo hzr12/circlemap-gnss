@@ -53,7 +53,7 @@ class Trail {
   }
 
   /**
-   * 采样记录一个轨迹点（每 >10m 采一个点，上限由 CONFIG.TRAIL_MAX_POINTS 控制）
+   * 采样记录一个轨迹点（每 >5m 采一个点，上限由 CONFIG.TRAIL_MAX_POINTS 控制）
    * 抖动过滤：位移必须同时超过最小间距和 accuracy × 抖动系数，避免站定时 GPS 漂移鬼点
    * @param {{lat:number,lng:number,time?:number,accuracy?:number,speed?:number,heading?:number}} pt
    * @returns {boolean} 是否实际添加了点

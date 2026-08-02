@@ -1069,6 +1069,7 @@ class App {
         if (this._speedHistory.length > 2500) this._speedHistory.shift();
         this._updateSpeedChart();
       }
+      this._updatePowerStatus();
       if (!this._queuePending) this._queuePending = 0;
       if (this._queuePending >= 3) return;
       this._queuePending++;
@@ -1407,7 +1408,7 @@ class App {
     this.mapManager.clearTrail();
     this._updateTrailUI();
     this._trailDirty = true;
-    Storage.saveTrail(this.trail); // 清除持久化
+    Storage.clearTrail(); // 清除 IndexedDB 持久化
 
     Toast.showUndo('轨迹已清除', () => {
       this.trail.positions = savedPositions;
@@ -1493,15 +1494,8 @@ _toggleTrailRecording() {
   _updatePowerStatus() {
     const el = document.getElementById('power-status');
     if (!el) return;
-    let interval;
-    if (this._isBackground) {
-      interval = this.gpsManager.isPowerSaving ? 60 : 15;
-    } else if (this.gpsManager.isPowerSaving) {
-      interval = 30;
-    } else {
-      interval = 2;
-    }
-    el.textContent = `定位间隔: ${interval}s`;
+    const interval = this.gpsManager.currentInterval;
+    el.textContent = `定位间隔: ${(interval / 1000).toFixed(1)}s`;
   }
 
   /**
@@ -3104,16 +3098,19 @@ _updateTrailUI() {
       }
     }
 
-    // 恢复轨迹数据
-    const trailData = Storage.loadTrail();
-    if (trailData && Array.isArray(trailData.positions) && trailData.positions.length > 0) {
-      this.trail.positions = trailData.positions;
-      this.trail.lastPos = trailData.positions[trailData.positions.length - 1];
-      this._updateTrailUI();
-      if (trailData.positions.length >= 2) {
-        this.mapManager.setTrail(this._getTrailPositions());
+    // 恢复轨迹数据（IndexedDB 异步）
+    Storage.loadTrail().then(trailData => {
+      if (trailData && Array.isArray(trailData.positions) && trailData.positions.length > 0) {
+        this.trail.positions = trailData.positions;
+        this.trail.lastPos = trailData.positions[trailData.positions.length - 1];
+        this._updateTrailUI();
+        if (trailData.positions.length >= 2) {
+          this.mapManager.setTrail(this._getTrailPositions());
+        }
       }
-    }
+    }).catch(err => {
+      console.warn('[App] 轨迹恢复失败:', err.message);
+    });
   }
 
   /**
