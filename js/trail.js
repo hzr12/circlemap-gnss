@@ -42,6 +42,7 @@ class Trail {
    */
   resume() {
     this.isPaused = false;
+    this.lastPos = null;
   }
 
   /**
@@ -50,6 +51,16 @@ class Trail {
   clear() {
     this.positions = [];
     this.lastPos = null;
+  }
+
+  /**
+   * 恢复轨迹点（用于撤销操作）
+   * @param {Array} positions
+   * @param {{lat:number,lng:number}|null} lastPos
+   */
+  restore(positions, lastPos) {
+    this.positions = positions;
+    this.lastPos = lastPos;
   }
 
   /**

@@ -202,6 +202,7 @@ function radiusToSlider(radius) {
  * @returns {string}
  */
 function formatDistance(meters) {
+  if (!Number.isFinite(meters) || meters < 0) return '--';
   const val = Math.round(meters);
   if (val < 10) return `${val}m`;
   if (val < 1000) return `${val}m`;

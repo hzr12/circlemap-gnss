@@ -672,7 +672,11 @@ class RoomManager {
             }
           }
           // 缓存尚未到位的玩家队伍，待 position/presence 到达时回填
-          this._pendingPlayerTeams = { ...data.playerTeams };
+          const pending = {};
+          for (const [playerId, teamId] of Object.entries(data.playerTeams)) {
+            if (!this._players[playerId]) pending[playerId] = teamId;
+          }
+          this._pendingPlayerTeams = pending;
           this._schedulePositionUpdate();
         }
         // 同步房主的位置共享设定
@@ -862,9 +866,15 @@ class RoomManager {
     // 房主身份同步：双房主并存（并发接管/重连竞态）按 deviceId 小者胜收敛；
     // 无条件让位会让双方都让位 → 房间无人为房主
     if (flags.host && senderId !== this._deviceId) {
-      this._hostId = senderId;
-      if (this._isHost && senderId < this._deviceId) {
-        this._isHost = false;
+      if (this._isHost) {
+        if (senderId < this._deviceId) {
+          this._isHost = false;
+          this._hostId = senderId;
+          if (this.onHostChange) this.onHostChange(senderId);
+        }
+        // else: 我们保持host，不改变_hostId
+      } else {
+        this._hostId = senderId;
         if (this.onHostChange) this.onHostChange(senderId);
       }
     }

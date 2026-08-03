@@ -16,11 +16,11 @@ class KalmanFilter {
     this._y = 0;          // 位置估计 y（米，相对参考点）
     this._vx = 0;         // 速度估计 vx（米/秒）
     this._vy = 0;         // 速度估计 vy（米/秒）
-    // 协方差 P（4×4 行主序 [x, y, vx, vy]），初始位置不确定度 50m
+    // 协方差 P（4×4 行主序 [x, y, vx, vy]），初始位置不确定度 50m，速度不确定度 5m/s
     this._P = [2500, 0, 0, 0,
                0, 2500, 0, 0,
-               0, 0, 0, 0,
-               0, 0, 0, 0];
+               0, 0, 25, 0,
+               0, 0, 0, 25];
     this._refLat = 0;     // 参考点纬度（度）
     this._refLng = 0;     // 参考点经度（度）
     this._cosLat = 1;     // cos(refLat)，经度→米换算系数
@@ -224,6 +224,7 @@ class GPSManager {
     this.watchId = null;
     this.currentPosition = null;
     this.isWatching = false;
+    this._destroyed = false;
 
     // 回调钩子
     this.onPositionChange = null;
@@ -250,6 +251,7 @@ class GPSManager {
     this._gnssListeningStarted = false; // startGnss() 是否已调用
     this._gnssStarting = null;     // startGnss() 的 Promise，防止并发
     this._gnssStopRequested = false; // stopGnss() 在启动过程中被调用时置位，中止启动
+    this._gnssPollRunning = false;  // GNSS 轮询兜底是否正在执行
     this._gnssStatusHandle = null; // gnssStatus 事件监听器句柄
     this._gnssNmeaHandle = null;   // nmeaSentence 事件监听器句柄
     this._gnssPollId = null;       // GNSS 轮询兜底定时器
@@ -302,6 +304,7 @@ class GPSManager {
   _initBatteryMonitor() {
     if (!navigator.getBattery) return;
     navigator.getBattery().then(battery => {
+      if (this._destroyed) return;
       this._battery = battery;
       this._batteryCheck = () => {
         const wasLow = this._lowBattery;
@@ -313,11 +316,13 @@ class GPSManager {
           if (!this._powerSaving) {
             this.togglePowerSaving(true);
             if (this.onPowerSavingChange) this.onPowerSavingChange(true);
-          }
-          // 仅在刚进入低电量时重启 watchPosition
-          if (this.isWatching) {
-            this.stopWatching();
-            this.startWatching({ enableHighAccuracy: false, timeout: 15000, maximumAge: 15000 });
+            // togglePowerSaving已重启watchPosition，跳过显式重启
+          } else {
+            // 省电已开启，仅用更严格参数重启
+            if (this.isWatching) {
+              this.stopWatching();
+              this.startWatching({ enableHighAccuracy: false, timeout: 15000, maximumAge: 15000 });
+            }
           }
         }
         // 电量 < 10%：自动停止追踪
@@ -627,12 +632,17 @@ class GPSManager {
    */
   _removeGnssListeners() {
     try {
-      if (this._gnssStatusHandle) { this._gnssStatusHandle.remove(); this._gnssStatusHandle = null; }
-      if (this._gnssNmeaHandle) { this._gnssNmeaHandle.remove(); this._gnssNmeaHandle = null; }
+      if (this._gnssStatusHandle) { this._gnssStatusHandle.remove(); }
     } catch (e) {
-      // Capacitor v6 用 remove()，旧版可能没有
       try { this._gnssPlugin?.removeAllListeners?.(); } catch (_) {}
     }
+    this._gnssStatusHandle = null;
+    try {
+      if (this._gnssNmeaHandle) { this._gnssNmeaHandle.remove(); }
+    } catch (e) {
+      try { this._gnssPlugin?.removeAllListeners?.(); } catch (_) {}
+    }
+    this._gnssNmeaHandle = null;
   }
 
   /**
@@ -640,6 +650,7 @@ class GPSManager {
    */
   stopGnss() {
     this._gnssStopRequested = true;
+    this._gnssStarting = null;
     this._removeGnssListeners();
     this._stopGnssPollFallback();
     if (this._gnssPlugin && this._gnssListeningStarted) {
@@ -703,6 +714,7 @@ class GPSManager {
   _downgrade() {
     if (this._downgraded) return;
     this._downgraded = true;
+    this._consecutiveTimeouts = 0;
     if (CONFIG.DEBUG) console.warn('[GPS] 连续超时达阈值，降级到低精度定位');
     if (this.onDowngrade) this.onDowngrade(this._consecutiveTimeouts);
 
@@ -753,6 +765,7 @@ class GPSManager {
       // 成功 → 恢复高精度
       this._downgraded = false;
       this._consecutiveTimeouts = 0;
+      this._lastProcessedTime = Date.now();
       this._stopRecoveryTimer();
       console.log('[GPS] 高精度定位恢复成功');
       if (this.onRecovery) this.onRecovery(true);
@@ -911,8 +924,6 @@ class GPSManager {
           this._consecutiveTimeouts = 0;
 
           if (!rawSpeedOK) return;
-          // 强制打断：重置节流计时，让当前位置立即被处理
-          this._lastProcessedTime = now - this._gpsMinInterval;
         }
         this._lastActualInterval = now - prevProcessedTime;
         this._lastProcessedTime = now;
@@ -953,6 +964,7 @@ class GPSManager {
         switch (error.code) {
           case error.PERMISSION_DENIED:
             message = '定位权限被拒绝';
+            this.stopWatching(); // 权限拒绝时停止追踪，避免无限降级/恢复循环
             break;
           case error.POSITION_UNAVAILABLE:
             message = '无法获取位置信息（GPS 信号弱或不可用）';
@@ -990,6 +1002,7 @@ class GPSManager {
    * 释放所有资源（GPS + GNSS + 电池监控）
    */
   destroy() {
+    this._destroyed = true;
     this.stopWatching();
     this.stopGnss();
     this._cleanupBatteryMonitor();

@@ -10,16 +10,22 @@ class App {
     this.mapManager = new MapManager();
     this.gpsManager = new GPSManager();
     this.gpsManager.onCriticalBattery = () => {
-      Toast.show(' 电量不足 10%，追踪已自动停止');
-      this._isWatching = false;
-      this._gpsBtn.classList.remove('watching');
-      this._gpsBtn.title = '定位到我的位置';
-      this._hideSpeedChart();
-      // 清理速度曲线数据，避免重启追踪时显示旧数据（与 _stopWatching 保持一致）
-      this._speedHistory = [];
-      if (this._speedChart) {
-        this._speedChart.data.datasets[0].data = [];
-        this._speedChart.update('none');
+      if (this._isWatching) {
+        Toast.show(' 电量不足 10%，追踪已自动停止');
+        this._isWatching = false;
+        this.gpsManager.stopWatching();
+        this.gpsManager.onPositionChange = null;
+        this.gpsManager.onError = null;
+        this.gpsManager.onDowngrade = null;
+        this.gpsManager.onRecovery = null;
+        this._gpsBtn.classList.remove('watching');
+        this._gpsBtn.title = '定位到我的位置';
+        this._hideSpeedChart();
+        this._speedHistory = [];
+        if (this._speedChart) {
+          this._speedChart.data.datasets[0].data = [];
+          this._speedChart.update('none');
+        }
       }
     };
     this.gpsManager.onPowerSavingChange = (isOn) => {
@@ -1075,10 +1081,10 @@ class App {
       this._queuePending++;
       this._processQueue = this._processQueue
         .then(() => {
-          if (this._queuePending > 0) this._queuePending--;
           return this._processPosition(pos);
         })
-        .catch(() => { if (this._queuePending > 0) this._queuePending--; });
+        .catch(() => { /* 静默 */ })
+        .finally(() => { if (this._queuePending > 0) this._queuePending--; });
     };
     this.gpsManager.onError = (err) => {
       if (CONFIG.DEBUG) console.warn('[GPS] 追踪出错:', err.message);
@@ -1095,6 +1101,10 @@ class App {
         Toast.show(' GPS 信号仍未恢复，继续使用低精度定位');
       }
       this._updateStatusBar(true);
+    };
+    this.gpsManager.onRestoreTracking = () => {
+      Toast.show(' 电量恢复，已自动恢复追踪');
+      this._startWatching();
     };
     this.gpsManager.startWatching();
 
@@ -1114,6 +1124,7 @@ class App {
     this.gpsManager.onError = null;
     this.gpsManager.onDowngrade = null;
     this.gpsManager.onRecovery = null;
+    this.gpsManager.onRestoreTracking = null;
     this._prevDistances = {};
     this._hideSpeedChart();
 
@@ -1301,6 +1312,7 @@ class App {
    * 后台位置处理（静默版 _processPosition，无 UI 刷新）
    */
   async _processBackgroundPosition(pos) {
+    if (!this._isBackground) return;
     try {
       const convPos = await this.mapManager.wgs84ToGcj02(pos);
       this.myPosition = convPos;
@@ -1348,7 +1360,7 @@ class App {
         );
       }
     } catch (e) {
-      // 静默
+      if (CONFIG.DEBUG) console.error('[Background] _processBackgroundPosition error:', e.message);
     }
   }
 
@@ -1411,8 +1423,7 @@ class App {
     Storage.clearTrail(); // 清除 IndexedDB 持久化
 
     Toast.showUndo('轨迹已清除', () => {
-      this.trail.positions = savedPositions;
-      this.trail.lastPos = savedLastPos;
+      this.trail.restore(savedPositions, savedLastPos);
       this.trail.isRecording = savedRecording;
       this.trail.isPaused = savedPaused;
       if (savedPositions.length >= 2) {
@@ -2490,7 +2501,7 @@ _updateTrailUI() {
     }
 
     // —— 记录历史轨迹（通过 Trail 模块，#18） ——
-    if (this.trail.isRecording) {
+    if (this.trail.isRecording && !this._trailLoading) {
       const added = this.trail.addPoint({
         lat: convPos.lat,
         lng: convPos.lng,
@@ -3106,7 +3117,9 @@ _updateTrailUI() {
     }
 
     // 恢复轨迹数据（IndexedDB 异步）
+    this._trailLoading = true;
     Storage.loadTrail().then(trailData => {
+      this._trailLoading = false;
       if (!trailData) return;
 
       const hasPositions = trailData.positions && trailData.positions.length > 0;
@@ -3421,6 +3434,7 @@ _updateTrailUI() {
    * 24 小时内有效，过期或失败自动清除
    */
   async _autoRejoinRoom() {
+    if (this.roomManager) return;
     let raw;
     try {
       raw = localStorage.getItem('circlemap_room_session');
@@ -3441,6 +3455,11 @@ _updateTrailUI() {
 
     Toast.show(' 检测到上次的房间，正在自动重连...');
     try {
+      if (this.roomManager) {
+        this.roomManager.leaveRoom();
+        this.roomManager.destroy();
+        this.roomManager = null;
+      }
       this.roomManager = new RoomManager();
       this._bindRoomEvents();
       await this.roomManager.joinRoom(session.roomCode, session.nickname, session.spectator);
@@ -3474,6 +3493,11 @@ _updateTrailUI() {
     const spectator = this._roomSpectatorCheck ? this._roomSpectatorCheck.checked : false;
     Toast.show(' 正在创建房间...');
     try {
+      if (this.roomManager) {
+        this.roomManager.leaveRoom();
+        this.roomManager.destroy();
+        this.roomManager = null;
+      }
       this.roomManager = new RoomManager();
       this._bindRoomEvents();
       const code = await this.roomManager.createRoom(nick, spectator);
@@ -3510,6 +3534,11 @@ _updateTrailUI() {
     const spectator = this._roomSpectatorCheck ? this._roomSpectatorCheck.checked : false;
     Toast.show(' 正在加入房间...');
     try {
+      if (this.roomManager) {
+        this.roomManager.leaveRoom();
+        this.roomManager.destroy();
+        this.roomManager = null;
+      }
       this.roomManager = new RoomManager();
       this._bindRoomEvents();
       await this.roomManager.joinRoom(code, nick, spectator);
@@ -3593,6 +3622,7 @@ _updateTrailUI() {
    * 销毁应用，清理所有定时器和事件监听器
    */
   destroy() {
+    this._stopWatching();
     if (this.roomManager) {
       this.roomManager.destroy();
       this.roomManager = null;
@@ -3643,10 +3673,6 @@ _updateTrailUI() {
     }
     // 清理后台定位资源
     this._exitBackgroundMode();
-    if (this._bgLocateInterval) {
-      clearInterval(this._bgLocateInterval);
-      this._bgLocateInterval = null;
-    }
     this._releaseWakeLock();
     if (this._hintsTimeout) { clearTimeout(this._hintsTimeout); this._hintsTimeout = null; }
     this.mapManager.destroy();

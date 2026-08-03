@@ -85,7 +85,7 @@ App.prototype._updateSpeedChart = function () {
   if (infoEl && win.length) {
     const last = win[win.length - 1];
     const avg = win.reduce((s, p) => s + p.y, 0) / win.length;
-    const max = Math.max(...win.map(p => p.y));
+    const max = win.reduce((m, p) => Math.max(m, p.y), -Infinity);
     infoEl.textContent = `当前 ${last.y.toFixed(1)} 平均 ${avg.toFixed(1)} 最高 ${max.toFixed(1)} m/s`;
   }
 };

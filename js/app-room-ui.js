@@ -281,8 +281,8 @@ App.prototype._bindRoomEvents = function () {
       this._timerInterval = null;
     }
     if (this._roomTimerInput) this._roomTimerInput.value = '';
-    this._roomTimerValue.textContent = '--:--';
-    this._roomTimerCountdown.classList.add('hidden');
+    if (this._roomTimerValue) this._roomTimerValue.textContent = '--:--';
+    if (this._roomTimerCountdown) this._roomTimerCountdown.classList.add('hidden');
     this._timerPending = false;
     this._updateScheduleBtns();
   };
@@ -350,7 +350,7 @@ App.prototype._updateRoomPlayerList = function () {
   const ungrouped = [];
   const myself = {
     id: myInfo.id,
-    name: this._escapeHtml(myInfo.name) + ' (我)',
+    name: myInfo.name + ' (我)',
     color: myInfo.color,
     teamId: myTeamId,
     spectator: this.roomManager.isSpectator(),
@@ -384,7 +384,7 @@ App.prototype._updateRoomPlayerList = function () {
     }
     const entry = {
       id: p.id,
-      name: this._escapeHtml(p.name),
+      name: p.name,
       color: p.teamId && teams[p.teamId] ? teams[p.teamId].color : p.color,
       teamId: p.teamId,
       statusText,
@@ -600,20 +600,20 @@ App.prototype._updateTimerCountdown = function () {
   if (!this.roomManager) return;
   const startAt = this.roomManager.getGameStartAt();
   if (!startAt) {
-    this._roomTimerCountdown.classList.add('hidden');
+    if (this._roomTimerCountdown) this._roomTimerCountdown.classList.add('hidden');
     return;
   }
   const remaining = Math.max(0, startAt - Date.now());
   if (remaining <= 0) {
-    this._roomTimerValue.textContent = '00:00';
-    this._roomTimerCountdown.classList.remove('hidden');
+    if (this._roomTimerValue) this._roomTimerValue.textContent = '00:00';
+    if (this._roomTimerCountdown) this._roomTimerCountdown.classList.remove('hidden');
     this._timerPending = false;
     this._updateScheduleBtns();
     Toast.show(' 统一开始！');
     if (this.roomManager.isHost()) {
       // 时长钳制 [1,240] 分钟：输入框可能被手滑填野值，广播出去会撑爆全员阶段定时器
-      const silent = Math.min(240, Math.max(1, parseInt(this._roomBurstSilent.value) || 25));
-      const share = Math.min(240, Math.max(1, parseInt(this._roomBurstShare.value) || 5));
+      const silent = Math.min(240, Math.max(1, parseInt(this._roomBurstSilent?.value) || 25));
+      const share = Math.min(240, Math.max(1, parseInt(this._roomBurstShare?.value) || 5));
       this.roomManager.burstStart(silent, share); // 广播 → 全员同步开启共享+爆发
     }
     if (this._timerInterval) {

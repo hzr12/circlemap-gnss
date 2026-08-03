@@ -69,6 +69,7 @@ App.prototype._deleteCircle = function (id) {
   const circle = this.mapManager.circles.find(c => c.id === id);
   if (!circle) return;
   const wasSelected = this.mapManager.selectedCircleId === id;
+  const originalIdx = this.mapManager.circles.findIndex(c => c.id === id);
 
   this.mapManager.removeCircle(id);
   this._updateInfo();
@@ -80,7 +81,7 @@ App.prototype._deleteCircle = function (id) {
   if (this.roomManager && this._roomJoined) this.roomManager.publishCircle('remove', { id });
 
     Toast.showUndo('已删除', () => {
-    this.mapManager.circles.push(circle);
+    this.mapManager.circles.splice(originalIdx, 0, circle);
     if (wasSelected) {
       this.mapManager.selectedCircleId = circle.id;
     }

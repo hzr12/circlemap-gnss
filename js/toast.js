@@ -41,7 +41,10 @@ class Toast {
    */
   static showUndo(message, onUndo, duration) {
     const existing = document.querySelector('.toast-msg');
-    if (existing) existing.remove();
+    if (existing) {
+      clearTimeout(existing._removalTimer);
+      existing.remove();
+    }
 
     // toast.js 先于 app-core.js 加载，不能依赖 App._escapeHtml，此处内联转义
     const safe = String(message).replace(/[&<>"']/g, (c) => (
@@ -58,6 +61,7 @@ class Toast {
     const undoBtn = toast.querySelector('.toast-undo-btn');
     undoBtn.addEventListener('click', (e) => {
       e.stopPropagation();
+      clearTimeout(toast._removalTimer);
       undoBtn.disabled = true;
       onUndo();
       Toast.show(' 已撤销');
@@ -66,9 +70,10 @@ class Toast {
     });
 
     const ms = duration || 5000;
-    setTimeout(() => {
+    const autoTimer = setTimeout(() => {
       toast.classList.remove('show');
       setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
     }, ms);
+    toast._removalTimer = autoTimer;
   }
 }

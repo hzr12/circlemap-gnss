@@ -253,10 +253,13 @@ class Storage {
         // auto 模式且未尝试过降级 → 回退到 localStorage
         if (Storage._activeEngine === 'indexeddb' && CONFIG.TRAIL_STORAGE_ENGINE === 'auto' && !Storage._fallbackAttempted) {
           console.info('[Storage] IndexedDB 失败，降级到 localStorage');
-          Storage._fallbackAttempted = true;
-          Storage._activeEngine = 'localstorage';
-          Storage._localStorageStore.save(trail);
-          Storage._fallbackAttempted = false;
+          try {
+            Storage._fallbackAttempted = true;
+            Storage._activeEngine = 'localstorage';
+            Storage._localStorageStore.save(trail);
+          } finally {
+            Storage._fallbackAttempted = false;
+          }
         } else {
           try { Toast.show('轨迹保存失败：本地存储空间不足'); } catch (_) {}
         }
@@ -360,10 +363,13 @@ class Storage {
         // auto 模式：localStorage 也失败，尝试回退到 IndexedDB
         if (Storage._activeEngine === 'localstorage' && CONFIG.TRAIL_STORAGE_ENGINE === 'auto' && Storage._isIndexedDBAvailable() && !Storage._fallbackAttempted) {
           console.info('[Storage] localStorage 失败，回退到 IndexedDB');
-          Storage._fallbackAttempted = true;
-          Storage._activeEngine = 'indexeddb';
-          Storage._indexedDBStore.save(trail);
-          Storage._fallbackAttempted = false;
+          try {
+            Storage._fallbackAttempted = true;
+            Storage._activeEngine = 'indexeddb';
+            Storage._indexedDBStore.save(trail);
+          } finally {
+            Storage._fallbackAttempted = false;
+          }
           return;
         }
 
