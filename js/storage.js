@@ -77,7 +77,7 @@ class Storage {
     }
 
     Storage._engineDetected = true;
-    console.info('[Storage] 轨迹存储引擎:', Storage._activeEngine);
+    if (CONFIG.DEBUG) console.info('[Storage] 轨迹存储引擎:', Storage._activeEngine);
     return Storage._activeEngine;
   }
 

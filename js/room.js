@@ -258,7 +258,7 @@ class RoomManager {
     let lastErr = null;
     const isMqtt5 = (this._mqttVersion === 5);
 
-    console.log('[Room] 正在连接 MQTT:', brokerUrl, 'protocol:', isMqtt5 ? '5.0' : '3.1.1', 'clientId:', clientId);
+    if (CONFIG.DEBUG) console.log('[Room] 正在连接 MQTT:', brokerUrl, 'protocol:', isMqtt5 ? '5.0' : '3.1.1', 'clientId:', clientId);
 
     try {
       // 遗嘱消息（Last-Will）：异常断开时 Broker 代发离线通知
@@ -404,7 +404,7 @@ class RoomManager {
       // 连接抛出同步异常 → 尝试下一个备用
       if (fallbacks && fallbacks.length > 0) {
         const next = fallbacks.shift();
-        console.log('[Room] 当前 Broker 异常，尝试备用:', next);
+        if (CONFIG.DEBUG) console.log('[Room] 当前 Broker 异常，尝试备用:', next);
         this._disconnect();
         this._tryConnect(next, fallbacks, clientId, resolve, reject);
       } else {

@@ -1081,7 +1081,7 @@ class App {
         .catch(() => { if (this._queuePending > 0) this._queuePending--; });
     };
     this.gpsManager.onError = (err) => {
-      console.warn('[GPS] 追踪出错:', err.message);
+      if (CONFIG.DEBUG) console.warn('[GPS] 追踪出错:', err.message);
       Toast.show(' ' + err.message);
     };
     this.gpsManager.onDowngrade = (count) => {
@@ -1162,7 +1162,7 @@ class App {
   async _startNativeBackgroundTracking() {
     try {
       const plugin = Capacitor.Plugins.BackgroundGeolocation;
-      console.log('[Background] 启动原生后台定位插件');
+      if (CONFIG.DEBUG) console.log('[Background] 启动原生后台定位插件');
       await plugin.start({
         backgroundMessage: '正在后台追踪位置，关闭以省电',
         backgroundTitle: 'Circlemap 定位中',
@@ -1171,7 +1171,7 @@ class App {
         stale: false,
       }, (location, error) => {
         if (error) {
-          console.log('[Background] 原生定位错误:', error.code, error.message);
+          if (CONFIG.DEBUG) console.log('[Background] 原生定位错误:', error.code, error.message);
           return;
         }
         if (!location) return;
@@ -1193,7 +1193,7 @@ class App {
       this._nativeBgStarted = true;
       // 通知栏显示插件自己的通知（无需额外处理）
     } catch (e) {
-      console.log('[Background] 原生定位插件启动失败:', e.message);
+      if (CONFIG.DEBUG) console.log('[Background] 原生定位插件启动失败:', e.message);
       this._nativeBgStarted = false;
       // 降级到 JS 60s 轮询
       this._fallbackBackgroundLocate();
@@ -1207,7 +1207,7 @@ class App {
     try {
       const plugin = Capacitor.Plugins.BackgroundGeolocation;
       await plugin.stop();
-      console.log('[Background] 原生后台定位已停止');
+      if (CONFIG.DEBUG) console.log('[Background] 原生后台定位已停止');
     } catch (e) {
       // 静默
     }
@@ -1223,7 +1223,7 @@ class App {
   _enterBackgroundMode() {
     if (this._isBackground) return;
     this._isBackground = true;
-    console.log('[Background] 进入后台定位模式');
+    if (CONFIG.DEBUG) console.log('[Background] 进入后台定位模式');
 
     // 通知 RoomManager 降低心跳频率、暂停 position 定时器
     if (this.roomManager && this.roomManager.isConnected()) {
@@ -1277,7 +1277,7 @@ class App {
     }
 
     this._releaseWakeLock();
-    console.log('[Background] 退出后台定位模式');
+    if (CONFIG.DEBUG) console.log('[Background] 退出后台定位模式');
   }
 
   /**
@@ -1499,8 +1499,12 @@ _toggleTrailRecording() {
   _updatePowerStatus() {
     const el = document.getElementById('power-status');
     if (!el) return;
-    const interval = this.gpsManager.currentInterval;
-    el.textContent = `定位间隔: ${(interval / 1000).toFixed(1)}s`;
+    const actual = this.gpsManager.lastActualInterval;
+    if (this.gpsManager.isWatching && actual > 0) {
+      el.textContent = `定位间隔: ${(actual / 1000).toFixed(1)}s`;
+    } else {
+      el.textContent = '定位间隔: --';
+    }
   }
 
   /**
@@ -2540,7 +2544,7 @@ _updateTrailUI() {
       this._targetInfoEl.textContent = `${this._targetPos.lat.toFixed(6)}, ${this._targetPos.lng.toFixed(6)} · 距我 ${formatDistance(dist)}`;
     }
     } catch (e) {
-      console.error('_processPosition error:', e.message);
+      if (CONFIG.DEBUG) console.error('_processPosition error:', e.message);
       // 转换失败时通知用户（30秒内不重复提示）
       if (!this._lastGcj02ErrorToast || Date.now() - this._lastGcj02ErrorToast > 30000) {
         this._lastGcj02ErrorToast = Date.now();
@@ -2662,8 +2666,6 @@ _updateTrailUI() {
       if (this.roomManager && this._roomJoined) {
         savedCircles.forEach((c) => this.roomManager.publishCircle('add', c));
       }
-      this._dirty = true;
-      this._saveState();
     });
   }
 
@@ -3598,6 +3600,10 @@ _updateTrailUI() {
     if (this._timerInterval) {
       clearInterval(this._timerInterval);
       this._timerInterval = null;
+    }
+    if (this._burstEndInterval) {
+      clearInterval(this._burstEndInterval);
+      this._burstEndInterval = null;
     }
     if (this._burstPhaseInterval) {
       clearInterval(this._burstPhaseInterval);

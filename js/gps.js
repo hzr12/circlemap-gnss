@@ -271,6 +271,7 @@ class GPSManager {
 
     // GPS 节流：速度自适应动态间隔（移动快→密，静止 60s 心跳省电）
     this._lastProcessedTime = 0;
+    this._lastActualInterval = 0;
     this._gpsMinInterval = 1000;
     this._gpsPowerSavingInterval = 20000;   // 省电模式间隔
     this._gpsBackgroundInterval = 15000;    // 后台定位间隔
@@ -341,7 +342,7 @@ class GPSManager {
         // 充电时解锁省电模式并恢复追踪
         if (!this._lowBattery && this._powerSavingLocked && battery.charging) {
           this._powerSavingLocked = false;
-          console.log('[GPS] 电量恢复，省电模式已解锁');
+          if (CONFIG.DEBUG) console.log('[GPS] 电量恢复，省电模式已解锁');
           // 如果是因低电量自动停止的，恢复追踪
           if (this._autoStoppedByBattery && this.onRestoreTracking) {
             this._autoStoppedByBattery = false;
@@ -381,7 +382,7 @@ class GPSManager {
     const next = force !== undefined ? force : !this._powerSaving;
     if (next === this._powerSaving) return this._powerSaving;
     this._powerSaving = next;
-    console.log(`[GPS] 省电模式: ${next ? '开启' : '关闭'}`);
+    if (CONFIG.DEBUG) console.log(`[GPS] 省电模式: ${next ? '开启' : '关闭'}`);
 
     // 调整处理间隔（速度自适应，省电模式按 20s 下限）
     this._updateAdaptiveInterval(this.currentPosition ? this.currentPosition.speed : 0);
@@ -430,6 +431,13 @@ class GPSManager {
   }
 
   /**
+   * 获取上次实际定位间隔（毫秒）
+   */
+  get lastActualInterval() {
+    return this._lastActualInterval;
+  }
+
+  /**
    * 探测 Capacitor GNSS 原生插件是否存在。
    * 仅存储插件引用，不启动监听——监听需要定位权限，延迟到 startGnss() 调用。
    */
@@ -444,7 +452,7 @@ class GPSManager {
       return;
     }
     this._gnssPlugin = plugin;
-    console.log('[GPS] GNSS 插件已探测到，等待 startGnss() 激活');
+    if (CONFIG.DEBUG) console.log('[GPS] GNSS 插件已探测到，等待 startGnss() 激活');
   }
 
   /**
@@ -497,7 +505,7 @@ class GPSManager {
       const gnssHandler = (event) => {
         if (event && event.satellites) {
           this._gnssSatellites = event.satellites;
-          console.log('[GPS] GNSS 事件收到，卫星数:', event.satellites.length);
+          if (CONFIG.DEBUG) console.log('[GPS] GNSS 事件收到，卫星数:', event.satellites.length);
         }
       };
       const nmeaHandler = (nmea) => {
@@ -539,7 +547,7 @@ class GPSManager {
       }
       this._gnssListeningStarted = true;
       this._gnssInitError = null;
-      console.log('[GPS] GNSS 插件已激活，卫星数据可用');
+      if (CONFIG.DEBUG) console.log('[GPS] GNSS 插件已激活，卫星数据可用');
 
       // 兜底轮询：前 15 秒每 2 秒主动拉取一次，防止事件丢失
       this._startGnssPollFallback();
@@ -669,7 +677,7 @@ class GPSManager {
       const elapsed = Date.now() - this._lastPositionTime;
       if (elapsed > this._getCurrentTimeout()) {
         this._consecutiveTimeouts++;
-        console.warn(`[GPS] 超时 #${this._consecutiveTimeouts}（${(elapsed / 1000).toFixed(0)}s 无新位置）`);
+        if (CONFIG.DEBUG) console.warn(`[GPS] 超时 #${this._consecutiveTimeouts}（${(elapsed / 1000).toFixed(0)}s 无新位置）`);
         if (!this._downgraded && this._consecutiveTimeouts >= CONFIG.GPS_TIMEOUT_MAX_FAILURES) {
           this._downgrade();
         }
@@ -695,7 +703,7 @@ class GPSManager {
   _downgrade() {
     if (this._downgraded) return;
     this._downgraded = true;
-    console.warn('[GPS] 连续超时达阈值，降级到低精度定位');
+    if (CONFIG.DEBUG) console.warn('[GPS] 连续超时达阈值，降级到低精度定位');
     if (this.onDowngrade) this.onDowngrade(this._consecutiveTimeouts);
 
     // 用新参数重启 watchPosition
@@ -770,7 +778,7 @@ class GPSManager {
    */
   _resetTimeouts() {
     if (this._consecutiveTimeouts > 0) {
-      console.log(`[GPS] 位置更新，重置连续超时计数（was ${this._consecutiveTimeouts}）`);
+      if (CONFIG.DEBUG) console.log(`[GPS] 位置更新，重置连续超时计数（was ${this._consecutiveTimeouts}）`);
     }
     this._consecutiveTimeouts = 0;
     this._lastPositionTime = Date.now();
@@ -886,6 +894,7 @@ class GPSManager {
           timestamp: position.timestamp
         });
 
+        const prevProcessedTime = this._lastProcessedTime;
         if (now - this._lastProcessedTime < this._gpsMinInterval) {
           // 静止节流中的运动检测：若浏览器报告速度 > 阈值，立即跳过节流窗口
           // 防止静止时突然移动却要等 60s 才反应过来
@@ -905,6 +914,7 @@ class GPSManager {
           // 强制打断：重置节流计时，让当前位置立即被处理
           this._lastProcessedTime = now - this._gpsMinInterval;
         }
+        this._lastActualInterval = now - prevProcessedTime;
         this._lastProcessedTime = now;
 
         // 窗口到期：从缓存和当前信号中选精度最优者
