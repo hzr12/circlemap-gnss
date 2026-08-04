@@ -1588,9 +1588,9 @@ _toggleTrailRecording() {
       return `${s}秒`;
     };
 
-    // 速度分布直方图数据
-    const bins = [0, 1, 2, 3, 5, 8, Infinity];
-    const labels = ['0-1', '1-2', '2-3', '3-5', '5-8', '>8'];
+    // 速度分布直方图数据（与图例 7 档完全一致，单位 km/h，bins 用 m/s 阈值）
+    const bins = [0, 2.78, 5.56, 16.67, 33.33, 55.56, 97.22, Infinity];
+    const labels = ['0-10', '10-20', '20-60', '60-120', '120-200', '200-350', '>350'];
     const counts = new Array(bins.length - 1).fill(0);
     let hasSpeedData = false;
     for (const p of pos) {
@@ -1675,11 +1675,11 @@ _toggleTrailRecording() {
         datasets: [{
           data: counts,
           backgroundColor: isDark
-            ? ['rgba(79,195,247,0.5)', 'rgba(79,195,247,0.45)', 'rgba(79,195,247,0.4)', 'rgba(255,183,77,0.5)', 'rgba(255,138,101,0.5)', 'rgba(239,83,80,0.5)']
-            : ['rgba(33,150,243,0.5)', 'rgba(33,150,243,0.45)', 'rgba(33,150,243,0.4)', 'rgba(255,152,0,0.5)', 'rgba(244,81,30,0.5)', 'rgba(211,47,47,0.5)'],
+            ? ['rgba(0,229,204,0.70)', 'rgba(255,215,0,0.75)', 'rgba(255,140,0,0.80)', 'rgba(255,94,51,0.82)', 'rgba(255,51,102,0.85)', 'rgba(191,64,255,0.90)', 'rgba(94,92,230,0.92)']
+            : ['rgba(52,199,89,0.65)', 'rgba(255,149,0,0.70)', 'rgba(255,59,48,0.75)', 'rgba(255,45,85,0.78)', 'rgba(175,82,222,0.80)', 'rgba(88,86,214,0.85)', 'rgba(0,122,255,0.88)'],
           borderColor: isDark
-            ? ['#4fc3f7', '#4fc3f7', '#4fc3f7', '#ffb74d', '#ff8a65', '#ef5350']
-            : ['#2196f3', '#2196f3', '#2196f3', '#ff9800', '#f4511e', '#d32f2f'],
+            ? ['#00E5CC', '#FFD700', '#FF8C00', '#FF5E33', '#FF3366', '#BF40FF', '#5E5CE6']
+            : ['#34C759', '#FF9500', '#FF3B30', '#FF2D55', '#AF52DE', '#5856D6', '#007AFF'],
           borderWidth: 1,
           borderRadius: 2
         }]
@@ -1691,7 +1691,7 @@ _toggleTrailRecording() {
         plugins: { legend: { display: false }, tooltip: { enabled: false } },
         scales: {
           x: {
-            title: { display: true, text: '速度 (m/s)', color: isDark ? '#aaa' : '#666', font: { size: 10 } },
+            title: { display: true, text: '速度 (km/h)', color: isDark ? '#aaa' : '#666', font: { size: 10 } },
             ticks: { color: isDark ? '#888' : '#999', font: { size: 9 } },
             grid: { display: false }
           },
@@ -1921,25 +1921,45 @@ _toggleTrailRecording() {
         ctx.fill();
       }
 
-      // 绘制轨迹线（带速度着色）
+      // 绘制轨迹线（与地图显示完全一致的 7 档速度色阶着色）
       const trailPoints = this._getTrailPositions();
       if (trailPoints.length >= 2) {
+        // 根据导出时的主题获取对应色阶（与 isDark 保持一致，不依赖 _speedColorMap getter）
+        const colorMap = isDark ? this.mapManager._speedColorDark : this.mapManager._speedColorLight;
+        const getSpeedKey = (s) => this.mapManager._speedColorKey(s);
+
+        // 按速度色阶分段绘制：连续相同档位的点合并绘制，减少 stroke 调用
+        let batchPath = [];
+        let batchKey = null;
+
+        const flushBatch = () => {
+          if (batchPath.length < 2 || !batchKey) return;
+          const c = colorMap[batchKey];
+          ctx.strokeStyle = `rgba(${c.r},${c.g},${c.b},${c.a})`;
+          ctx.lineWidth = 2.5 * S;
+          ctx.beginPath();
+          ctx.moveTo(batchPath[0].x, batchPath[0].y);
+          for (let j = 1; j < batchPath.length; j++) {
+            ctx.lineTo(batchPath[j].x, batchPath[j].y);
+          }
+          ctx.stroke();
+        };
+
         for (let i = 1; i < trailPoints.length; i++) {
           const p0 = trailPoints[i - 1];
           const p1 = trailPoints[i];
-          // 简单按速度着色：速度来自原始 trail 数据
           const speed = p1.speed != null ? p1.speed : 0;
-          const ratio = Math.min(speed / 5, 1);
-          const r = Math.round(80 + (255 - 80) * ratio);
-          const g = Math.round(160 - (160 - 60) * ratio);
-          const b = Math.round(255 - (255 - 60) * ratio);
-          ctx.strokeStyle = `rgb(${r},${g},${b})`;
-          ctx.lineWidth = 2.5 * S;
-          ctx.beginPath();
-          ctx.moveTo(toX(p0.lng), toY(p0.lat));
-          ctx.lineTo(toX(p1.lng), toY(p1.lat));
-          ctx.stroke();
+          const key = getSpeedKey(speed);
+
+          if (key !== batchKey) {
+            // 颜色档位变化：冲刷上一段
+            flushBatch();
+            batchPath = [{ x: toX(p0.lng), y: toY(p0.lat) }];
+            batchKey = key;
+          }
+          batchPath.push({ x: toX(p1.lng), y: toY(p1.lat) });
         }
+        flushBatch(); // 冲刷最后一段
       }
 
       // 起点/终点标记
@@ -1998,8 +2018,45 @@ _toggleTrailRecording() {
         ctx.textAlign = 'left';
       }
 
+      // ── 速度图例（与地图轨迹色阶 7 档一致，单行） ──
+      const legendDotH = 4 * S;
+      const legendTopPad = 14 * S;
+      const legendBottomPad = 14 * S;
+      {
+        const legendLabels = ['0-10', '10-20', '20-60', '60-120', '120-200', '200-350', '>350'];
+        const colorMap = isDark ? this.mapManager._speedColorDark : this.mapManager._speedColorLight;
+        const keys = ['walk', 'bike', 'bus', 'car', 'train', 'hsr', 'sct'];
+        const dotW = 12 * S;
+        const gapX = 10 * S;
+        const labelPad = 4 * S;
+        const rowY = mapY + mapH + legendTopPad;
+
+        ctx.font = `${10 * S}px "HarmonyOS Sans", sans-serif`;
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'left';
+
+        // 单行居中对齐
+        const legendTextColor = isDark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.75)';
+        let totalW = 0;
+        for (let i = 0; i < legendLabels.length; i++) {
+          totalW += dotW + labelPad + ctx.measureText(legendLabels[i]).width + (i < legendLabels.length - 1 ? gapX : 0);
+        }
+        let cx = mapX + (mapW - totalW) / 2;
+        for (let i = 0; i < legendLabels.length; i++) {
+          const c = colorMap[keys[i]];
+          ctx.fillStyle = `rgba(${c.r},${c.g},${c.b},${c.a})`;
+          ctx.beginPath();
+          ctx.roundRect(cx, rowY, dotW, legendDotH, 2 * S);
+          ctx.fill();
+          cx += dotW + labelPad;
+          ctx.fillStyle = legendTextColor;
+          ctx.fillText(legendLabels[i], cx, rowY + legendDotH / 2);
+          cx += ctx.measureText(legendLabels[i]).width + (i < legendLabels.length - 1 ? gapX : 0);
+        }
+      }
+
       // ── 速度曲线图（Canvas2D 直接绘制，不依赖 Chart.js） ──
-      let chartY = mapY + mapH + 16 * S;
+      let chartY = mapY + mapH + legendTopPad + legendDotH + legendBottomPad;
       {
         const chartH = 150 * S;
         const padL = 50 * S, padR = 16 * S, padT = 24 * S, padB = 36 * S;
