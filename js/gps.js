@@ -481,11 +481,16 @@ class GPSManager {
       return this._gnssStarting;
     }
     this._gnssStopRequested = false; // 新的启动请求清除停止标记
+    this._gnssGeneration = (this._gnssGeneration || 0) + 1;
+    const myGen = this._gnssGeneration;
     this._gnssStarting = this._startGnssImpl();
     try {
       await this._gnssStarting;
     } finally {
-      this._gnssStarting = null;
+      // 仅当没有新的 startGnss() 调用时才清除
+      if (this._gnssGeneration === myGen) {
+        this._gnssStarting = null;
+      }
     }
   }
 
@@ -560,8 +565,12 @@ class GPSManager {
       this._gnssInitError = err.message || 'start_failed';
       console.warn('[GPS] GNSS 插件激活失败:', err.message);
       Toast.show(` GNSS 启动失败: ${err.message || '未知错误'}`, 4000);
-      // 清理可能已注册的监听器
+      // 清理：移除 JS 监听器 + 停止原生 GNSS 监听
       this._removeGnssListeners();
+      if (this._gnssPlugin && this._gnssListeningStarted) {
+        try { this._gnssPlugin.stopGnssListening?.(); } catch (_) {}
+      }
+      this._gnssListeningStarted = false;
     }
   }
 
@@ -650,7 +659,7 @@ class GPSManager {
    */
   stopGnss() {
     this._gnssStopRequested = true;
-    this._gnssStarting = null;
+    // 不清除 _gnssStarting，让 finally 块中的 generation 检查处理
     this._removeGnssListeners();
     this._stopGnssPollFallback();
     if (this._gnssPlugin && this._gnssListeningStarted) {
@@ -925,7 +934,7 @@ class GPSManager {
 
           if (!rawSpeedOK) return;
         }
-        this._lastActualInterval = now - prevProcessedTime;
+        this._lastActualInterval = prevProcessedTime ? now - prevProcessedTime : 0;
         this._lastProcessedTime = now;
 
         // 窗口到期：从缓存和当前信号中选精度最优者
@@ -993,6 +1002,10 @@ class GPSManager {
       this.watchId = null;
     }
     this.isWatching = false;
+    this._downgraded = false;
+    this._lastProcessedTime = 0;
+    this._bestPendingPosition = null;
+    this._consecutiveTimeouts = 0;
     this._stopTimeoutWatch();
     this._stopRecoveryTimer();
     if (this.onWatchStop) this.onWatchStop();

@@ -624,8 +624,8 @@ App.prototype._updateTimerCountdown = function () {
   }
   const mins = Math.floor(remaining / 60000);
   const secs = Math.floor((remaining % 60000) / 1000);
-  this._roomTimerValue.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-  this._roomTimerCountdown.classList.remove('hidden');
+  if (this._roomTimerValue) this._roomTimerValue.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  if (this._roomTimerCountdown) this._roomTimerCountdown.classList.remove('hidden');
 };
 
 App.prototype._roomTogglePrediction = function () {

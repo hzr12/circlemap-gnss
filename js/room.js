@@ -368,7 +368,7 @@ class RoomManager {
           this._mqttVersion = 4;
           this._topicAliasMax = 0;
           discarded.current = true;
-          this._disconnect();
+          this._disconnect(true);
           this._retryTimer = setTimeout(() => {
             this._tryConnect(brokerUrl, fallbacks, clientId, resolve, reject);
           }, 100);
@@ -390,7 +390,7 @@ class RoomManager {
           const next = fallbacks.shift();
           if (this.onRoomError) this.onRoomError(this._formatMqttError(err) + '，正在尝试备用服务器…');
           console.log(`[Room] 当前 Broker 连续失败 ${ROOM_CONFIG.MAX_RETRY} 次，切换到备用:`, next);
-          this._disconnect();
+          this._disconnect(true);
           this._tryConnect(next, fallbacks, clientId, resolve, reject);
         }
       });
@@ -405,7 +405,7 @@ class RoomManager {
       if (fallbacks && fallbacks.length > 0) {
         const next = fallbacks.shift();
         if (CONFIG.DEBUG) console.log('[Room] 当前 Broker 异常，尝试备用:', next);
-        this._disconnect();
+        this._disconnect(true);
         this._tryConnect(next, fallbacks, clientId, resolve, reject);
       } else {
         reject(new Error(this._formatMqttError(e)));
@@ -438,11 +438,12 @@ class RoomManager {
   /**
    * 断开连接
    */
-  _disconnect() {
+  _disconnect(isBrokerFailover = false) {
     this._stopPublishing();
-    // burst 会话本地收尾：定时器不随 _client 死亡自动停止，
-    // 否则降级/切换 Broker 的失败重试链中阶段定时器会空转（publish 被门控但 seq/UI 仍推进）
-    this._endBurstSession();
+    // Broker failover 时保留 burst 状态（定时器已随旧连接停止，重连后重建）
+    if (!isBrokerFailover) {
+      this._endBurstSession();
+    }
     if (this._retryTimer) {
       clearTimeout(this._retryTimer);
       this._retryTimer = null;

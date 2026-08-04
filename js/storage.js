@@ -231,9 +231,9 @@ class Storage {
 
       if (estimatedSize > maxSize) {
         const ratio = maxSize / estimatedSize;
-        const keepCount = Math.floor(workingPositions.length * ratio);
-        const step = workingPositions.length / keepCount;
-        workingPositions = workingPositions.filter((_, i) => Math.floor(i / step) < keepCount);
+        const keepCount = Math.max(10, Math.floor(workingPositions.length * ratio));
+        const step = Math.ceil(workingPositions.length / keepCount);
+        workingPositions = workingPositions.filter((_, i) => i % step === 0);
         estimatedSize = Storage._estimateSize(workingPositions);
         console.warn('[Storage] IndexedDB 轨迹超配额（', positions.length, '点），已抽稀至', workingPositions.length, '点');
       }
@@ -253,12 +253,12 @@ class Storage {
         // auto 模式且未尝试过降级 → 回退到 localStorage
         if (Storage._activeEngine === 'indexeddb' && CONFIG.TRAIL_STORAGE_ENGINE === 'auto' && !Storage._fallbackAttempted) {
           console.info('[Storage] IndexedDB 失败，降级到 localStorage');
+          Storage._fallbackAttempted = true;
+          Storage._activeEngine = 'localstorage';
           try {
-            Storage._fallbackAttempted = true;
-            Storage._activeEngine = 'localstorage';
             Storage._localStorageStore.save(trail);
-          } finally {
-            Storage._fallbackAttempted = false;
+          } catch (e) {
+            console.warn('[Storage] localStorage 降级保存也失败:', e.message);
           }
         } else {
           try { Toast.show('轨迹保存失败：本地存储空间不足'); } catch (_) {}
@@ -344,9 +344,9 @@ class Storage {
         if (e.name === 'QuotaExceededError' || e.code === 22) {
           // 抽稀重试
           const ratio = maxSize / estimatedSize;
-          const keepCount = Math.floor(workingPositions.length * ratio);
-          const step = workingPositions.length / keepCount;
-          workingPositions = workingPositions.filter((_, i) => Math.floor(i / step) < keepCount);
+          const keepCount = Math.max(10, Math.floor(workingPositions.length * ratio));
+          const step = Math.ceil(workingPositions.length / keepCount);
+          workingPositions = workingPositions.filter((_, i) => i % step === 0);
           console.warn('[Storage] localStorage 超配额（', positions.length, '点），已抽稀至', workingPositions.length, '点');
 
           try {
@@ -363,13 +363,11 @@ class Storage {
         // auto 模式：localStorage 也失败，尝试回退到 IndexedDB
         if (Storage._activeEngine === 'localstorage' && CONFIG.TRAIL_STORAGE_ENGINE === 'auto' && Storage._isIndexedDBAvailable() && !Storage._fallbackAttempted) {
           console.info('[Storage] localStorage 失败，回退到 IndexedDB');
-          try {
-            Storage._fallbackAttempted = true;
-            Storage._activeEngine = 'indexeddb';
-            Storage._indexedDBStore.save(trail);
-          } finally {
-            Storage._fallbackAttempted = false;
-          }
+          Storage._fallbackAttempted = true;
+          Storage._activeEngine = 'indexeddb';
+          Storage._indexedDBStore.save(trail).catch(err => {
+            console.warn('[Storage] IndexedDB 降级保存也失败:', err.message);
+          });
           return;
         }
 
@@ -539,6 +537,7 @@ class Storage {
     CONFIG.TRAIL_STORAGE_ENGINE = engine;
     Storage._engineDetected = false;
     Storage._activeEngine = null;
+    Storage._fallbackAttempted = false;
     const resolved = Storage._resolveEngine();
     console.info('[Storage] 切换存储引擎:', resolved);
   }

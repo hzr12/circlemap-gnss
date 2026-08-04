@@ -142,6 +142,7 @@ class MapManager {
 
     // 地图变化 → 重绘 Circle Canvas
     qq.maps.event.addListener(this.map, 'center_changed', () => {
+      if (this._settingCenter) return; // setCenter 内部触发，跳过冗余处理
       const c = this.map.getCenter();
       if (c) this._syncCenter = c;
       this._invalidateCoordCache();
@@ -685,8 +686,10 @@ class MapManager {
     }
 
     // 同步追踪中心 + 强制重绘（不依赖 getCenter 异步结果）
+    this._settingCenter = true;
     this._syncCenter = latLng;
     this.map.setCenter(latLng);
+    this._settingCenter = false;
     if (this._rafId) cancelAnimationFrame(this._rafId);
     this._redraw();
     this._lastRedrawTime = performance.now();
@@ -1179,24 +1182,28 @@ class MapManager {
 
   /** 速度色阶表 (m/s → 颜色) */
   _speedColorMap = {
-    slow:   { r: 80,  g: 160, b: 255, a: 0.55 },  // 0-0.5 m/s  停留/慢走 → 蓝
-    walk:   { r: 0,   g: 212, b: 170, a: 0.60 },  // 0.5-1.5    正常走 → 青
-    fast:   { r: 180, g: 200, b: 50,  a: 0.60 },  // 1.5-3.0    快走 → 黄绿
-    run:    { r: 255, g: 140, b: 40,  a: 0.70 },  // 3.0-5.0    跑 → 橙
-    sprint: { r: 255, g: 60,  b: 60,  a: 0.75 },  // >5.0       冲刺/骑车 → 红
+    stop:  { r: 80,  g: 160, b: 255, a: 0.55 },  // 0-1.8 km/h    停留 → 蓝
+    slow:  { r: 0,   g: 212, b: 170, a: 0.60 },  // 1.8-5         慢走 → 青
+    walk:  { r: 180, g: 200, b: 50,  a: 0.60 },  // 5-10          步行 → 黄绿
+    bike:  { r: 255, g: 200, b: 40,  a: 0.65 },  // 10-20         骑行 → 橙黄
+    bus:   { r: 255, g: 140, b: 40,  a: 0.70 },  // 20-60         公交 → 橙
+    train: { r: 255, g: 60,  b: 60,  a: 0.75 },  // 60-150        火车 → 红
+    hsr:   { r: 180, g: 60,  b: 200, a: 0.80 },  // >150          高铁 → 紫
   };
 
   /**
    * 取速度对应的色阶键名
    * @param {number|null|undefined} speed m/s
-   * @returns {string} slow|walk|fast|run|sprint
+   * @returns {string} stop|slow|walk|bike|bus|train|hsr
    */
   _speedColorKey(speed) {
-    if (speed == null || speed < 0.5) return 'slow';
-    if (speed < 1.5) return 'walk';
-    if (speed < 3.0) return 'fast';
-    if (speed < 5.0) return 'run';
-    return 'sprint';
+    if (speed == null || speed < 0.5) return 'stop';   // <1.8 km/h  停留
+    if (speed < 1.4) return 'slow';                     // 1.8-5      慢走
+    if (speed < 2.8) return 'walk';                     // 5-10       步行
+    if (speed < 5.6) return 'bike';                     // 10-20      骑行
+    if (speed < 16.7) return 'bus';                     // 20-60      公交
+    if (speed < 41.7) return 'train';                   // 60-150     火车
+    return 'hsr';                                        // >150       高铁
   }
 
   /**
@@ -1224,7 +1231,19 @@ class MapManager {
     }
 
     const from = Math.max(1, this._lastTrailCount || 0);
-    if (from >= positions.length) return;
+    if (from >= positions.length) {
+      // 容量上限环形截断检测：长度不变但内容已旋转 → 全量重建
+      if (positions.length > 0 && this._lastTrailCount > 0 && this._lastTrailAnchor) {
+        const first = positions[0];
+        if (first.lat !== this._lastTrailAnchor.lat || first.lng !== this._lastTrailAnchor.lng) {
+          this.clearTrail();
+        } else {
+          return;
+        }
+      } else {
+        return;
+      }
+    }
 
     let batchPath = [];       // 当前颜色段的路径
     let batchKey = null;      // 当前颜色段对应的 speed key
@@ -1263,6 +1282,9 @@ class MapManager {
       this._flushSegment(batchPath, this._speedColorMap[batchKey]);
     }
     this._lastTrailCount = positions.length;
+    if (positions.length > 0) {
+      this._lastTrailAnchor = positions[0];
+    }
   }
 
   /** 创建一条轨迹 Polyline 并存入数组 */
@@ -1460,9 +1482,10 @@ class MapManager {
   }
 
   _hexToMapColor(hex, alpha) {
-    const r = parseInt(hex.slice(1, 3), 16) || 0;
-    const g = parseInt(hex.slice(3, 5), 16) || 0;
-    const b = parseInt(hex.slice(5, 7), 16) || 0;
+    const safe = hex || '#888888';
+    const r = parseInt(safe.slice(1, 3), 16) || 0;
+    const g = parseInt(safe.slice(3, 5), 16) || 0;
+    const b = parseInt(safe.slice(5, 7), 16) || 0;
     return new qq.maps.Color(r, g, b, alpha);
   }
 

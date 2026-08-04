@@ -63,8 +63,12 @@ class Toast {
       e.stopPropagation();
       clearTimeout(toast._removalTimer);
       undoBtn.disabled = true;
-      onUndo();
-      Toast.show(' 已撤销');
+      try {
+        onUndo();
+        Toast.show(' 已撤销');
+      } catch (_) {
+        Toast.show(' 撤销失败');
+      }
       toast.classList.remove('show');
       setTimeout(() => toast.remove(), CONFIG.TOAST_FADE_MS);
     });

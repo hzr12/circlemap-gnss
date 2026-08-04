@@ -22,6 +22,7 @@ class App {
         this._gpsBtn.title = '定位到我的位置';
         this._hideSpeedChart();
         this._speedHistory = [];
+        this._prevDistances = {};
         if (this._speedChart) {
           this._speedChart.data.datasets[0].data = [];
           this._speedChart.update('none');
@@ -1056,11 +1057,15 @@ class App {
    * 启动持续 GPS 追踪（纯 watchPosition）
    */
   _startWatching() {
-    if (this._isWatching) return;
+    if (this._isWatching || this._isBackground) return;
 
     this._isWatching = true;
     this._firstFix = true;
-    this._manualCenter = false; // 重新开启 GPS 追踪 → 取消手动锁定
+    // 仅在全新启动时重置手动中心，后台恢复时保留用户设置
+    if (!this._restoringView) {
+      this._manualCenter = false;
+    }
+    this._restoringView = false;
     if (!this._speedHistory.length) this._speedTrackingStart = Date.now();
     this._showSpeedChart();
 
@@ -1260,6 +1265,7 @@ class App {
   _fallbackBackgroundLocate() {
     const interval = this.gpsManager.isPowerSaving ? 60000 : 15000;
     this._backgroundLocate();
+    if (this._bgLocateInterval) clearInterval(this._bgLocateInterval);
     this._bgLocateInterval = setInterval(() => {
       this._backgroundLocate();
     }, interval);
@@ -1315,6 +1321,8 @@ class App {
     if (!this._isBackground) return;
     try {
       const convPos = await this.mapManager.wgs84ToGcj02(pos);
+      // 异步转换后重新检查，防止用户已回到前台
+      if (!this._isBackground) return;
       this.myPosition = convPos;
       this.myPositionTime = Date.now();
       this._lastAccuracy = pos.accuracy;
@@ -1331,8 +1339,8 @@ class App {
       this._recordFix(pos, convPos, false, true);
       this._prevDistances = {};
 
-      // 如果正在记录轨迹，加入轨迹点
-      if (this.trail.isRecording && !this.trail.isPaused) {
+      // 如果正在记录轨迹且轨迹未正在加载，加入轨迹点
+      if (this.trail.isRecording && !this.trail.isPaused && !this._trailLoading) {
         const added = this.trail.addPoint({
           lat: convPos.lat,
           lng: convPos.lng,
@@ -1430,6 +1438,7 @@ class App {
         this.mapManager.setTrail(this._getTrailPositions());
       }
       this._updateTrailUI();
+      this._trailDirty = false;
       Storage.saveTrail(this.trail);
     });
   }
@@ -3572,6 +3581,7 @@ _updateTrailUI() {
       this.roomManager = null;
     }
     this._roomJoined = false;
+    this._followedPlayerId = null;
     this._clearRoomSession();
     this.mapManager.clearPlayerMarkers();
     this.mapManager.clearPlayerPredictions();
@@ -3648,6 +3658,7 @@ _updateTrailUI() {
       this._speedChart.destroy();
       this._speedChart = null;
     }
+    this._destroyHistogram();
     // 清理电池事件监听器
     this._cleanupBattery();
     // 清理 mediaQuery 监听器
