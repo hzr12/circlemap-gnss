@@ -1383,11 +1383,11 @@ class App {
       this._wakeLock.addEventListener('release', () => {
         this._wakeLock = null;
       });
-      console.log('[WakeLock] 已获取唤醒锁');
+      if (CONFIG.DEBUG) console.log('[WakeLock] 已获取唤醒锁');
     } catch (e) {
       // wakeLock 被拒绝（如省电模式中）
       this._wakeLock = null;
-      console.log('[WakeLock] 获取失败:', e.message);
+      if (CONFIG.DEBUG) console.log('[WakeLock] 获取失败:', e.message);
     }
   }
 
@@ -1402,7 +1402,7 @@ class App {
       // 静默
     }
     this._wakeLock = null;
-    console.log('[WakeLock] 已释放唤醒锁');
+    if (CONFIG.DEBUG) console.log('[WakeLock] 已释放唤醒锁');
   }
 
   /**

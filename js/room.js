@@ -300,7 +300,7 @@ class RoomManager {
 
         // MQTT 5.0: 检查 CONNACK reasonCode
         if (isMqtt5 && connack && connack.reasonCode && connack.reasonCode !== 0) {
-          console.log('[Room] MQTT 5.0 CONNACK 拒绝 reasonCode:', connack.reasonCode, '→ 降级到 3.1.1');
+          if (CONFIG.DEBUG) console.log('[Room] MQTT 5.0 CONNACK 拒绝 reasonCode:', connack.reasonCode, '→ 降级到 3.1.1');
           this._mqttVersion = 4;
           this._topicAliasMax = 0;
           discarded.current = true;
@@ -333,7 +333,7 @@ class RoomManager {
         if (isMqtt5 && connack && connack.properties) {
           this._topicAliasMax = connack.properties.topicAliasMaximum || 0;
           if (this._topicAliasMax > 0) {
-            console.log('[Room] MQTT 5.0 连接成功，topicAliasMaximum:', this._topicAliasMax);
+            if (CONFIG.DEBUG) console.log('[Room] MQTT 5.0 连接成功，topicAliasMaximum:', this._topicAliasMax);
           }
         }
 
@@ -342,7 +342,7 @@ class RoomManager {
       });
 
       this._client.on('reconnect', () => {
-        console.log('[Room] MQTT 重连中...');
+        if (CONFIG.DEBUG) console.log('[Room] MQTT 重连中...');
       });
 
       this._client.on('close', () => {
@@ -364,7 +364,7 @@ class RoomManager {
 
         // MQTT 5.0 连接失败 → 立即降级到 3.1.1，重试同一 Broker
         if (isMqtt5 && errCount === 1) {
-          console.log('[Room] MQTT 5.0 连接失败:', err && err.message, '→ 降级到 3.1.1');
+          if (CONFIG.DEBUG) console.log('[Room] MQTT 5.0 连接失败:', err && err.message, '→ 降级到 3.1.1');
           this._mqttVersion = 4;
           this._topicAliasMax = 0;
           discarded.current = true;
@@ -389,7 +389,7 @@ class RoomManager {
           // 当前 Broker 失败后给出明确提示再切下一个备用
           const next = fallbacks.shift();
           if (this.onRoomError) this.onRoomError(this._formatMqttError(err) + '，正在尝试备用服务器…');
-          console.log(`[Room] 当前 Broker 连续失败 ${ROOM_CONFIG.MAX_RETRY} 次，切换到备用:`, next);
+          if (CONFIG.DEBUG) console.log(`[Room] 当前 Broker 连续失败 ${ROOM_CONFIG.MAX_RETRY} 次，切换到备用:`, next);
           this._disconnect(true);
           this._tryConnect(next, fallbacks, clientId, resolve, reject);
         }
@@ -1486,7 +1486,7 @@ class RoomManager {
     if (this._backgroundMode === enabled) return;
     this._backgroundMode = enabled;
     if (enabled) {
-      console.log('[Room] 后台模式：降低心跳频率');
+      if (CONFIG.DEBUG) console.log('[Room] 后台模式：降低心跳频率');
       // 重置心跳定时器 → 60s
       if (this._heartbeatTimer) {
         clearInterval(this._heartbeatTimer);
@@ -1509,7 +1509,7 @@ class RoomManager {
       }
       // NPC 定时器保留（NPC 需要持续共享位置）
     } else {
-      console.log('[Room] 前台模式：恢复正常心跳频率');
+      if (CONFIG.DEBUG) console.log('[Room] 前台模式：恢复正常心跳频率');
       // 恢复心跳 → 15s
       if (this._heartbeatTimer) {
         clearInterval(this._heartbeatTimer);

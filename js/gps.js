@@ -394,7 +394,7 @@ class GPSManager {
 
     // 省电模式下关闭 GNSS 卫星监听（节省 CPU + 电池）
     if (next && this._gnssListeningStarted) {
-      console.log('[GPS] 省电模式：关闭 GNSS 卫星监听');
+      if (CONFIG.DEBUG) console.log('[GPS] 省电模式：关闭 GNSS 卫星监听');
       this.stopGnss();
     } else if (!next && !this._gnssListeningStarted && this._gnssPlugin) {
       // 退出省电且 GNSS 插件存在 → 尝试重新激活
@@ -595,7 +595,7 @@ class GPSManager {
       this._gnssPollRunning = true;
       // 如果事件已收到卫星数据，提前停止轮询
       if (this._gnssSatellites.length > 0) {
-        console.log('[GPS] GNSS 轮询兜底：已收到卫星数据，停止轮询');
+        if (CONFIG.DEBUG) console.log('[GPS] GNSS 轮询兜底：已收到卫星数据，停止轮询');
         this._stopGnssPollFallback();
         this._gnssPollRunning = false;
         return;
@@ -611,7 +611,7 @@ class GPSManager {
         }
         if (data && data.satellites && data.satellites.length > 0) {
           this._gnssSatellites = data.satellites;
-          console.log('[GPS] GNSS 轮询兜底：收到卫星数:', data.satellites.length);
+          if (CONFIG.DEBUG) console.log('[GPS] GNSS 轮询兜底：收到卫星数:', data.satellites.length);
           this._stopGnssPollFallback();
         }
       } catch (e) {
@@ -768,7 +768,7 @@ class GPSManager {
     if (!this._downgraded || !this.isWatching) return;
     // 省电模式本身就是低精度 + 20s 节流，恢复高精度会破坏省电设定，直接跳过
     if (this._powerSaving) return;
-    console.log('[GPS] 尝试恢复高精度定位...');
+    if (CONFIG.DEBUG) console.log('[GPS] 尝试恢复高精度定位...');
     try {
       await this.getCurrentPosition(CONFIG.GPS_WATCH_TIMEOUT);
       // 成功 → 恢复高精度
@@ -776,7 +776,7 @@ class GPSManager {
       this._consecutiveTimeouts = 0;
       this._lastProcessedTime = Date.now();
       this._stopRecoveryTimer();
-      console.log('[GPS] 高精度定位恢复成功');
+      if (CONFIG.DEBUG) console.log('[GPS] 高精度定位恢复成功');
       if (this.onRecovery) this.onRecovery(true);
 
       // 用高精度参数重启 watchPosition
@@ -883,7 +883,7 @@ class GPSManager {
       if (options) {
         this.stopWatching();
       } else {
-        console.warn('GPS 已在监听中');
+        if (CONFIG.DEBUG) console.warn('GPS 已在监听中');
         return;
       }
     }
@@ -1048,7 +1048,7 @@ class GPSManager {
     if (!next) {
       this._filter.reset();
     }
-    console.log(`[GPS] 漂移滤波: ${next ? '开启' : '关闭'}`);
+    if (CONFIG.DEBUG) console.log(`[GPS] 漂移滤波: ${next ? '开启' : '关闭'}`);
     return this._useFilter;
   }
 

@@ -539,7 +539,7 @@ class Storage {
     Storage._activeEngine = null;
     Storage._fallbackAttempted = false;
     const resolved = Storage._resolveEngine();
-    console.info('[Storage] 切换存储引擎:', resolved);
+    if (CONFIG.DEBUG) console.info('[Storage] 切换存储引擎:', resolved);
   }
 
   /**
