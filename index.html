@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="css/panel.css?t=20260710v7">
   <link rel="stylesheet" href="css/gps.css?t=20260710v2">
   <link rel="stylesheet" href="css/circles.css?t=20260710v4">
-  <link rel="stylesheet" href="css/trail.css?t=20260710v8">
+  <link rel="stylesheet" href="css/trail.css?t=20260804v1">
   <link rel="stylesheet" href="css/toast-modal.css?t=20260710v1">
   <link rel="stylesheet" href="css/onboarding.css?t=20260710v1">
   <link rel="stylesheet" href="css/responsive.css?t=20260710v1">
@@ -425,13 +425,11 @@
         </div>
         <!-- 速度色阶图例 -->
         <div class="speed-legend">
-          <span class="speed-legend-item"><i style="background:rgba(80,160,255,0.85)"></i>0-2</span>
-          <span class="speed-legend-item"><i style="background:rgba(0,212,170,0.9)"></i>2-5</span>
-          <span class="speed-legend-item"><i style="background:rgba(180,200,50,0.9)"></i>5-10</span>
-          <span class="speed-legend-item"><i style="background:rgba(255,200,40,0.9)"></i>10-20</span>
-          <span class="speed-legend-item"><i style="background:rgba(255,140,40,0.95)"></i>20-60</span>
-          <span class="speed-legend-item"><i style="background:rgba(255,60,60,1)"></i>60-150</span>
-          <span class="speed-legend-item"><i style="background:rgba(180,60,200,1)"></i>&gt;150 km/h</span>
+          <span class="speed-legend-item"><i class="legend-walk"></i>0-10</span>
+          <span class="speed-legend-item"><i class="legend-bike"></i>10-20</span>
+          <span class="speed-legend-item"><i class="legend-bus"></i>20-60</span>
+          <span class="speed-legend-item"><i class="legend-train"></i>60-150</span>
+          <span class="speed-legend-item"><i class="legend-hsr"></i>&gt;150 km/h</span>
         </div>
       </div>
 
@@ -465,14 +463,14 @@
   <script src="js/toast.js?t=20260804v2"></script>
   <script src="js/storage.js?t=20260804v2"></script>
   <script src="js/trail.js?t=20260803v4"></script>
-  <script src="js/map.js?t=20260804v3"></script>
+  <script src="js/map.js?t=20260804v5"></script>
   <script src="js/gps.js?t=20260804v2"></script>
 
   <!-- MQTT（多人位置共享） -->
   <script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
   <script src="js/room.js?t=20260804v1"></script>
 
-  <script src="js/app-core.js?t=20260804v2"></script>
+  <script src="js/app-core.js?t=20260804v3"></script>
   <script src="js/app-gps-ui.js?t=20260803v6"></script>
   <script src="js/app-circle-ui.js?t=20260803v9"></script>
   <script src="js/app-room-ui.js?t=20260804v1"></script>

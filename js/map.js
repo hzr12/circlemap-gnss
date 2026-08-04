@@ -1178,32 +1178,44 @@ class MapManager {
     }
   }
 
-  // ----- 速度→色阶映射 (轨迹按速度着色) -----
+  // ----- 速度→色阶映射 (轨迹按速度着色，支持深色/浅色主题) -----
 
-  /** 速度色阶表 (m/s → 颜色) */
-  _speedColorMap = {
-    stop:  { r: 80,  g: 160, b: 255, a: 0.55 },  // 0-1.8 km/h    停留 → 蓝
-    slow:  { r: 0,   g: 212, b: 170, a: 0.60 },  // 1.8-5         慢走 → 青
-    walk:  { r: 180, g: 200, b: 50,  a: 0.60 },  // 5-10          步行 → 黄绿
-    bike:  { r: 255, g: 200, b: 40,  a: 0.65 },  // 10-20         骑行 → 橙黄
-    bus:   { r: 255, g: 140, b: 40,  a: 0.70 },  // 20-60         公交 → 橙
-    train: { r: 255, g: 60,  b: 60,  a: 0.75 },  // 60-150        火车 → 红
-    hsr:   { r: 180, g: 60,  b: 200, a: 0.80 },  // >150          高铁 → 紫
+  /** 速度色阶表：深色模式 (霓虹暗色) */
+  _speedColorDark = {
+    walk:  { r: 0,   g: 229, b: 204, a: 0.70 },  // #00E5CC 霓虹青
+    bike:  { r: 255, g: 215, b: 0,   a: 0.75 },  // #FFD700 霓虹金
+    bus:   { r: 255, g: 140, b: 0,   a: 0.80 },  // #FF8C00 霓虹橘
+    train: { r: 255, g: 51,  b: 102, a: 0.85 },  // #FF3366 霓虹粉红
+    hsr:   { r: 191, g: 64,  b: 255, a: 0.90 },  // #BF40FF 霓虹紫
   };
+
+  /** 速度色阶表：浅色模式 (苹果风格) */
+  _speedColorLight = {
+    walk:  { r: 52,  g: 199, b: 89,  a: 0.65 },  // #34C759 苹果绿
+    bike:  { r: 255, g: 149, b: 0,   a: 0.70 },  // #FF9500 苹果橙
+    bus:   { r: 255, g: 59,  b: 48,  a: 0.75 },  // #FF3B30 苹果红
+    train: { r: 175, g: 82,  b: 222, a: 0.80 },  // #AF52DE 苹果紫
+    hsr:   { r: 88,  g: 86,  b: 214, a: 0.85 },  // #5856D6 苹果蓝紫
+  };
+
+  /** 根据当前主题返回对应色阶表 */
+  get _speedColorMap() {
+    return document.documentElement.getAttribute('data-theme') === 'light'
+      ? this._speedColorLight
+      : this._speedColorDark;
+  }
 
   /**
    * 取速度对应的色阶键名
    * @param {number|null|undefined} speed m/s
-   * @returns {string} stop|slow|walk|bike|bus|train|hsr
+   * @returns {string} walk|bike|bus|train|hsr
    */
   _speedColorKey(speed) {
-    if (speed == null || speed < 0.5) return 'stop';   // <1.8 km/h  停留
-    if (speed < 1.4) return 'slow';                     // 1.8-5      慢走
-    if (speed < 2.8) return 'walk';                     // 5-10       步行
-    if (speed < 5.6) return 'bike';                     // 10-20      骑行
-    if (speed < 16.7) return 'bus';                     // 20-60      公交
-    if (speed < 41.7) return 'train';                   // 60-150     火车
-    return 'hsr';                                        // >150       高铁
+    if (speed == null || speed < 2.8) return 'walk';  // <10 km/h   步行/停留
+    if (speed < 5.6) return 'bike';                    // 10-20      骑行
+    if (speed < 16.7) return 'bus';                    // 20-60      公交
+    if (speed < 41.7) return 'train';                  // 60-150     火车
+    return 'hsr';                                       // >150       高铁
   }
 
   /**
@@ -1307,6 +1319,187 @@ class MapManager {
     }
     this.trailPolylines = [];
     this._lastTrailCount = 0; // 增量渲染基数必须一并归零
+  }
+
+  // ----- 主题切换渐进重绘 -----
+
+  /**
+   * 主题切换后渐进重绘轨迹（从可视范围向两端扩展，60s 内完成）
+   * @param {Array} positions - 完整轨迹点数组
+   */
+  refreshTrailColors(positions) {
+    if (!this.map || !Array.isArray(positions) || positions.length < 2) return;
+    // 取消正在进行的重绘
+    if (this._themeRefreshRaf) {
+      cancelAnimationFrame(this._themeRefreshRaf);
+      this._themeRefreshRaf = null;
+    }
+    // 找到可视范围中心点索引
+    const centerIdx = this._findVisibleCenterIndex(positions);
+    // 清除旧轨迹
+    this.clearTrail();
+    // 初始化渐进渲染队列
+    this._themeRefreshQueue = {
+      positions,
+      left: centerIdx,
+      right: centerIdx + 1,
+      startTime: Date.now(),
+      timeBudget: 60000,
+      done: false,
+    };
+    this._processThemeRefreshBatch();
+  }
+
+  /**
+   * 找到轨迹中位于地图可视范围中心附近的点索引
+   */
+  _findVisibleCenterIndex(positions) {
+    if (!this.map) return Math.floor(positions.length / 2);
+    try {
+      const bounds = this.map.getBounds();
+      if (!bounds) return Math.floor(positions.length / 2);
+      const ne = bounds.getNorthEast();
+      const sw = bounds.getSouthWest();
+      const centerLat = (ne.lat + sw.lat) / 2;
+      const centerLng = (ne.lng + sw.lng) / 2;
+      let bestIdx = 0;
+      let bestDist = Infinity;
+      // 每隔一段采样，避免 75k 点全遍历
+      const step = Math.max(1, Math.floor(positions.length / 500));
+      for (let i = 0; i < positions.length; i += step) {
+        const p = positions[i];
+        const d = (p.lat - centerLat) ** 2 + (p.lng - centerLng) ** 2;
+        if (d < bestDist) { bestDist = d; bestIdx = i; }
+      }
+      // 精细搜索采样点附近
+      const searchStart = Math.max(0, bestIdx - step);
+      const searchEnd = Math.min(positions.length - 1, bestIdx + step);
+      for (let i = searchStart; i <= searchEnd; i++) {
+        const p = positions[i];
+        const d = (p.lat - centerLat) ** 2 + (p.lng - centerLng) ** 2;
+        if (d < bestDist) { bestDist = d; bestIdx = i; }
+      }
+      return bestIdx;
+    } catch (_) {
+      return Math.floor(positions.length / 2);
+    }
+  }
+
+  /**
+   * 分帧处理渐进重绘批次
+   */
+  _processThemeRefreshBatch() {
+    const q = this._themeRefreshQueue;
+    if (!q || q.done) return;
+
+    const elapsed = Date.now() - q.startTime;
+    const totalPoints = q.positions.length;
+
+    // 计算剩余时间和点数，动态调整批大小
+    const remainingTime = Math.max(1, q.timeBudget - elapsed);
+    const remainingPoints = (q.left > 0 ? q.left : 0) + (totalPoints - q.right);
+    if (remainingPoints <= 0 || elapsed >= q.timeBudget) {
+      // 时间到或已完成，快速渲染剩余部分
+      this._renderRemainingTrail(q);
+      this._finishThemeRefresh(q);
+      return;
+    }
+
+    // 动态批大小：剩余点数 / (剩余时间 × 60fps)，至少 10 点
+    const batchSize = Math.max(10, Math.ceil(remainingPoints / (remainingTime / 16)));
+
+    // 向左扩展
+    const leftEnd = Math.max(0, q.left - batchSize);
+    if (leftEnd < q.left) {
+      this._renderTrailRange(q.positions, leftEnd, q.left, q);
+      q.left = leftEnd;
+    }
+
+    // 向右扩展
+    const rightEnd = Math.min(totalPoints, q.right + batchSize);
+    if (rightEnd > q.right) {
+      this._renderTrailRange(q.positions, q.right, rightEnd, q);
+      q.right = rightEnd;
+    }
+
+    // 检查是否完成
+    if (q.left <= 0 && q.right >= totalPoints) {
+      this._finishThemeRefresh(q);
+      return;
+    }
+
+    // 继续下一帧
+    this._themeRefreshRaf = requestAnimationFrame(() => this._processThemeRefreshBatch());
+  }
+
+  /**
+   * 渲染指定范围的轨迹点（按速度分色）
+   */
+  _renderTrailRange(positions, from, to, q) {
+    if (from >= to) return;
+    // 确保 from 至少为1（需要 i-1）
+    const start = Math.max(1, from);
+    const end = Math.min(positions.length, to);
+
+    let batchPath = [];
+    let batchKey = null;
+
+    // 如果从中间开始，需要锚点保证颜色连续
+    if (start > 0) {
+      const anchor = positions[start - 1];
+      batchPath.push(new qq.maps.LatLng(anchor.lat, anchor.lng));
+      batchKey = this._speedColorKey(this._segmentSpeed(anchor, positions[start]));
+    }
+
+    for (let i = start; i < end; i++) {
+      const p0 = positions[i - 1];
+      const p1 = positions[i];
+      const key = this._speedColorKey(this._segmentSpeed(p0, p1));
+
+      if (batchPath.length === 0) {
+        batchPath.push(new qq.maps.LatLng(p0.lat, p0.lng));
+        batchPath.push(new qq.maps.LatLng(p1.lat, p1.lng));
+        batchKey = key;
+      } else if (key === batchKey) {
+        batchPath.push(new qq.maps.LatLng(p1.lat, p1.lng));
+      } else {
+        if (batchPath.length >= 2) {
+          this._flushSegment(batchPath, this._speedColorMap[batchKey]);
+        }
+        batchPath = [
+          new qq.maps.LatLng(p0.lat, p0.lng),
+          new qq.maps.LatLng(p1.lat, p1.lng)
+        ];
+        batchKey = key;
+      }
+    }
+    if (batchPath.length >= 2) {
+      this._flushSegment(batchPath, this._speedColorMap[batchKey]);
+    }
+  }
+
+  /**
+   * 快速渲染剩余未完成部分
+   */
+  _renderRemainingTrail(q) {
+    if (q.left > 0) {
+      this._renderTrailRange(q.positions, 0, q.left, q);
+    }
+    if (q.right < q.positions.length) {
+      this._renderTrailRange(q.positions, q.right, q.positions.length, q);
+    }
+  }
+
+  /**
+   * 完成主题刷新
+   */
+  _finishThemeRefresh(q) {
+    this._themeRefreshQueue = null;
+    this._themeRefreshRaf = null;
+    this._lastTrailCount = q.positions.length;
+    if (q.positions.length > 0) {
+      this._lastTrailAnchor = q.positions[0];
+    }
   }
 
   // ----- 对方位置标记 -----

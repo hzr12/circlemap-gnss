@@ -256,6 +256,20 @@
   flex-shrink: 0;
 }
 
+/* 速度图例颜色 - 深色模式 (霓虹暗色) */
+.legend-walk  { background: rgba(0, 229, 204, 0.9); }
+.legend-bike  { background: rgba(255, 215, 0, 0.9); }
+.legend-bus   { background: rgba(255, 140, 0, 0.95); }
+.legend-train { background: rgba(255, 51, 102, 1); }
+.legend-hsr   { background: rgba(191, 64, 255, 1); }
+
+/* 速度图例颜色 - 浅色模式 (苹果风格) */
+[data-theme="light"] .legend-walk  { background: rgba(52, 199, 89, 0.85); }
+[data-theme="light"] .legend-bike  { background: rgba(255, 149, 0, 0.85); }
+[data-theme="light"] .legend-bus   { background: rgba(255, 59, 48, 0.9); }
+[data-theme="light"] .legend-train { background: rgba(175, 82, 222, 0.9); }
+[data-theme="light"] .legend-hsr   { background: rgba(88, 86, 214, 0.9); }
+
 /* 速度分布直方图 */
 .histogram-section {
   margin-top: 12px;

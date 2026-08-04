@@ -2782,6 +2782,11 @@ _updateTrailUI() {
     this._theme = this._theme === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', this._theme);
     this.mapManager.setTheme(this._theme);
+    // 渐进重绘轨迹以匹配新主题颜色
+    const positions = this._getTrailPositions();
+    if (positions && positions.length >= 2) {
+      this.mapManager.refreshTrailColors(positions);
+    }
     this._updateChartTheme(); // 同步更新速度曲线主题色
     try {
       localStorage.setItem('circlemap_theme', this._theme);
