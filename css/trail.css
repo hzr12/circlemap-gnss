@@ -235,12 +235,17 @@
 /* 速度色阶图例 */
 .speed-legend {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 4px;
   margin-top: 6px;
   padding: 5px 0;
   font-size: 10px;
   color: var(--text-tertiary);
+}
+.speed-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .speed-legend-item {
   display: flex;
@@ -260,15 +265,19 @@
 .legend-walk  { background: rgba(0, 229, 204, 0.9); }
 .legend-bike  { background: rgba(255, 215, 0, 0.9); }
 .legend-bus   { background: rgba(255, 140, 0, 0.95); }
+.legend-car   { background: rgba(255, 94, 51, 0.95); }
 .legend-train { background: rgba(255, 51, 102, 1); }
 .legend-hsr   { background: rgba(191, 64, 255, 1); }
+.legend-sct   { background: rgba(94, 92, 230, 1); }
 
 /* 速度图例颜色 - 浅色模式 (苹果风格) */
 [data-theme="light"] .legend-walk  { background: rgba(52, 199, 89, 0.85); }
 [data-theme="light"] .legend-bike  { background: rgba(255, 149, 0, 0.85); }
 [data-theme="light"] .legend-bus   { background: rgba(255, 59, 48, 0.9); }
+[data-theme="light"] .legend-car   { background: rgba(255, 45, 85, 0.9); }
 [data-theme="light"] .legend-train { background: rgba(175, 82, 222, 0.9); }
 [data-theme="light"] .legend-hsr   { background: rgba(88, 86, 214, 0.9); }
+[data-theme="light"] .legend-sct   { background: rgba(0, 122, 255, 0.9); }
 
 /* 速度分布直方图 */
 .histogram-section {

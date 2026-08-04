@@ -1185,8 +1185,10 @@ class MapManager {
     walk:  { r: 0,   g: 229, b: 204, a: 0.70 },  // #00E5CC 霓虹青
     bike:  { r: 255, g: 215, b: 0,   a: 0.75 },  // #FFD700 霓虹金
     bus:   { r: 255, g: 140, b: 0,   a: 0.80 },  // #FF8C00 霓虹橘
+    car:   { r: 255, g: 94,  b: 51,  a: 0.82 },  // #FF5E33 霓虹橙红
     train: { r: 255, g: 51,  b: 102, a: 0.85 },  // #FF3366 霓虹粉红
     hsr:   { r: 191, g: 64,  b: 255, a: 0.90 },  // #BF40FF 霓虹紫
+    sct:   { r: 94,  g: 92,  b: 230, a: 0.92 },  // #5E5CE6 霓虹蓝紫
   };
 
   /** 速度色阶表：浅色模式 (苹果风格) */
@@ -1194,8 +1196,10 @@ class MapManager {
     walk:  { r: 52,  g: 199, b: 89,  a: 0.65 },  // #34C759 苹果绿
     bike:  { r: 255, g: 149, b: 0,   a: 0.70 },  // #FF9500 苹果橙
     bus:   { r: 255, g: 59,  b: 48,  a: 0.75 },  // #FF3B30 苹果红
+    car:   { r: 255, g: 45,  b: 85,  a: 0.78 },  // #FF2D55 苹果粉红
     train: { r: 175, g: 82,  b: 222, a: 0.80 },  // #AF52DE 苹果紫
     hsr:   { r: 88,  g: 86,  b: 214, a: 0.85 },  // #5856D6 苹果蓝紫
+    sct:   { r: 0,   g: 122, b: 255, a: 0.88 },  // #007AFF 苹果蓝
   };
 
   /** 根据当前主题返回对应色阶表 */
@@ -1208,14 +1212,16 @@ class MapManager {
   /**
    * 取速度对应的色阶键名
    * @param {number|null|undefined} speed m/s
-   * @returns {string} walk|bike|bus|train|hsr
+   * @returns {string} walk|bike|bus|car|train|hsr|sct
    */
   _speedColorKey(speed) {
-    if (speed == null || speed < 2.8) return 'walk';  // <10 km/h   步行/停留
-    if (speed < 5.6) return 'bike';                    // 10-20      骑行
-    if (speed < 16.7) return 'bus';                    // 20-60      公交
-    if (speed < 41.7) return 'train';                  // 60-150     火车
-    return 'hsr';                                       // >150       高铁
+    if (speed == null || speed < 2.78) return 'walk';  // <10 km/h   步行/停留
+    if (speed < 5.56) return 'bike';                    // 10-20      骑行
+    if (speed < 16.67) return 'bus';                    // 20-60      公交
+    if (speed < 33.33) return 'car';                    // 60-120     汽车
+    if (speed < 55.56) return 'train';                  // 120-200    动车
+    if (speed < 97.22) return 'hsr';                    // 200-350    高铁
+    return 'sct';                                       // >350       超高速
   }
 
   /**
