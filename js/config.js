@@ -84,7 +84,7 @@ const CONFIG = {
 
   // ----- GPS 节流（百度式速度自适应）-----
   GPS_ADAPTIVE_K: 8000,             // 自适应系数：间隔 = K/速度（跑动 2.3s、步行 5.7s、静止 60s）
-  GPS_MIN_INTERVAL: 1000,           // 定位最小间隔（ms）
+  GPS_MIN_INTERVAL: 500,           // 定位最小间隔（ms）
   GPS_MAX_INTERVAL: 60000,          // 定位最大间隔（静止心跳，ms）
   GPS_MOVE_THRESHOLD: 0.5,          // 运动检测阈值（m/s），超过此速度立即打断静止节流
 

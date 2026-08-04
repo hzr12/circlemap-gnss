@@ -22,3 +22,7 @@ __pycache__/
 HarmonyOS Sans/
 
 docs/*
+
+test/*
+tests.*
+tests/*

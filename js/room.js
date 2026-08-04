@@ -968,7 +968,7 @@ class RoomManager {
     dv.setUint8(0, b);
     dv.setUint8(1, 0); // 保留
     dv.setUint8(2, 0); // 保留
-    dv.setUint8(3, Math.max(0, Math.min(100, Math.round((flags.batteryLevel || 1) * 100))));
+    dv.setUint8(3, Math.max(0, Math.min(100, Math.round((flags.batteryLevel ?? 1) * 100))));
     return new Uint8Array(buf);
   }
 
