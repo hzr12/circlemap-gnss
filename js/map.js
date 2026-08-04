@@ -1414,10 +1414,10 @@ class MapManager {
     // 动态批大小：剩余点数 / (剩余时间 × 60fps)，至少 10 点
     const batchSize = Math.max(10, Math.ceil(remainingPoints / (remainingTime / 16)));
 
-    // 向左扩展
+    // 向左扩展（to 传 q.left+1 确保包含 centerIdx-1 → centerIdx 段）
     const leftEnd = Math.max(0, q.left - batchSize);
     if (leftEnd < q.left) {
-      this._renderTrailRange(q.positions, leftEnd, q.left, q);
+      this._renderTrailRange(q.positions, leftEnd, q.left + 1, q);
       q.left = leftEnd;
     }
 
@@ -1489,7 +1489,7 @@ class MapManager {
    */
   _renderRemainingTrail(q) {
     if (q.left > 0) {
-      this._renderTrailRange(q.positions, 0, q.left, q);
+      this._renderTrailRange(q.positions, 0, q.left + 1, q);
     }
     if (q.right < q.positions.length) {
       this._renderTrailRange(q.positions, q.right, q.positions.length, q);
