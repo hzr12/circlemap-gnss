@@ -1,4 +1,4 @@
-﻿name: 构建 Android APK（GNSS 插件）
+name: 极轨 Orbitra - 构建 Android APK（GNSS 插件）
 
 on:
   push:
@@ -84,6 +84,7 @@ jobs:
 
       - name: 覆盖 User-Agent（桌面版 UA 测试瓦片差异）
         run: |
+          mkdir -p native/android/app/src/main/java/com/hzr/circlemap
           cp native/ua-override/MainActivity.java native/android/app/src/main/java/com/hzr/circlemap/MainActivity.java
           echo "=== 验证 MainActivity.java ==="
           head -15 native/android/app/src/main/java/com/hzr/circlemap/MainActivity.java
@@ -177,15 +178,16 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          name: Circlemap ${{ github.ref_name }}
+          name: 极轨 Orbitra ${{ github.ref_name }}
           body: |
-            ## Circlemap ${{ github.ref_name }}
+            ## 极轨 Orbitra ${{ github.ref_name }}
 
             ### 包含
             - 腾讯地图同心圆（Canvas 叠加层）
             - GNSS 卫星数据显示（GPS/北斗/GLONASS/Galileo）
             - 轨迹记录 + GPX 导出
             - 深色/浅色主题
+            - 多档速度图例（步行→超高速 350km/h）
 
             ### 安装
             下载 APK 直接安装到 Android 设备（已签名，小米等设备可直接安装）。
@@ -207,7 +209,7 @@ jobs:
           gh release delete "$TAG" --yes 2>/dev/null || true
           gh release create "$TAG" \
             --target "${{ github.sha }}" \
-            --title "Circlemap 开发版 (${{ github.sha }})" \
+            --title "极轨 Orbitra 开发版 (${{ github.sha }})" \
             --prerelease \
             --notes "自动构建，commit \`${{ github.sha }}\` 分支 \`${{ github.ref_name }}\`
 
