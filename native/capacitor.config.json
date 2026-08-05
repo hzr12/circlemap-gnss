@@ -1,6 +1,6 @@
 {
-  "appId": "com.hzr.circlemap",
-  "appName": "Circlemap-CN",
+  "appId": "com.hzr.orbitra",
+  "appName": "极轨",
   "webDir": "web",
   "server": {
     "hostname": "localhost",

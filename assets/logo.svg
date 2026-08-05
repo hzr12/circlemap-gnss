@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 80" width="240" height="80">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0B1628"/>
+      <stop offset="100%" stop-color="#1A3A5C"/>
+    </linearGradient>
+    <linearGradient id="trailGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FF3366"/>
+      <stop offset="50%" stop-color="#FFD700"/>
+      <stop offset="100%" stop-color="#00E5CC"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- 图标方块 -->
+  <g transform="translate(0, 4)">
+    <rect x="0" y="0" width="56" height="56" rx="12" fill="url(#bgGrad)"/>
+    <!-- 同心圆 -->
+    <circle cx="28" cy="28" r="22" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="0.8"/>
+    <circle cx="28" cy="28" r="15" fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="0.6"/>
+    <circle cx="28" cy="28" r="8" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="0.5"/>
+    <!-- 轨迹弧线 -->
+    <path d="M40,14 Q48,24 40,36 Q28,46 14,40 Q6,32 12,18" 
+          fill="none" stroke="url(#trailGrad)" stroke-width="1.8" stroke-linecap="round" filter="url(#glow)"/>
+    <!-- 起终点 -->
+    <circle cx="40" cy="14" r="1.8" fill="#FF3366"/>
+    <circle cx="12" cy="18" r="2.5" fill="#00E5CC"/>
+    <circle cx="12" cy="18" r="4" fill="none" stroke="#00E5CC" stroke-opacity="0.4" stroke-width="0.6"/>
+    <!-- 中心点 -->
+    <circle cx="28" cy="28" r="1.2" fill="#ffffff" fill-opacity="0.7"/>
+  </g>
+
+  <!-- 品牌文字 -->
+  <g transform="translate(68, 0)">
+    <!-- 中文名 极轨 -->
+    <text x="0" y="32" font-family="'PingFang SC','HarmonyOS Sans SC','Noto Sans SC',sans-serif" font-size="28" font-weight="700" fill="#ffffff" letter-spacing="2">极轨</text>
+    <!-- 英文名 Orbitra -->
+    <text x="2" y="56" font-family="'SF Pro Display','HarmonyOS Sans',sans-serif" font-size="13" font-weight="500" fill="#00E5CC" letter-spacing="4" opacity="0.9">ORBITRA</text>
+  </g>
+</svg>

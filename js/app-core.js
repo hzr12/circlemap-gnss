@@ -1181,7 +1181,7 @@ class App {
       if (CONFIG.DEBUG) console.log('[Background] 启动原生后台定位插件');
       await plugin.start({
         backgroundMessage: '正在后台追踪位置，关闭以省电',
-        backgroundTitle: 'Circlemap 定位中',
+        backgroundTitle: '极轨 定位中',
         distanceFilter: 10,
         requestPermissions: true,
         stale: false,
@@ -2292,12 +2292,12 @@ _toggleTrailRecording() {
       ctx.fillStyle = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)';
       ctx.font = `${11 * S}px "HarmonyOS Sans", sans-serif`;
       ctx.textAlign = 'right';
-      ctx.fillText('Circlemap · 地图雷达', W - 24 * S, H - 16 * S);
+      ctx.fillText('极轨 · Orbitra', W - 24 * S, H - 16 * S);
       ctx.textAlign = 'left';
 
       // ── 导出 PNG ──
       const dateStr = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
-      const filename = `circlemap-activity-${dateStr}.png`;
+      const filename = `orbitra-activity-${dateStr}.png`;
       canvas.toBlob(async (blob) => {
         if (!blob) {
           Toast.show(' 导出失败：无法生成图片');
@@ -2321,8 +2321,8 @@ _toggleTrailRecording() {
             });
 
             await Capacitor.Plugins.Share.share({
-              title: 'Circlemap 活动报告',
-              text: 'Circlemap 地图雷达 — 轨迹活动报告',
+              title: '极轨 活动报告',
+              text: '极轨 Orbitra — 轨迹活动报告',
               url: result.uri,
               dialogTitle: '分享或保存活动报告',
             });
