@@ -74,6 +74,29 @@ jobs:
         working-directory: native
         run: npx cap sync android
 
+      - name: 复制品牌启动图标（极轨 Orbitra）
+        run: |
+          RES_DIR="native/android/app/src/main/res"
+          ICONS_DIR="native/assets/android-icons"
+          mkdir -p "$RES_DIR/drawable-v24"
+          mkdir -p "$RES_DIR/mipmap-mdpi" "$RES_DIR/mipmap-hdpi" "$RES_DIR/mipmap-xhdpi"
+          mkdir -p "$RES_DIR/mipmap-xxhdpi" "$RES_DIR/mipmap-xxxhdpi"
+          # XML 矢量图标
+          cp "$ICONS_DIR/drawable-v24/ic_launcher_foreground.xml" "$RES_DIR/drawable-v24/"
+          cp "$ICONS_DIR/drawable/ic_launcher_background.xml" "$RES_DIR/drawable/"
+          cp "$ICONS_DIR/values/ic_launcher_background.xml" "$RES_DIR/values/"
+          # 应用名
+          cp "$ICONS_DIR/values/strings.xml" "$RES_DIR/values/"
+          # PNG 启动图标（所有密度）
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            cp "$ICONS_DIR/mipmap-$density/ic_launcher.png" "$RES_DIR/mipmap-$density/"
+            cp "$ICONS_DIR/mipmap-$density/ic_launcher_round.png" "$RES_DIR/mipmap-$density/"
+            cp "$ICONS_DIR/mipmap-$density/ic_launcher_foreground.png" "$RES_DIR/mipmap-$density/"
+          done
+          echo "=== 图标验证 ==="
+          ls -la "$RES_DIR/drawable-v24/ic_launcher_foreground.xml"
+          ls -la "$RES_DIR/mipmap-xxxhdpi/ic_launcher.png"
+
       - name: 配置原生后台定位（@capgo/background-geolocation）
         working-directory: native
         run: |
