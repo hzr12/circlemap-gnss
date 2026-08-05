@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">极轨</string>
+    <string name="title_activity_main">极轨</string>
+    <string name="package_name">com.hzr.circlemap</string>
+    <string name="custom_url_scheme">com.hzr.circlemap</string>
+    <string name="capacitor_background_geolocation_notification_channel_name">位置追踪</string>
+    <string name="capacitor_background_geolocation_notification_icon">drawable/ic_tracking</string>
+</resources>
